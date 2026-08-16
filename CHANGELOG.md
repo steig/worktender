@@ -8,7 +8,25 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **A worktree adopted by a reconcile is now staffed by that same reconcile.**
+  (#147) `sync`, `startup` and the `worktree.created` / `worktree.opened` hooks
+  each ran plan-then-perform inside `lock.Repeat`, which begins another pass
+  only when a different process marked the repository dirty. An ordinary run
+  therefore gets one pass, and that pass planned from a snapshot taken before
+  it acted: `staff()` reads `state.Workspaces`, which cannot hold a workspace
+  the same pass went on to open. Adoption left a bare shell until somebody
+  reconciled a second time, and the event fast path — issue to worktree to
+  agent — stopped at the worktree.
+
+  The three copies of the loop are now one `reconcileOpen`, which runs a
+  staffing pass after the loop whenever `perform` reports it opened something.
+  That pass staffs and never adopts: re-planning adoptions would let a worktree
+  herdr has not yet reported as open be adopted twice, which is a second
+  workspace on one checkout. It sits outside the loop rather than inside
+  because a repository being marked dirty on every pass could otherwise starve
+  it, which is the same bug arriving intermittently.
 
 ## [0.9.0] — 2026-08-03
 
