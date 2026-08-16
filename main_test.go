@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/steig/worktender/internal/gitx"
@@ -364,6 +365,61 @@ func TestSyncAdoptsAWorktreeOutsideTheRepoRoot(t *testing.T) {
 		return
 	}
 	t.Errorf("an out-of-root worktree was never adopted; output:\n%s", out.String())
+}
+
+// Adoption creates exactly the condition staffing exists to fix, and sync is
+// documented to do both. It plans from one snapshot, though, taken before the
+// workspace it opens exists — and the pass loop only runs again when somebody
+// else marks the repository dirty. Left alone, the worktree sits there as a
+// bare shell until sync is run a second time.
+func TestSyncStaffsAWorktreeItJustAdopted(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	checkout := repo.AddWorktree("wip", "wip")
+
+	server := fakeSession(t, repo)
+
+	var mu sync.Mutex
+	adopted := false
+	opened := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return adopted
+	}
+
+	server.Handle("worktree.list", func(map[string]any) (any, error) {
+		if opened() {
+			return worktreeListReply(repo, checkout, "wip", "w2"), nil
+		}
+		return worktreeListReply(repo, checkout, "wip", ""), nil
+	})
+	server.Handle("workspace.list", func(map[string]any) (any, error) {
+		if opened() {
+			return workspaceListReply(repo, checkout, "w2"), nil
+		}
+		return map[string]any{"type": "workspace_list", "workspaces": []map[string]any{}}, nil
+	})
+	server.HandleResult("agent.list", map[string]any{"type": "agent_list", "agents": []map[string]any{}})
+	server.HandleResult("pane.list", map[string]any{"type": "pane_list",
+		"panes": []map[string]any{{"pane_id": "w2:p1"}}})
+	server.Handle("worktree.open", func(map[string]any) (any, error) {
+		mu.Lock()
+		adopted = true
+		mu.Unlock()
+		return map[string]any{"type": "workspace_created"}, nil
+	})
+	server.HandleResult("agent.start", map[string]any{"type": "ok"})
+
+	var out strings.Builder
+	if err := syncCommand(nil, &out); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			return
+		}
+	}
+	t.Errorf("sync adopted a worktree and left it unstaffed; output:\n%s", out.String())
 }
 
 func TestPruneApplyRemoves(t *testing.T) {

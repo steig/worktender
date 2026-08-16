@@ -129,14 +129,8 @@ func reconcileAtStartup(out io.Writer, client *herdrapi.Client, root string) err
 	}
 	defer releaseLock(lock, out)
 
-	return lock.Repeat(reconcilePasses, func() error {
-		actions, err := s.planWith(collector, false)
-		if err != nil {
-			return err
-		}
-		// Adopt and staff only: startup has the least information about what a
-		// human intends, so it is the last place that should remove a checkout.
-		// Text, for the reason the event path is: herdr invokes this one too.
-		return s.perform(newOutput(out, false), reconcile.Only(actions, reconcile.KindAdopt, reconcile.KindStaff), false)
-	})
+	// Adopt and staff only: startup has the least information about what a
+	// human intends, so it is the last place that should remove a checkout.
+	// Text, for the reason the event path is: herdr invokes this one too.
+	return s.reconcileOpen(lock, collector, func() *output { return newOutput(out, false) })
 }

@@ -173,17 +173,11 @@ func onEventCommand(args []string, out io.Writer) error {
 	}
 	defer releaseLock(lock, out)
 
-	return lock.Repeat(reconcilePasses, func() error {
-		actions, err := s.planWith(collector, false)
-		if err != nil {
-			return err
-		}
-		// Adopt and staff only. Removal stays something a human asks for by
-		// name: `prune` and `prune-apply` are separate actions precisely so
-		// nothing removes a worktree as a side effect of something else.
-		// Text: an event hook's output lands in the plugin log for a human to
-		// read afterwards, and herdr invokes it with no argument surface to ask
-		// for anything else.
-		return s.perform(newOutput(out, false), reconcile.Only(actions, reconcile.KindAdopt, reconcile.KindStaff), false)
-	})
+	// Adopt and staff only. Removal stays something a human asks for by name:
+	// `prune` and `prune-apply` are separate actions precisely so nothing
+	// removes a worktree as a side effect of something else.
+	// Text: an event hook's output lands in the plugin log for a human to read
+	// afterwards, and herdr invokes it with no argument surface to ask for
+	// anything else.
+	return s.reconcileOpen(lock, collector, func() *output { return newOutput(out, false) })
 }
