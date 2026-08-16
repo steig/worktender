@@ -8,6 +8,10 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.9.1] — 2026-08-15
+
 ### Fixed
 
 - **A worktree adopted by a reconcile is now staffed by that same reconcile.**

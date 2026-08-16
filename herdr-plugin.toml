@@ -5,7 +5,7 @@
 
 id = "steig.worktender"
 name = "worktender"
-version = "0.9.0"
+version = "0.9.1"
 min_herdr_version = "0.7.5"
 # This is the marketplace listing copy, and for most people the only sentence
 # they will read. `start` creates a worktree, and it is the only thing here that
