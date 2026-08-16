@@ -363,7 +363,9 @@ func (o *output) flush(repository string) error {
 }
 
 // perform executes actions, records the report, and fails when any action did.
-func (s *session) perform(o *output, actions []reconcile.Action, applyPrune bool) error {
+// It reports whether a workspace was opened, which is what tells the caller
+// there is now something to staff — see reconcileOpen.
+func (s *session) perform(o *output, actions []reconcile.Action, applyPrune bool) (adopted bool, err error) {
 	executor := &execute.Executor{
 		Client:     s.client,
 		Root:       s.root,
@@ -374,10 +376,54 @@ func (s *session) perform(o *output, actions []reconcile.Action, applyPrune bool
 
 	o.record(results)
 
-	if failed := execute.Counts(results)[execute.StatusFailed]; failed > 0 {
-		return fmt.Errorf("%d of %d action(s) failed", failed, len(results))
+	for _, r := range results {
+		if r.Action.Kind == reconcile.KindAdopt && r.Status == execute.StatusDone {
+			adopted = true
+			break
+		}
 	}
-	return nil
+
+	if failed := execute.Counts(results)[execute.StatusFailed]; failed > 0 {
+		return adopted, fmt.Errorf("%d of %d action(s) failed", failed, len(results))
+	}
+	return adopted, nil
+}
+
+// reconcileOpen runs the adopt-and-staff reconcile that sync, the worktree
+// event hooks and startup all want, and then staffs what it opened.
+//
+// The trailing pass is the point. A pass plans from a snapshot taken before it
+// acts, so a workspace it adopts cannot appear in its own plan — and a
+// workspace with no agent is exactly what staffing exists to fix. Without this,
+// adoption leaves a bare shell until someone reconciles a second time.
+//
+// It performs staffing only, never adoption. Re-planning both would let a
+// worktree herdr has not yet reported as open be adopted twice, which is a
+// second workspace on the same checkout.
+//
+// newOut is called per pass because the event and startup paths write a fresh
+// report each time while sync accumulates one document across passes.
+func (s *session) reconcileOpen(lock *repolock.Lock, collector *reconcile.Collector, newOut func() *output) error {
+	adopted := false
+	err := lock.Repeat(reconcilePasses, func() error {
+		actions, err := s.planWith(collector, false)
+		if err != nil {
+			return err
+		}
+		opened, err := s.perform(newOut(), reconcile.Only(actions, reconcile.KindAdopt, reconcile.KindStaff), false)
+		adopted = adopted || opened
+		return err
+	})
+	if err != nil || !adopted {
+		return err
+	}
+
+	actions, err := s.planWith(collector, false)
+	if err != nil {
+		return err
+	}
+	_, err = s.perform(newOut(), reconcile.Only(actions, reconcile.KindStaff), false)
+	return err
 }
 
 // jsonFlag registers --json on a flag set. One description, so the commands
@@ -514,13 +560,7 @@ func syncCommand(args []string, out io.Writer) error {
 	// below. Every lookup is a network round trip per worktree, deciding nothing.
 	collector.LookupPR = nil
 
-	err = lock.Repeat(reconcilePasses, func() error {
-		actions, err := s.planWith(collector, false)
-		if err != nil {
-			return err
-		}
-		return s.perform(o, reconcile.Only(actions, reconcile.KindAdopt, reconcile.KindStaff), false)
-	})
+	err = s.reconcileOpen(lock, collector, func() *output { return o })
 	// Written even when a pass failed: text mode has already printed what the
 	// earlier passes did, and the document must say the same.
 	return firstError(err, o.flush(s.root))
@@ -589,7 +629,7 @@ func pruneCommand(args []string, out io.Writer, apply bool) error {
 		if err != nil {
 			return err
 		}
-		err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), false)
+		_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), false)
 		return firstError(err, o.flush(s.root))
 	}
 
@@ -609,7 +649,7 @@ func pruneCommand(args []string, out io.Writer, apply bool) error {
 	if err != nil {
 		return err
 	}
-	err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), true)
+	_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), true)
 	return firstError(err, o.flush(s.root))
 }
 

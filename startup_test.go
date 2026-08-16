@@ -267,8 +267,12 @@ func TestStartupTerminatesEvenWhileWorkKeepsArriving(t *testing.T) {
 		t.Fatalf("startup: %v", err)
 	}
 
-	if lists != reconcilePasses {
-		t.Errorf("ran %d pass(es) under continuous marking, want exactly the %d-pass cap", lists, reconcilePasses)
+	// The cap plus the one staffing pass that follows an adoption. That pass is
+	// deliberately outside the loop: inside it, continuous marking like this
+	// could starve it, and staffing is the whole point of having adopted.
+	if want := reconcilePasses + 1; lists != want {
+		t.Errorf("ran %d pass(es) under continuous marking, want exactly %d "+
+			"(the %d-pass cap and the staffing pass after an adoption)", lists, want, reconcilePasses)
 	}
 }
 
