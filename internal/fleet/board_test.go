@@ -141,48 +141,62 @@ func TestBuildLooksUpPRStateOnlyWhereOneIsClaimed(t *testing.T) {
 	}
 }
 
-func boardText(lines []Line) string {
+func boardText(v View) string {
 	var texts []string
-	for _, l := range lines {
+	for _, l := range v.Lines {
 		texts = append(texts, l.Plain())
 	}
 	return strings.Join(texts, "\n")
 }
 
-// The hierarchy the board promises: ESCALATIONS on top, then the live fleet,
-// then what landed, then the peers.
-func TestLinesKeepTheSectionHierarchy(t *testing.T) {
+// The hierarchy the board promises, stacked in one column when the pane is
+// narrow (and in scrollback): ESCALATIONS on top, then the live fleet, then
+// what landed, then the peers, then the idle capacity.
+func TestRenderKeepsTheSectionHierarchy(t *testing.T) {
 	b := Build(fixtureRepos(), fixtureLedger(), "/state/ledger.jsonl", true, at.Add(time.Hour), nil)
-	lines := Lines(b, 0)
-	all := boardText(lines)
+	view := Render(b, 0)
+	all := boardText(view)
 
 	esc := strings.Index(all, "ESCALATIONS")
 	flight := strings.Index(all, "IN FLIGHT")
-	repo := strings.Index(all, "/home/x/proj")
+	worker := strings.Index(all, "proj/42-fix-the-thing")
 	landed := strings.Index(all, "RECENTLY LANDED")
 	peers := strings.Index(all, "PEERS")
-	if esc < 0 || flight < 0 || repo < 0 || landed < 0 || peers < 0 {
+	trees := strings.Index(all, "WORKTREES")
+	if esc < 0 || flight < 0 || worker < 0 || landed < 0 || peers < 0 || trees < 0 {
 		t.Fatalf("a section is missing:\n%s", all)
 	}
-	if !(esc < flight && flight < repo && repo < landed && landed < peers) {
+	if !(esc < flight && flight < worker && worker < landed && landed < peers && peers < trees) {
 		t.Errorf("sections out of order:\n%s", all)
 	}
 	if !strings.Contains(all, "guard file touched") {
 		t.Errorf("the safety escalation's reason is not on the board:\n%s", all)
 	}
 
-	// The design system: section headers are accent bands, and status color
-	// lands on the glyph — the row's text stays on the neutral base.
-	for _, line := range lines {
+	// Panels, not banded text: rounded borders with the title embedded in
+	// the top border, interiors padded behind the border rune.
+	for _, want := range []string{"╭─ ESCALATIONS ", "╭─ IN FLIGHT ", "╭─ RECENTLY LANDED ", "╰─"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the board is missing the border %q:\n%s", want, all)
+		}
+	}
+
+	// The design system holds inside the boxes: panel titles take the
+	// accent, borders recede, and status color lands on the glyph — the
+	// row's text stays on the neutral base.
+	for _, line := range view.Lines {
 		text := line.Plain()
-		if strings.Contains(text, "ESCALATIONS") && line.Spans[0].Style != styleBand {
-			t.Errorf("the ESCALATIONS heading is not an accent band: %+v", line.Spans[0].Style)
+		if strings.Contains(text, "ESCALATIONS") && len(line.Spans) > 1 && line.Spans[1].Style != styleKey {
+			t.Errorf("the ESCALATIONS title is not accent: %+v", line.Spans[1].Style)
 		}
 		if strings.Contains(text, "guard file touched") {
-			if line.Spans[0].Style != styleBad {
-				t.Errorf("the escalation glyph is not red: %+v", line.Spans[0].Style)
+			if line.Spans[0].Style != styleBorder {
+				t.Errorf("the row does not sit behind a border: %+v", line.Spans[0])
 			}
-			for _, span := range line.Spans[2:] {
+			if line.Spans[1].Style != styleBad {
+				t.Errorf("the escalation glyph is not red: %+v", line.Spans[1].Style)
+			}
+			for _, span := range line.Spans[3:] {
 				if span.Style.FG == ColorBad {
 					t.Errorf("status color bled past the glyph and severity into %q", span.Text)
 				}
@@ -190,10 +204,14 @@ func TestLinesKeepTheSectionHierarchy(t *testing.T) {
 		}
 	}
 
-	// Every selectable line carries a target; headings carry none.
-	for _, line := range lines {
-		if line.Target != nil && line.Target.Label == "" {
-			t.Errorf("target without a label on %q", line.Plain())
+	// Navigation order is urgency order: the first hotspot is the safety
+	// escalation, and every hotspot carries a labeled target.
+	if len(view.Hots) == 0 || !strings.Contains(view.Hots[0].Target.Label, "t4") {
+		t.Errorf("the first hotspot is not the safety escalation: %+v", view.Hots)
+	}
+	for _, h := range view.Hots {
+		if h.Target == nil || h.Target.Label == "" {
+			t.Errorf("hotspot without a labeled target: %+v", h)
 		}
 	}
 
@@ -201,6 +219,95 @@ func TestLinesKeepTheSectionHierarchy(t *testing.T) {
 	// in them, so the one-shot print carries no ANSI.
 	if strings.Contains(all, "\x1b") {
 		t.Errorf("escape bytes leaked into the board text:\n%q", all)
+	}
+}
+
+// At wide widths the board is two columns: IN FLIGHT on the left, the task
+// panels stacked on the right — so their top borders share a line.
+func TestRenderComposesTwoColumnsWhenWide(t *testing.T) {
+	b := Build(fixtureRepos(), fixtureLedger(), "/state/ledger.jsonl", true, at.Add(time.Hour), nil)
+	view := Render(b, 160)
+
+	var topRow string
+	for _, line := range view.Lines {
+		if text := line.Plain(); strings.Contains(text, "╭─ IN FLIGHT ") {
+			topRow = text
+		}
+	}
+	if !strings.Contains(topRow, "╭─ ESCALATIONS ") {
+		t.Errorf("ESCALATIONS does not sit beside IN FLIGHT at width 160:\n%s", boardText(view))
+	}
+
+	// Rows in the right column still highlight within their own panel: the
+	// hotspot's span range must not start at the left edge.
+	for _, h := range view.Hots {
+		if strings.Contains(h.Target.Label, "t4") && h.SpanFrom <= 1 {
+			t.Errorf("the right-column escalation's highlight starts at the screen edge: %+v", h)
+		}
+	}
+
+	// No composed line exceeds the terminal width.
+	for _, line := range view.Lines {
+		if n := len([]rune(line.Plain())); n > 160 {
+			t.Errorf("a composed line is %d cells wide: %q", n, line.Plain())
+		}
+	}
+}
+
+// IN FLIGHT holds only what is flying: working or blocked agents, and open
+// ledger tasks. Idle mains and unclaimed checkouts are capacity, listed dim
+// under WORKTREES instead.
+func TestInFlightExcludesIdleWorktrees(t *testing.T) {
+	b := Build(fixtureRepos(), fixtureLedger(), "/state/ledger.jsonl", true, at.Add(time.Hour), nil)
+	all := boardText(Render(b, 0))
+
+	flight := strings.Index(all, "╭─ IN FLIGHT ")
+	trees := strings.Index(all, "╭─ WORKTREES ")
+	if flight < 0 || trees < 0 {
+		t.Fatalf("a panel is missing:\n%s", all)
+	}
+	between := all[flight:trees]
+	if strings.Contains(between, "9-untracked") || strings.Contains(between, "proj/main") {
+		t.Errorf("idle rows render as in flight:\n%s", between)
+	}
+	after := all[trees:]
+	for _, want := range []string{"proj/9-untracked", "proj/main", "other/main"} {
+		if !strings.Contains(after, want) {
+			t.Errorf("WORKTREES is missing %q:\n%s", want, after)
+		}
+	}
+}
+
+// The landed verdict is the task's last verify entry: a fail followed by a
+// later pass landed as a pass, and only fail-without-later-pass is red.
+func TestLandedVerdictIsTheLastVerify(t *testing.T) {
+	ledger := Ledger{Entries: []Entry{
+		entry(0, "t1", "dispatch", func(e *Entry) { e.Repo = "/home/x/proj"; e.Issue = 42 }),
+		entry(1, "t1", "verify", func(e *Entry) { e.Result = "fail" }),
+		entry(2, "t1", "verify", func(e *Entry) { e.Result = "pass" }),
+	}}
+	b := Build(nil, ledger, "", true, at.Add(time.Hour), nil)
+	all := boardText(Render(b, 0))
+	if !strings.Contains(all, glyphVerified) || !strings.Contains(all, "verify pass") {
+		t.Errorf("a fail-then-pass task did not land as a pass:\n%s", all)
+	}
+	if strings.Contains(all, "verify fail") {
+		t.Errorf("the earlier fail still speaks for a passed task:\n%s", all)
+	}
+}
+
+// A task steered to a peer session never names a repository; its rows say
+// which session has it instead of a bare dash.
+func TestTaskPlaceFallsBackToTheSteeredTarget(t *testing.T) {
+	ledger := Ledger{Entries: []Entry{
+		entry(0, "t1", "steer", func(e *Entry) { e.Target = "dbx-eb"; e.Note = "status" }),
+		entry(1, "t1", "report", func(e *Entry) { e.Status = "done"; e.PR = 245 }),
+		entry(2, "t1", "verify", func(e *Entry) { e.Result = "pass" }),
+	}}
+	b := Build(nil, ledger, "", true, at.Add(time.Hour), nil)
+	all := boardText(Render(b, 0))
+	if !strings.Contains(all, "dbx-eb") {
+		t.Errorf("the landed peer row lost its session name:\n%s", all)
 	}
 }
 
@@ -216,7 +323,7 @@ func TestLinesOnAnIdleFleetShowTheSummaryAndWhatLanded(t *testing.T) {
 		entry(4, "t2", "verify", func(e *Entry) { e.Result = "fail"; e.Evidence = "tests red" }),
 	}}
 	b := Build(nil, ledger, "/state/ledger.jsonl", true, at.Add(34*time.Minute), nil)
-	all := boardText(Lines(b, 0))
+	all := boardText(Render(b, 0))
 
 	for _, want := range []string{
 		"FLEET", "idle · 0 workers · ledger 30m ago", // the top bar
@@ -241,7 +348,7 @@ func TestLinesOnAnIdleFleetShowTheSummaryAndWhatLanded(t *testing.T) {
 // emptiness that reads as a broken screen.
 func TestLinesOnAnEmptyFleetStillSpeak(t *testing.T) {
 	b := Build(nil, Ledger{}, "/state/ledger.jsonl", false, at, nil)
-	all := boardText(Lines(b, 0))
+	all := boardText(Render(b, 0))
 	for _, want := range []string{
 		"FLEET", "idle · 0 workers · no ledger",
 		"nothing in flight",
@@ -261,11 +368,11 @@ func TestLinesDropDetailColumnsWhenNarrow(t *testing.T) {
 	repos[0].Rows[1].Report = &wt.Report{Found: true, Status: "done", PR: 9}
 	b := Build(repos, fixtureLedger(), "", true, at.Add(time.Hour), nil)
 
-	wideText := boardText(Lines(b, 120))
+	wideText := boardText(Render(b, 160))
 	if !strings.Contains(wideText, "done #9") {
 		t.Fatalf("the wide board dropped the report column:\n%s", wideText)
 	}
-	narrowText := boardText(Lines(b, 40))
+	narrowText := boardText(Render(b, 40))
 	if strings.Contains(narrowText, "done #9") {
 		t.Errorf("a 40-column board still renders the report column:\n%s", narrowText)
 	}

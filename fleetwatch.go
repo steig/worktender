@@ -99,7 +99,7 @@ func watchBoard(client *herdrapi.Client, out io.Writer) error {
 	draw := func() {
 		width, height = termSize()
 		if haveBoard && width != lastWidth {
-			model.Refresh(fleet.Lines(board, width))
+			model.Refresh(fleet.Render(board, width))
 			lastWidth = width
 		}
 		paint()

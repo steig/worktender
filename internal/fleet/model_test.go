@@ -5,20 +5,31 @@ import (
 	"testing"
 )
 
-func row(text, name string) Line {
-	return Line{Spans: []Span{{Text: text}}, Target: &Target{Label: name, Root: "/r", Branch: name}}
+// boxedRow is a panel-interior row the way panel() builds one: border span,
+// content, padding, border span — with the hotspot covering the interior.
+func boxedRow(line int, name string) (Line, Hotspot) {
+	l := Line{Spans: []Span{
+		{Text: "│ ", Style: styleBorder},
+		{Text: "row " + name},
+		{Text: "   "},
+		{Text: " │", Style: styleBorder},
+	}}
+	h := Hotspot{Line: line, SpanFrom: 1, SpanTo: 3,
+		Target: &Target{Label: name, Root: "/r", Branch: name}}
+	return l, h
 }
 
-func modelLines() []Line {
-	return []Line{
-		textLine(styleBar, " FLEET  header "),
-		band("ESCALATIONS"),
-		row("row a", "a"),
-		textLine(styleDim, "/home/x/proj"),
-		row("row b", "b"),
-		row("row c", "c"),
-		textLine(styleDim, "trailing note"),
+func modelView() View {
+	var v View
+	v.Lines = append(v.Lines, textLine(styleBar, " FLEET  header "))
+	v.Lines = append(v.Lines, textLine(styleBorder, "╭─ ROWS ─╮"))
+	for _, name := range []string{"a", "b", "c"} {
+		line, hot := boxedRow(len(v.Lines), name)
+		v.Lines = append(v.Lines, line)
+		v.Hots = append(v.Hots, hot)
 	}
+	v.Lines = append(v.Lines, textLine(styleBorder, "╰────────╯"))
+	return v
 }
 
 // stripped is a frame line without its dressing: SGR sequences and the
@@ -42,15 +53,15 @@ func stripped(s string) string {
 	return b.String()
 }
 
-func TestModelMovesOverSelectableRowsOnly(t *testing.T) {
-	m := NewModel(modelLines())
+func TestModelMovesOverHotspots(t *testing.T) {
+	m := NewModel(modelView())
 	if got := m.Current(); got == nil || got.Label != "a" {
-		t.Fatalf("a fresh model selects %v, want the first row — the most urgent thing on the board", got)
+		t.Fatalf("a fresh model selects %v, want the first hotspot — the most urgent thing on the board", got)
 	}
 
 	m.Move(1)
 	if m.Current().Label != "b" {
-		t.Errorf("moved to %q, want b — the heading between them is not a stop", m.Current().Label)
+		t.Errorf("moved to %q, want b", m.Current().Label)
 	}
 	m.Move(5)
 	if m.Current().Label != "c" {
@@ -70,8 +81,8 @@ func TestModelMovesOverSelectableRowsOnly(t *testing.T) {
 	}
 }
 
-func TestModelWithNoSelectableRowsHasNoCurrent(t *testing.T) {
-	m := NewModel([]Line{textLine(Style{}, "fleet"), placeholder("nothing in flight")})
+func TestModelWithNoHotspotsHasNoCurrent(t *testing.T) {
+	m := NewModel(View{Lines: []Line{textLine(Style{}, "fleet"), textLine(styleDim, "nothing in flight")}})
 	if m.Current() != nil {
 		t.Errorf("selected %v on a board with nothing to select", m.Current())
 	}
@@ -84,48 +95,54 @@ func TestModelWithNoSelectableRowsHasNoCurrent(t *testing.T) {
 // A refresh is exactly the moment rows appear, vanish and move, so the cursor
 // follows the row's identity, not its index.
 func TestRefreshKeepsTheCursorOnItsRow(t *testing.T) {
-	m := NewModel(modelLines())
+	m := NewModel(modelView())
 	m.Move(1) // on b
 
-	fresh := []Line{
-		textLine(styleBar, " FLEET  header "),
-		row("row new", "new"),
-		row("row b", "b"),
+	var fresh View
+	fresh.Lines = append(fresh.Lines, textLine(styleBar, " FLEET  header "))
+	for _, name := range []string{"new", "b"} {
+		line, hot := boxedRow(len(fresh.Lines), name)
+		fresh.Lines = append(fresh.Lines, line)
+		fresh.Hots = append(fresh.Hots, hot)
 	}
 	m.Refresh(fresh)
 	if got := m.Current(); got == nil || got.Label != "b" {
 		t.Errorf("after refresh the cursor is on %v, want still b", got)
 	}
 
-	// The row vanished: fall back to the top, which is where escalations are.
-	m.Refresh([]Line{
-		textLine(styleBar, " FLEET  header "),
-		row("row z", "z"),
-	})
+	// The row vanished: fall back to the first hotspot, which by rank is the
+	// most urgent row on the board.
+	var gone View
+	gone.Lines = append(gone.Lines, textLine(styleBar, " FLEET  header "))
+	line, hot := boxedRow(1, "z")
+	gone.Lines = append(gone.Lines, line)
+	gone.Hots = append(gone.Hots, hot)
+	m.Refresh(gone)
 	if got := m.Current(); got == nil || got.Label != "z" {
-		t.Errorf("after its row vanished the cursor is on %v, want the first row", got)
+		t.Errorf("after its row vanished the cursor is on %v, want the first hotspot", got)
 	}
 }
 
-// The selected row is a full-width accent-background highlight, not a caret:
-// the row's spans take the accent background and the rest of the width is
-// painted to match.
-func TestFrameHighlightsTheCursorRowFullWidth(t *testing.T) {
-	m := NewModel(modelLines())
-	frame := m.Frame(20, 10, "")
+// The selected row highlights its panel's interior — the hotspot's span
+// range takes the accent background — while the panel border stays a border.
+func TestFrameHighlightsTheHotspotSpansOnly(t *testing.T) {
+	m := NewModel(modelView())
+	frame := m.Frame(40, 10, "")
 
 	selected := Style{FG: ColorOnAccent, BG: ColorAccent}
 	if !strings.Contains(frame, selected.sgr()+"row a") {
 		t.Errorf("the cursor row is not painted onto the accent background:\n%q", frame)
 	}
-	fill := Style{BG: ColorAccent}
-	if !strings.Contains(frame, fill.sgr()+strings.Repeat(" ", 20-len("row a"))) {
-		t.Errorf("the highlight does not reach the full width:\n%q", frame)
+	if !strings.Contains(frame, selected.sgr()+"   "+sgrReset) {
+		t.Errorf("the highlight does not cover the row's padding:\n%q", frame)
+	}
+	if !strings.Contains(frame, styleBorder.sgr()+"│ "+sgrReset+selected.sgr()) {
+		t.Errorf("the border beside the selected row lost its border style:\n%q", frame)
 	}
 }
 
 func TestFrameClipsToTheTerminalWidth(t *testing.T) {
-	m := NewModel(modelLines())
+	m := NewModel(modelView())
 	frame := m.Frame(5, 10, "")
 
 	for _, line := range strings.Split(frame, "\r\n") {
@@ -139,31 +156,18 @@ func TestFrameClipsToTheTerminalWidth(t *testing.T) {
 	}
 }
 
-// Styles paint spans, and only spans: the dressing must end at the reset so
-// a styled cell never bleeds into its neighbor.
-func TestFramePaintsSpanStyles(t *testing.T) {
-	m := NewModel([]Line{
-		band("ESCALATIONS"),
-		{Spans: []Span{{Text: "  !", Style: styleBad}, {Text: "  reason"}}, Target: &Target{Label: "x"}},
-	})
-	m.Sel = -1 // no highlight in the way of the assertion
-	frame := m.Frame(80, 10, "")
-	if !strings.Contains(frame, styleBand.sgr()+" ESCALATIONS "+sgrReset) {
-		t.Errorf("the band style is not painted:\n%q", frame)
-	}
-	if !strings.Contains(frame, styleBad.sgr()+"  !"+sgrReset+"  reason") {
-		t.Errorf("the glyph's color leaks past its span:\n%q", frame)
-	}
-}
-
 // The working glyph animates in watch mode: each frame tick swaps it for the
 // next spinner frame, and Spinning tells the loop whether ticking is worth it.
 func TestFrameSpinsTheWorkingGlyph(t *testing.T) {
-	lines := []Line{
-		{Spans: []Span{{Text: "  " + glyphWorking, Style: styleGood, Spin: true}, {Text: "  42-fix"}},
-			Target: &Target{Label: "42-fix"}},
-	}
-	m := NewModel(lines)
+	var v View
+	v.Lines = append(v.Lines, Line{Spans: []Span{
+		{Text: "│ ", Style: styleBorder},
+		{Text: glyphWorking, Style: styleGood, Spin: true},
+		{Text: "  42-fix"},
+		{Text: " │", Style: styleBorder},
+	}})
+	v.Hots = append(v.Hots, Hotspot{Line: 0, SpanFrom: 1, SpanTo: 3, Target: &Target{Label: "42-fix"}})
+	m := NewModel(v)
 	if !m.Spinning() {
 		t.Fatal("a board with a working row does not report Spinning")
 	}
@@ -178,7 +182,7 @@ func TestFrameSpinsTheWorkingGlyph(t *testing.T) {
 		t.Errorf("the spinner does not advance:\n%q\n%q", first, second)
 	}
 
-	still := NewModel(modelLines())
+	still := NewModel(modelView())
 	if still.Spinning() {
 		t.Error("a board with nothing working reports Spinning")
 	}
@@ -186,7 +190,7 @@ func TestFrameSpinsTheWorkingGlyph(t *testing.T) {
 
 // The footer is one faint line; the full key list lives behind `?`.
 func TestFrameHelpOverlayCarriesTheFullKeyList(t *testing.T) {
-	m := NewModel(modelLines())
+	m := NewModel(modelView())
 	frame := m.Frame(80, 24, "")
 	if !strings.Contains(frame, styleDim.sgr()+footer) {
 		t.Errorf("the frame lost its faint footer:\n%q", frame)
@@ -214,8 +218,8 @@ func TestFrameHelpOverlayCarriesTheFullKeyList(t *testing.T) {
 // The viewport follows the cursor: a board taller than the terminal scrolls
 // rather than pinning the cursor off-screen.
 func TestFrameScrollsToKeepTheCursorVisible(t *testing.T) {
-	m := NewModel(modelLines())
-	m.End() // row c, line index 5
+	m := NewModel(modelView())
+	m.End() // row c, line index 4
 
 	frame := m.Frame(80, 4, "") // 3 body lines + footer
 	if !strings.Contains(frame, "row c") {

@@ -129,3 +129,27 @@ func TestLedgerPathHonoursXDGStateHome(t *testing.T) {
 		t.Errorf("LedgerPath() = %q, want %q", got, want)
 	}
 }
+
+// Deployed writers spell the result-shaped word differently than the
+// contract: verify entries arrive with `verdict`, ack entries with `status`.
+// The reader accepts both — a pass rendered as a fail over a field name is
+// the wrong that matters.
+func TestParseAcceptsVerdictAndAckStatusSpellings(t *testing.T) {
+	data := []byte(
+		`{"v":1,"ts":"2026-08-25T17:27:00Z","task":"t1","type":"verify","by":"fleet","verdict":"pass","evidence":"15/15 green"}` + "\n" +
+			`{"v":1,"ts":"2026-08-25T17:28:00Z","task":"t2","type":"ack","by":"fleet","status":"accepted"}` + "\n" +
+			`{"v":1,"ts":"2026-08-25T17:29:00Z","task":"t3","type":"verify","by":"fleet","result":"fail"}` + "\n")
+	l := Parse(data)
+	if l.Malformed != 0 || len(l.Entries) != 3 {
+		t.Fatalf("parse: %+v", l)
+	}
+	if got := l.Entries[0].Result; got != "pass" {
+		t.Errorf("verify verdict read as %q, want pass", got)
+	}
+	if got := l.Entries[1].Result; got != "accepted" {
+		t.Errorf("ack status read as %q, want accepted", got)
+	}
+	if got := l.Entries[2].Result; got != "fail" {
+		t.Errorf("the contract's own spelling read as %q, want fail", got)
+	}
+}

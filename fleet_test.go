@@ -132,8 +132,8 @@ func TestFleetBoardMergesLedgerAndLiveState(t *testing.T) {
 		}
 	}
 
-	// Escalations above the repositories: they are what the board is for.
-	if esc, repoAt := strings.Index(text, "ESCALATIONS"), strings.Index(text, repo.RealRoot); esc < 0 || repoAt < 0 || esc > repoAt {
+	// Escalations above the live fleet: they are what the board is for.
+	if esc, worker := strings.Index(text, "ESCALATIONS"), strings.Index(text, "42-fix"); esc < 0 || worker < 0 || esc > worker {
 		t.Errorf("escalations are not on top:\n%s", text)
 	}
 }

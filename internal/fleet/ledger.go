@@ -102,6 +102,7 @@ type wireEntry struct {
 	Issue    int    `json:"issue"`
 	Deadline string `json:"deadline"`
 	Result   string `json:"result"`
+	Verdict  string `json:"verdict"`
 	Status   string `json:"status"`
 	PR       int    `json:"pr"`
 	Severity string `json:"severity"`
@@ -183,6 +184,20 @@ func parseEntry(line []byte) (Entry, bool) {
 		Severity: w.Severity, Reason: w.Reason, Evidence: w.Evidence,
 		Note: w.Note, Action: w.Action,
 		Raw: string(line),
+	}
+	// Deployed writers spell two result-shaped words differently than the
+	// contract does: verify entries arrive with `verdict` and ack entries
+	// with `status` where the contract says `result`. The reader accepts
+	// both spellings — a board that renders every pass as a fail because of
+	// a field name is wrong in the way that matters, and the additive rule
+	// already commits this reader to tolerating fields it did not expect.
+	if entry.Result == "" {
+		switch entry.Type {
+		case "verify":
+			entry.Result = w.Verdict
+		case "ack":
+			entry.Result = w.Status
+		}
 	}
 	// A deadline that does not parse is dropped rather than failing the line:
 	// it is a type-specific field, and the contract only makes the envelope

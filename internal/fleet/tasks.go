@@ -20,6 +20,11 @@ type Task struct {
 	ID string
 	// By is the controller that last wrote about this task.
 	By string
+	// Target is the executor the work last went to — the dispatch's target,
+	// or the session a steer or nudge named. Kept on the task because a task
+	// steered to a peer may never have a dispatch at all, and "who has this"
+	// is then the only place the board can put it.
+	Target string
 
 	// Latest entry of each type the board renders. Nil when the task has none.
 	// A new dispatch resets Ack, Report and Verify: it is a new assignment,
@@ -140,6 +145,9 @@ func fold(t *Task, e *Entry) {
 		// An unknown type still belongs to its task. Nothing is interpreted
 		// — additive evolution means new types arrive under v1 — but Last
 		// below still moves, and the renderer shows the raw line.
+	}
+	if e.Target != "" {
+		t.Target = e.Target
 	}
 	t.By = e.By
 	t.Last = *e

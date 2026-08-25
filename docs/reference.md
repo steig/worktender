@@ -219,25 +219,29 @@ fleet controller keeps at `~/.local/state/fleet/ledger.jsonl`, per
 workspaces for, each worktree's agent status, what its worker last reported,
 and pull request state for the rows where the fleet claims one exists.
 
-The board is sectioned, most urgent first: **ESCALATIONS** (only when there
-are any, safety tier first) → **IN FLIGHT** (the live worktrees per
-repository, plus dispatched tasks with no live worktree) → **RECENTLY
-LANDED** (the last ten closed tasks — verdict glyph, pull request, repository,
-how long ago) → **PEERS** (open tasks dispatched to peer sessions). A top bar
-always leads — machine, escalation and in-flight counts, workers, ledger
-freshness — and the idle fleet renders the bar and what recently landed
-rather than a blank screen.
+The board draws as bordered panels, most urgent first: **ESCALATIONS** (only
+when there are any, safety tier first) → **IN FLIGHT** (working and blocked
+workers plus open ledger tasks — a dispatched task with no live worktree
+included, said so) → **RECENTLY LANDED** (the last ten closed tasks —
+verdict glyph from the task's *last* verify, pull request, place, how long
+ago) → **PEERS** (open tasks with peer sessions, named by session) →
+**WORKTREES** (the idle capacity: mains, unclaimed checkouts, ghosts — dim,
+compact, still navigable). At wide panes the panels compose into two
+columns, IN FLIGHT on the left and the task panels stacked on the right;
+narrow panes stack one column. A top bar always leads — machine, escalation
+and in-flight counts, workers, ledger freshness — and the idle fleet renders
+the bar and what recently landed rather than a blank screen.
 
-The styling is a neutral base with one accent: section bands, the top bar
-and the selected row's full-width highlight take the accent, status color
-lands only on each row's state glyph (`!` escalated, `●` working — a spinner
-in watch mode, `✓` verified, `✗` failed, `◌` blocked, `·` idle), and
-secondary text — times, repository paths — is faint. Every color is one of
-the terminal's own 16 palette slots, so light and dark themes both read.
-Times are relative ("4m ago"), long cells end in an ellipsis, and narrow
-panes drop detail columns rather than wrapping. Once and exit by default;
-`--json` for the document (and a pipe gets plain text, never styling bytes);
-`--watch` for the cockpit:
+The styling is a neutral base with one accent: panel titles sit in their top
+borders, the top bar and the selected row's panel-wide highlight take the
+accent, status color lands only on each row's state glyph (`!` escalated,
+`●` working — a spinner in watch mode, `✓` verified, `✗` failed, `◌`
+blocked, `·` idle), and secondary text — times, places, borders — is faint.
+Every color is one of the terminal's own 16 palette slots, so light and dark
+themes both read. Times are relative ("4m ago"), long cells end in an
+ellipsis, and narrow panels drop detail columns rather than wrapping. Once
+and exit by default; `--json` for the document (and a pipe gets plain text,
+never styling bytes); `--watch` for the cockpit:
 
 ```sh
 worktender fleet board --watch

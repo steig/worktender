@@ -44,13 +44,14 @@ type Style struct {
 // The board's design system: a neutral base, one accent, status color only
 // on glyphs, faint for the secondary text the eye should skip.
 var (
-	styleBand = Style{FG: ColorOnAccent, BG: ColorAccent, Bold: true}
-	styleBar  = Style{FG: ColorOnAccent, BG: ColorAccent}
-	styleDim  = Style{Faint: true}
-	styleGood = Style{FG: ColorGood}
-	styleWarn = Style{FG: ColorWarn}
-	styleBad  = Style{FG: ColorBad}
-	styleKey  = Style{FG: ColorAccent, Bold: true}
+	styleBand   = Style{FG: ColorOnAccent, BG: ColorAccent, Bold: true}
+	styleBar    = Style{FG: ColorOnAccent, BG: ColorAccent}
+	styleDim    = Style{Faint: true}
+	styleGood   = Style{FG: ColorGood}
+	styleWarn   = Style{FG: ColorWarn}
+	styleBad    = Style{FG: ColorBad}
+	styleKey    = Style{FG: ColorAccent, Bold: true}
+	styleBorder = Style{Faint: true}
 )
 
 // sgr is the escape sequence that turns the style on, empty for the zero
@@ -118,4 +119,35 @@ func pad(s string, w int) string {
 		return s + strings.Repeat(" ", w-n)
 	}
 	return s
+}
+
+// spanWidth is the visible width of a run of spans — text runes only, since
+// styles live beside the text rather than in it.
+func spanWidth(spans []Span) int {
+	n := 0
+	for _, s := range spans {
+		n += len([]rune(s.Text))
+	}
+	return n
+}
+
+// clipSpans truncates a run of spans to a width, whole runes only, ellipsis
+// last — the same contract a single cell's truncation keeps.
+func clipSpans(spans []Span, width int) []Span {
+	if width <= 0 || spanWidth(spans) <= width {
+		return spans
+	}
+	out := make([]Span, 0, len(spans))
+	budget := width - 1
+	for _, s := range spans {
+		r := []rune(s.Text)
+		if len(r) < budget {
+			out = append(out, s)
+			budget -= len(r)
+			continue
+		}
+		out = append(out, Span{Text: string(r[:budget]) + "…", Style: s.Style, Spin: s.Spin})
+		break
+	}
+	return out
 }

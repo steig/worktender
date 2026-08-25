@@ -3,6 +3,7 @@ package fleet
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,12 +28,19 @@ const (
 	glyphGhost     = "?"
 )
 
-// Line is one rendered board line: styled spans, plus the navigation target.
-// Target is nil on headings, notes and blanks; set on the rows a cursor can
-// land on.
+// The board draws itself as bordered panels, lazygit-style: rounded corners,
+// the title embedded in the top border, one cell of interior padding.
+const (
+	boxTL, boxTR = "╭", "╮"
+	boxBL, boxBR = "╰", "╯"
+	boxH, boxV   = "─", "│"
+)
+
+// Line is one rendered board line: styled spans. Selectability lives in the
+// View's hotspots, not on the line — with panels side by side, one visual
+// line can carry rows from two panels.
 type Line struct {
-	Spans  []Span
-	Target *Target
+	Spans []Span
 }
 
 // Plain is the line without its dressing — what the one-shot prints, and
@@ -50,11 +58,25 @@ func textLine(style Style, text string) Line {
 	return Line{Spans: []Span{{Text: text, Style: style}}}
 }
 
-// band is a section header: the title as an accent-background chip rather
-// than a bare uppercase word. Chips are word-width while the selected row's
-// highlight is full-width, so the two accent uses stay distinguishable.
-func band(title string) Line {
-	return textLine(styleBand, " "+title+" ")
+// Hotspot is one selectable row: the line it lives on, the span range the
+// selection highlight paints — the panel's interior, not the whole screen —
+// and the navigation target.
+type Hotspot struct {
+	Line int
+	// SpanFrom and SpanTo bound the highlight, [from, to) over the line's
+	// spans.
+	SpanFrom, SpanTo int
+	Target           *Target
+	// rank orders navigation by urgency — escalations first — independent of
+	// where the panel sits on screen.
+	rank int
+}
+
+// View is one rendered board: the lines to draw and the rows a cursor can
+// visit, in navigation order.
+type View struct {
+	Lines []Line
+	Hots  []Hotspot
 }
 
 // Target is what navigation needs to know about a row: the pane to focus and
@@ -74,9 +96,10 @@ type Target struct {
 // cursor even when every row around it moved.
 func (t *Target) Key() string { return t.Root + "\x00" + t.Branch + "\x00" + t.PaneID }
 
-// layout is how many columns the pane has room for. Sections drop their
-// right-hand columns rather than wrapping: a narrow pane still shows what
-// each row is and how old, and the detail waits for width.
+// layout is how many columns a panel has room for, judged by its interior
+// width. Panels drop their right-hand columns rather than wrapping: a narrow
+// panel still shows what each row is and how old, and the detail waits for
+// width.
 type layout int
 
 const (
@@ -87,14 +110,33 @@ const (
 
 func layoutFor(width int) layout {
 	switch {
-	case width <= 0 || width >= 80:
+	case width >= 70:
 		return wide
-	case width >= 50:
+	case width >= 45:
 		return medium
 	default:
 		return narrow
 	}
 }
+
+// Widths of the composition: below twoColMin the panels stack in one
+// column; at or above it, IN FLIGHT takes the left three fifths and the
+// task panels stack on the right.
+const (
+	fallbackWidth = 100
+	twoColMin     = 110
+	minInner      = 20
+)
+
+// Section ranks: the order navigation walks the rows, most urgent first,
+// wherever the panels sit on screen.
+const (
+	rankEscalations = iota
+	rankInFlight
+	rankLanded
+	rankPeers
+	rankWorktrees
+)
 
 // cell is one table cell before alignment: its text and its dressing.
 type cell struct {
@@ -109,59 +151,173 @@ type rowSpec struct {
 	target *Target
 }
 
-// Lines renders the whole board as styled rows with their navigation
-// targets. One function for the one-shot print and the watch frame, so the
-// two cannot disagree about what the fleet looks like. width picks the
-// column layout and the top bar's span; zero or less means no pane is asking
-// and every column renders unpadded.
+// panelRow is one line of a panel's interior, ready to be boxed.
+type panelRow struct {
+	spans  []Span
+	target *Target
+}
+
+// block is a rendered region: lines plus the hotspots on them, line indices
+// local to the block so blocks compose.
+type block struct {
+	lines []Line
+	hots  []Hotspot
+}
+
+// Render draws the whole board: the top bar, the ledger's warnings, and the
+// sections as bordered panels — two columns when the pane is wide enough,
+// one stacked column when it is not. One function for the one-shot print and
+// the watch frame, so the two cannot disagree about what the fleet looks
+// like. width <= 0 means no pane is asking, and the board draws at a
+// scrollback-friendly default.
 //
 // The idle fleet is the default state and renders as a full screen, not a
 // blank one: the top bar and RECENTLY LANDED are always there, and the empty
 // sections say they are empty instead of not appearing.
-func Lines(b Board, width int) []Line {
-	l := layoutFor(width)
-	out := []Line{topBar(b, width)}
-	out = append(out, notes(b)...)
-
-	if len(b.Escalations) > 0 {
-		out = append(out, Line{}, band("ESCALATIONS"))
-		out = append(out, table(rowSpecs(b.Escalations, func(r *TaskRow) rowSpec {
-			return escalationRow(b.Now, r, l)
-		}))...)
+func Render(b Board, width int) View {
+	if width <= 0 {
+		width = fallbackWidth
 	}
 
-	out = append(out, Line{}, band("IN FLIGHT"))
-	out = append(out, inFlight(b, l)...)
+	head := block{lines: []Line{topBar(b, width)}}
+	head.lines = append(head.lines, notes(b)...)
+	head.lines = append(head.lines, Line{})
 
-	out = append(out, Line{}, band("RECENTLY LANDED"))
-	if len(b.Recent) == 0 {
-		out = append(out, placeholder("nothing landed in the last 7 days"))
+	var body block
+	if width >= twoColMin {
+		leftW := width * 3 / 5
+		left := stack(inFlightPanel(b, leftW-4), worktreesPanel(b, leftW-4))
+		right := stack(
+			escalationsPanel(b, width-leftW-5),
+			landedPanel(b, width-leftW-5),
+			peersPanel(b, width-leftW-5),
+		)
+		body = beside(left, leftW, right)
 	} else {
-		out = append(out, table(rowSpecs(b.Recent, func(r *TaskRow) rowSpec {
-			return landedRow(b.Now, r, l)
-		}))...)
+		inner := width - 4
+		if inner < minInner {
+			inner = minInner
+		}
+		body = stack(
+			escalationsPanel(b, inner),
+			inFlightPanel(b, inner),
+			landedPanel(b, inner),
+			peersPanel(b, inner),
+			worktreesPanel(b, inner),
+		)
 	}
 
-	if len(b.Peers) > 0 {
-		out = append(out, Line{}, band("PEERS"))
-		out = append(out, table(rowSpecs(b.Peers, func(r *TaskRow) rowSpec {
-			return peerRow(b.Now, r, l)
-		}))...)
+	whole := stack(head, body)
+	view := View{Lines: whole.lines, Hots: whole.hots}
+	// Navigation order is urgency order — the cursor starts on an
+	// escalation when there is one — independent of panel placement.
+	sort.SliceStable(view.Hots, func(i, j int) bool { return view.Hots[i].rank < view.Hots[j].rank })
+	return view
+}
+
+// stack concatenates blocks vertically, re-basing hotspot line indices.
+func stack(blocks ...block) block {
+	var out block
+	for _, b := range blocks {
+		base := len(out.lines)
+		out.lines = append(out.lines, b.lines...)
+		for _, h := range b.hots {
+			h.Line += base
+			out.hots = append(out.hots, h)
+		}
 	}
 	return out
 }
 
-// placeholder is an empty section saying so: styled to recede, present so
-// the section reads as empty rather than broken.
-func placeholder(text string) Line {
-	return textLine(styleDim, "  "+text)
+// beside lays two blocks side by side with a one-cell gap, left column fixed
+// at leftW. Hotspots keep their rows: a right-panel row's span range shifts
+// by however many spans the left half of its line has.
+func beside(left block, leftW int, right block) block {
+	var out block
+	n := len(left.lines)
+	if len(right.lines) > n {
+		n = len(right.lines)
+	}
+	offsets := make([]int, n)
+	for i := 0; i < n; i++ {
+		var spans []Span
+		if i < len(left.lines) {
+			spans = append(spans, left.lines[i].Spans...)
+		}
+		if w := spanWidth(spans); w < leftW {
+			spans = append(spans, Span{Text: strings.Repeat(" ", leftW-w)})
+		}
+		spans = append(spans, Span{Text: " "})
+		offsets[i] = len(spans)
+		if i < len(right.lines) {
+			spans = append(spans, right.lines[i].Spans...)
+		}
+		out.lines = append(out.lines, Line{Spans: spans})
+	}
+	out.hots = append(out.hots, left.hots...)
+	for _, h := range right.hots {
+		h.SpanFrom += offsets[h.Line]
+		h.SpanTo += offsets[h.Line]
+		out.hots = append(out.hots, h)
+	}
+	return out
+}
+
+// panel boxes rows into a bordered card: rounded corners, the title in the
+// top border, one cell of interior padding. Rows are clipped to the interior
+// and padded to it, so a selected row's highlight fills the panel exactly.
+// A panel with no rows renders its empty line instead — or nothing at all
+// when it has no empty line to speak.
+func panel(title string, rank, innerW int, rows []panelRow, empty string) block {
+	if len(rows) == 0 {
+		if empty == "" {
+			return block{}
+		}
+		rows = []panelRow{{spans: []Span{{Text: empty, Style: styleDim}}}}
+	}
+
+	// Top border: ╭─ TITLE ────╮ is 5 runes of frame around the title, so
+	// the dashes fill what is left of innerW+4.
+	t := truncate(title, innerW-1)
+	fill := innerW - 1 - len([]rune(t))
+	if fill < 0 {
+		fill = 0
+	}
+	var out block
+	out.lines = append(out.lines, Line{Spans: []Span{
+		{Text: boxTL + boxH + " ", Style: styleBorder},
+		{Text: t, Style: styleKey},
+		{Text: " " + strings.Repeat(boxH, fill) + boxTR, Style: styleBorder},
+	}})
+
+	for _, row := range rows {
+		spans := clipSpans(row.spans, innerW)
+		lineSpans := make([]Span, 0, len(spans)+3)
+		lineSpans = append(lineSpans, Span{Text: boxV + " ", Style: styleBorder})
+		lineSpans = append(lineSpans, spans...)
+		if w := spanWidth(spans); w < innerW {
+			lineSpans = append(lineSpans, Span{Text: strings.Repeat(" ", innerW-w)})
+		}
+		from, to := 1, len(lineSpans)
+		lineSpans = append(lineSpans, Span{Text: " " + boxV, Style: styleBorder})
+		if row.target != nil {
+			out.hots = append(out.hots, Hotspot{
+				Line: len(out.lines), SpanFrom: from, SpanTo: to,
+				Target: row.target, rank: rank,
+			})
+		}
+		out.lines = append(out.lines, Line{Spans: lineSpans})
+	}
+
+	out.lines = append(out.lines, textLine(styleBorder, boxBL+strings.Repeat(boxH, innerW+2)+boxBR))
+	return out
 }
 
 // topBar is the header bar a person reads before anything else, and the one
 // line the board always has: the board's name, the machine it is watching,
 // what the fleet is doing, and how fresh the ledger under it is. It is a
-// full-width accent bar when a width is known; the counts stay plain text so
-// a pipe reads them too.
+// full-width accent bar; the counts stay plain text so a pipe reads them
+// too.
 func topBar(b Board, width int) Line {
 	workers := 0
 	for _, repo := range b.Repos {
@@ -192,10 +348,8 @@ func topBar(b Board, width int) Line {
 		{Text: " FLEET ", Style: styleBand},
 		{Text: " " + strings.Join(parts, " · ") + " ", Style: styleBar},
 	}}
-	if width > 0 {
-		if n := len([]rune(line.Plain())); n < width {
-			line.Spans = append(line.Spans, Span{Text: strings.Repeat(" ", width-n), Style: styleBar})
-		}
+	if n := spanWidth(line.Spans); n < width {
+		line.Spans = append(line.Spans, Span{Text: strings.Repeat(" ", width-n), Style: styleBar})
 	}
 	return line
 }
@@ -240,47 +394,97 @@ func notes(b Board) []Line {
 	return out
 }
 
-// inFlight is the live fleet: each repository's worktrees, then the
-// dispatched tasks with nothing on the ground flying them. An empty section
-// says so — the idle fleet is the default state, and a heading over nothing
-// reads as broken.
-func inFlight(b Board, l layout) []Line {
-	var out []Line
+func escalationsPanel(b Board, innerW int) block {
+	l := layoutFor(innerW)
+	return panel("ESCALATIONS", rankEscalations, innerW, tableRows(rowSpecsOf(b.Escalations, func(r *TaskRow) rowSpec {
+		return escalationRow(b.Now, r, l)
+	})), "")
+}
+
+// inFlight reports whether a live row is actually in flight: an agent in the
+// middle of something, or an open ledger task on the worktree. An idle main
+// or a branch checkout nobody dispatched is capacity, not flight — it lives
+// in the WORKTREES panel instead.
+func inFlight(r *LiveRow) bool {
+	if r.Task != nil {
+		return true
+	}
+	return r.AgentStatus == "working" || r.AgentStatus == "blocked"
+}
+
+// inFlightPanel is the work: the live rows that are actually flying, then
+// the dispatched tasks with nothing on the ground flying them. Rows carry
+// repo/branch names — the panel replaces the per-repository grouping, and
+// the full root only earns its width when a repository cannot be read.
+func inFlightPanel(b Board, innerW int) block {
+	l := layoutFor(innerW)
+	var specs []rowSpec
+	var broken []panelRow
 	for _, repo := range b.Repos {
-		out = append(out, textLine(styleDim, "  "+safetext.Escape(repo.Root)))
 		if repo.Err != "" {
-			out = append(out, Line{Spans: []Span{
-				{Text: "    " + glyphFailed + " ", Style: styleBad},
-				{Text: "cannot be read: " + safetext.Escape(repo.Err)},
+			broken = append(broken, panelRow{spans: []Span{
+				{Text: glyphFailed + " ", Style: styleBad},
+				{Text: safetext.Escape(repo.Root) + ": " + safetext.Escape(repo.Err)},
 			}})
 			continue
 		}
-		if len(repo.Rows) == 0 {
-			out = append(out, textLine(styleDim, "    no worktrees"))
-			continue
+		for _, row := range repo.Rows {
+			if inFlight(row) {
+				specs = append(specs, liveRow(b.Now, row, l))
+			}
 		}
-		out = append(out, table(rowSpecs(repo.Rows, func(r *LiveRow) rowSpec {
-			return liveRow(b.Now, r, l)
-		}))...)
-	}
-	if len(b.Repos) == 0 {
-		out = append(out, placeholder("nothing in flight — herdr has no worktree workspaces open"))
 	}
 
+	rows := append(broken, tableRows(specs)...)
 	if len(b.Orphans) > 0 {
-		out = append(out, Line{Spans: []Span{
-			{Text: "  " + glyphEscalated + " ", Style: styleWarn},
+		rows = append(rows, panelRow{spans: []Span{
+			{Text: glyphEscalated + " ", Style: styleWarn},
 			{Text: "dispatched, no live worktree", Style: styleDim},
 		}})
-		out = append(out, table(rowSpecs(b.Orphans, func(r *TaskRow) rowSpec {
+		rows = append(rows, tableRows(rowSpecsOf(b.Orphans, func(r *TaskRow) rowSpec {
 			return orphanRow(b.Now, r, l)
 		}))...)
 	}
-	return out
+
+	empty := "nothing in flight"
+	if len(b.Repos) == 0 {
+		empty = "nothing in flight — herdr has no worktree workspaces open"
+	}
+	return panel("IN FLIGHT", rankInFlight, innerW, rows, empty)
 }
 
-// rowSpecs builds one section's rows.
-func rowSpecs[T any](rows []T, spec func(T) rowSpec) []rowSpec {
+// worktreesPanel is the capacity behind the flight: mains, idle checkouts,
+// ghosts — dim, compact, still navigable so a pane is one enter away.
+func worktreesPanel(b Board, innerW int) block {
+	var specs []rowSpec
+	for _, repo := range b.Repos {
+		if repo.Err != "" {
+			continue
+		}
+		for _, row := range repo.Rows {
+			if !inFlight(row) {
+				specs = append(specs, worktreeRow(row))
+			}
+		}
+	}
+	return panel("WORKTREES", rankWorktrees, innerW, tableRows(specs), "")
+}
+
+func landedPanel(b Board, innerW int) block {
+	l := layoutFor(innerW)
+	return panel("RECENTLY LANDED", rankLanded, innerW, tableRows(rowSpecsOf(b.Recent, func(r *TaskRow) rowSpec {
+		return landedRow(b.Now, r, l)
+	})), "nothing landed in the last 7 days")
+}
+
+func peersPanel(b Board, innerW int) block {
+	l := layoutFor(innerW)
+	return panel("PEERS", rankPeers, innerW, tableRows(rowSpecsOf(b.Peers, func(r *TaskRow) rowSpec {
+		return peerRow(b.Now, r, l)
+	})), "")
+}
+
+func rowSpecsOf[T any](rows []T, spec func(T) rowSpec) []rowSpec {
 	out := make([]rowSpec, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, spec(row))
@@ -289,14 +493,14 @@ func rowSpecs[T any](rows []T, spec func(T) rowSpec) []rowSpec {
 }
 
 // colCap bounds any one column so a long branch name or reason cannot push
-// the columns beside it off the pane; the cell ends in an ellipsis instead.
+// the columns beside it off the panel; the cell ends in an ellipsis instead.
 const colCap = 40
 
-// table aligns one section's rows into columns: each column as wide as its
-// widest cell up to the cap, two spaces between columns, every cell keeping
-// its own style. Alignment counts visible runes — the styles ride beside the
-// text, not in it.
-func table(rows []rowSpec) []Line {
+// tableRows aligns one section's rows into columns: each column as wide as
+// its widest cell up to the cap, two spaces between columns, every cell
+// keeping its own style. Alignment counts visible runes — the styles ride
+// beside the text, not in it.
+func tableRows(rows []rowSpec) []panelRow {
 	var widths []int
 	for _, r := range rows {
 		for i, c := range r.cells {
@@ -313,7 +517,7 @@ func table(rows []rowSpec) []Line {
 		}
 	}
 
-	out := make([]Line, 0, len(rows))
+	out := make([]panelRow, 0, len(rows))
 	for _, r := range rows {
 		spans := make([]Span, 0, len(r.cells))
 		for i, c := range r.cells {
@@ -323,13 +527,13 @@ func table(rows []rowSpec) []Line {
 			}
 			spans = append(spans, Span{Text: text, Style: c.style, Spin: c.spin})
 		}
-		out = append(out, Line{Spans: spans, Target: r.target})
+		out = append(out, panelRow{spans: spans, target: r.target})
 	}
 	return out
 }
 
 func escalationRow(now time.Time, r *TaskRow, l layout) rowSpec {
-	glyph := cell{text: "  " + glyphEscalated, style: styleBad}
+	glyph := cell{text: glyphEscalated, style: styleBad}
 	var cells []cell
 	if l == narrow {
 		cells = []cell{
@@ -366,10 +570,10 @@ func escalationTarget(r *TaskRow) *Target {
 // spins while the agent works.
 func liveState(r *LiveRow) (string, Style, bool) {
 	switch {
-	case r.Main:
-		return glyphMain, styleDim, false
 	case r.Ghost:
 		return glyphGhost, styleWarn, false
+	case r.Main && r.AgentStatus != "working" && r.AgentStatus != "blocked":
+		return glyphMain, styleDim, false
 	}
 	if t := r.Task; t != nil {
 		switch {
@@ -399,25 +603,31 @@ func liveState(r *LiveRow) (string, Style, bool) {
 	return glyphIdle, styleDim, false
 }
 
-func liveRow(now time.Time, r *LiveRow, l layout) rowSpec {
-	glyph, style, spin := liveState(r)
+// liveName is repo/branch: the panel has no per-repository grouping, so the
+// row itself says where it is, basename only.
+func liveName(r *LiveRow) string {
 	name := r.Branch
 	if name == "" {
 		name = r.Dir
 	}
-	first := cell{text: "    " + glyph, style: style, spin: spin}
+	return filepath.Base(r.Root) + "/" + name
+}
+
+func liveRow(now time.Time, r *LiveRow, l layout) rowSpec {
+	glyph, style, spin := liveState(r)
+	first := cell{text: glyph, style: style, spin: spin}
 	var cells []cell
 	switch l {
 	case narrow:
 		cells = []cell{
 			first,
-			{text: dash(name)},
+			{text: dash(liveName(r))},
 			{text: ago(now, lastMoved(r)), style: styleDim},
 		}
 	case medium:
 		cells = []cell{
 			first,
-			{text: dash(name)},
+			{text: dash(liveName(r))},
 			{text: dash(r.AgentStatus), style: styleDim},
 			{text: dash(taskText(r.Task))},
 			{text: ago(now, lastMoved(r)), style: styleDim},
@@ -425,7 +635,7 @@ func liveRow(now time.Time, r *LiveRow, l layout) rowSpec {
 	default:
 		cells = []cell{
 			first,
-			{text: dash(name)},
+			{text: dash(liveName(r))},
 			{text: dash(r.AgentStatus), style: styleDim},
 			{text: dash(reportText(r.Report))},
 			{text: dash(taskText(r.Task))},
@@ -433,13 +643,27 @@ func liveRow(now time.Time, r *LiveRow, l layout) rowSpec {
 			{text: ago(now, lastMoved(r)), style: styleDim},
 		}
 	}
-	// The main checkout is context, not a worker: the whole row recedes.
-	if r.Main {
-		for i := range cells {
-			cells[i].style = styleDim
-		}
-	}
 	return rowSpec{cells: cells, target: liveTarget(r)}
+}
+
+// worktreeRow is a WORKTREES panel row: compact and entirely dim — capacity
+// the eye should be able to skip.
+func worktreeRow(r *LiveRow) rowSpec {
+	glyph := glyphIdle
+	switch {
+	case r.Ghost:
+		glyph = glyphGhost
+	case r.Main:
+		glyph = glyphMain
+	}
+	return rowSpec{
+		cells: []cell{
+			{text: glyph, style: styleDim},
+			{text: dash(liveName(r)), style: styleDim},
+			{text: dash(r.AgentStatus), style: styleDim},
+		},
+		target: liveTarget(r),
+	}
 }
 
 // lastMoved is the newest ledger timestamp the row has, zero when it has
@@ -492,7 +716,7 @@ func taskState(t *Task) (string, Style, bool) {
 
 func orphanRow(now time.Time, r *TaskRow, l layout) rowSpec {
 	glyph, style, spin := taskState(r.Task)
-	first := cell{text: "    " + glyph, style: style, spin: spin}
+	first := cell{text: glyph, style: style, spin: spin}
 	var cells []cell
 	switch l {
 	case narrow:
@@ -514,7 +738,9 @@ func orphanRow(now time.Time, r *TaskRow, l layout) rowSpec {
 }
 
 // landedState is how a terminal task closed: the verdict glyph the RECENTLY
-// LANDED section leads with, and the phrase beside it.
+// LANDED section leads with, and the phrase beside it. The verdict is the
+// task's last verify entry — a fail followed by a later pass landed as a
+// pass, which is what the fold's last-wins keeps.
 func landedState(t *Task) (glyph string, style Style, outcome string) {
 	switch {
 	case t.Verify != nil && t.Verify.Result == "pass":
@@ -532,7 +758,7 @@ func landedRow(now time.Time, r *TaskRow, l layout) rowSpec {
 	if r.Task.Report != nil && r.Task.Report.PR > 0 {
 		pr = "#" + strconv.Itoa(r.Task.Report.PR)
 	}
-	first := cell{text: "  " + glyph, style: style}
+	first := cell{text: glyph, style: style}
 	var cells []cell
 	switch l {
 	case narrow:
@@ -565,11 +791,7 @@ func landedRow(now time.Time, r *TaskRow, l layout) rowSpec {
 
 func peerRow(now time.Time, r *TaskRow, l layout) rowSpec {
 	glyph, style, spin := taskState(r.Task)
-	target := ""
-	if r.Task.Dispatch != nil {
-		target = r.Task.Dispatch.Target
-	}
-	first := cell{text: "  " + glyph, style: style, spin: spin}
+	first := cell{text: glyph, style: style, spin: spin}
 	var cells []cell
 	switch l {
 	case narrow:
@@ -582,14 +804,14 @@ func peerRow(now time.Time, r *TaskRow, l layout) rowSpec {
 		cells = []cell{
 			first,
 			{text: dash(r.Task.ID)},
-			{text: dash(target)},
+			{text: dash(r.Task.Target)},
 			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	default:
 		cells = []cell{
 			first,
 			{text: dash(r.Task.ID)},
-			{text: dash(target)},
+			{text: dash(r.Task.Target)},
 			{text: dash(r.Task.Summary())},
 			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
@@ -620,11 +842,13 @@ func taskTarget(r *TaskRow) *Target {
 }
 
 // taskPlace is "repo#issue" as the dispatch named them, basename only: the
-// full root earns its width on the repository headings, where failure needs
-// it, not on every task row.
+// full root earns its width where failure needs it, not on every task row.
+// Work that never named a repository — a task steered to a peer session —
+// shows the session it lives with instead, which is the answer to the same
+// "where is this" question.
 func taskPlace(t *Task) string {
-	if t.Dispatch == nil {
-		return ""
+	if t.Dispatch == nil || t.Dispatch.Repo == "" {
+		return t.Target
 	}
 	place := filepath.Base(t.Dispatch.Repo)
 	if t.Dispatch.Issue > 0 {
