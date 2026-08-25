@@ -210,6 +210,45 @@ Errors you are most likely to meet:
   taken. It stops two reconciles duplicating work; **it is not a safety
   control** — the guards that are re-checked immediately before removal are.
 
+## The fleet board
+
+`worktender fleet board` renders the fleet ledger — the append-only record a
+fleet controller keeps at `~/.local/state/fleet/ledger.jsonl`, per
+[the ledger contract](fleet-ledger-contract.md) — merged with the live
+`ls --all-repos --reports` view: every repository herdr has worktree
+workspaces for, each worktree's agent status, what its worker last reported,
+and pull request state for the rows where the fleet claims one exists.
+Escalations render on top, safety tier first. Once and exit by default;
+`--json` for the document; `--watch` for the cockpit:
+
+```sh
+worktender fleet board --watch
+```
+
+Watch mode redraws as the fleet moves and adds a cursor: `j`/`k` move,
+`enter` jumps to the selected worker's pane (herdr's `agent focus`, so
+jumping to a `done` worker also marks it seen), `o` opens the row's pull
+request in the browser, `r` refreshes now, `q` quits. It is **read-only plus
+navigation** — nothing on the board changes state. It needs a unix terminal;
+the one-shot and `--json` run anywhere.
+
+The board ships as a herdr pane entrypoint, so the whole cockpit — open the
+pane, or focus it where it is already open — is one command:
+
+```sh
+herdr plugin pane open --plugin steig.worktender --entrypoint board --focus
+```
+
+Plugins cannot ship keybindings (see the next section), so binding a key to
+that line is yours to do, in your own `config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+alt+f"
+type = "shell"
+command = "herdr plugin pane open --plugin steig.worktender --entrypoint board --focus"
+```
+
 ## Binding a key to an action
 
 herdr has no `plugin_action` keybinding type — its key commands are `command`,
