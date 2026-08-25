@@ -468,7 +468,8 @@ coordinator keeps (see [the contract](docs/fleet-ledger-contract.md)) merged
 with the live `ls --all-repos --reports` view and pull request state,
 escalations on top, redrawn as the fleet moves. Navigation only — jump to a
 worker's pane, open a row's pull request — never state-changing. It ships as a
-pane entrypoint, opened or refocused with one command:
+popup pane entrypoint — summoned over whatever you are doing, then dismissed —
+raised or refocused with one command:
 
 ```sh
 herdr plugin pane open --plugin steig.worktender --entrypoint board --focus

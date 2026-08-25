@@ -108,15 +108,16 @@ command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "& .\\bin\
 # manifest surface for a plugin to declare one anyway. See "The fleet board" in
 # docs/reference.md.
 #
-# Placement `tab` for a dedicated surface rather than an overlay on whatever
-# pane happened to be active. No windows twin: watch mode drives the terminal
-# through stty, which windows does not have.
+# Placement `popup`: the board is a cockpit to summon over whatever is in
+# hand — glance, jump, dismiss — not a destination to switch tabs to. The
+# open command above is unchanged; it now raises the popup. No windows twin:
+# watch mode drives the terminal through stty, which windows does not have.
 [[panes]]
 id = "board"
 title = "Worktender: fleet board"
 description = "The fleet ledger merged with live worktree, agent and pull request state; escalations on top."
 platforms = ["linux", "macos"]
-placement = "tab"
+placement = "popup"
 command = ["./bin/worktender", "fleet", "board", "--watch"]
 
 # Startup — the one-shot herdr runs after the server is ready.

@@ -254,8 +254,10 @@ request in the browser, `r` refreshes now, `?` shows the full key list, `q`
 quits. It is **read-only plus navigation** — nothing on the board changes
 state. It needs a unix terminal; the one-shot and `--json` run anywhere.
 
-The board ships as a herdr pane entrypoint, so the whole cockpit — open the
-pane, or focus it where it is already open — is one command:
+The board ships as a herdr pane entrypoint placed as a **popup** — a cockpit
+summoned over whatever you are doing, glanced at and dismissed, rather than a
+tab to switch to. The whole cockpit — raise the popup, or focus it where it
+is already open — is one command:
 
 ```sh
 herdr plugin pane open --plugin steig.worktender --entrypoint board --focus
