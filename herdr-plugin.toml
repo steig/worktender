@@ -143,6 +143,30 @@ command = ["./bin/worktender", "startup"]
 platforms = ["windows"]
 command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "& .\\bin\\worktender.exe startup"]
 
+# Fleet controller staffing — the second startup one-shot, behind a gate of
+# its own.
+#
+# THIS DOES NOTHING UNLESS FLEET_CONTROLLER IS SET, and that gate is separate
+# from WORKTENDER_EVENTS on purpose: events start workers inside worktrees the
+# user already made, while this starts the always-on session that dispatches
+# workers across every repository on the machine. Different blast radii,
+# different opt-ins. The gate reads the same values the events gate reads and
+# fails closed the same way — an unrecognised value is off, and the run says
+# so. It is armed by a human exporting it into herdr's own environment;
+# nothing worktender starts is ever handed it.
+#
+# The lease is a live agent named `fleet`, never the pane: herdr restores
+# panes across a restart but not the processes in them, so after a restart the
+# pane exists exactly when the controller is gone. Re-staffing resumes the
+# controller's own conversation with --continue.
+[[startup]]
+platforms = ["linux", "macos"]
+command = ["./bin/worktender", "fleet", "staff"]
+
+[[startup]]
+platforms = ["windows"]
+command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "& .\\bin\\worktender.exe fleet staff"]
+
 # Events — the live half. herdr invokes these when worktrees appear, so a new
 # checkout is adopted and staffed as it happens rather than the next time
 # someone remembers to run `sync`.

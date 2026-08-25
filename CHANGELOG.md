@@ -10,6 +10,17 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ### Added
 
+- **`worktender fleet staff` — the controller staffing one-shot.** (#158) A
+  second `[[startup]]` entry that staffs the machine's `fleet` controller
+  session in a dedicated workspace, armed only by the new `FLEET_CONTROLLER`
+  gate — the exact `WORKTENDER_EVENTS` semantics (fail-closed, unrecognised
+  values stay off and are named), on a separate variable because dispatching
+  work across every repository is a different blast radius from staffing
+  worktrees. The lease is a live agent named `fleet`, never pane existence —
+  herdr restores panes across restarts but not their processes — and a
+  re-staff resumes the controller's own conversation with `--continue`, then
+  briefs it to load the fleet-coordinator skill.
+
 - **The repository now installs as a Claude Code plugin.** (#151)
   `.claude-plugin/plugin.json` names the plugin `worktender` and Claude Code
   auto-discovers the existing `skills/worktrees` and `skills/coordinator`, so a
