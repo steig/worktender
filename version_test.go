@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
@@ -51,6 +52,45 @@ func TestTheManifestVersionMatchesTheNewestRelease(t *testing.T) {
 			"scripts/build.sh downloads releases/download/v%s, so an installer without Go "+
 			"gets the wrong release or a 404 — and an installer with Go compiles from source "+
 			"and never notices. Move both together.", version, newest, version)
+	}
+}
+
+// .claude-plugin/plugin.json is the same manifest problem again, one install
+// path over. A Claude Code marketplace entry sourcing this repository reads its
+// version from that file, and nothing else does — so a stale value never breaks
+// anything, it just tells everyone who lists the plugin that they are on a
+// release they are not. Pin it to the same CHANGELOG heading the herdr manifest
+// is pinned to, so the release commit moves all three together.
+func TestThePluginManifestVersionMatchesTheNewestRelease(t *testing.T) {
+	raw, err := os.ReadFile(".claude-plugin/plugin.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version == "" {
+		t.Fatal(".claude-plugin/plugin.json has no version; the marketplace listing would show none")
+	}
+
+	changelog, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := regexp.MustCompile(`(?m)^## \[(\d+\.\d+\.\d+)\]`).FindSubmatch(changelog)
+	if released == nil {
+		t.Fatal("CHANGELOG.md has no released version heading")
+	}
+	newest := string(released[1])
+
+	if manifest.Version != newest {
+		t.Errorf(".claude-plugin/plugin.json says %s and the newest CHANGELOG release is %s.\n"+
+			"The Claude Code marketplace shows the plugin.json version, so everyone who lists "+
+			"the plugin is told they are on the wrong release. Move both together.",
+			manifest.Version, newest)
 	}
 }
 

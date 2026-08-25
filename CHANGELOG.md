@@ -8,7 +8,15 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **The repository now installs as a Claude Code plugin.** (#151)
+  `.claude-plugin/plugin.json` names the plugin `worktender` and Claude Code
+  auto-discovers the existing `skills/worktrees` and `skills/coordinator`, so a
+  marketplace entry sourcing this repository ships both skills versioned in
+  lockstep with the tool. The manifest's version is pinned to the newest
+  CHANGELOG release by the same kind of test that pins `herdr-plugin.toml`, so
+  a release commit moves all three together.
 
 ## [0.9.1] — 2026-08-15
 
