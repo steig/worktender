@@ -22,6 +22,12 @@ type BoardJSON struct {
 	// UnmatchedTasks are open ledger tasks no live worktree matched: work
 	// that should be in flight with nothing on the ground flying it.
 	UnmatchedTasks []TaskRowJSON `json:"unmatched_tasks"`
+	// PeerTasks are open tasks dispatched to peer sessions — no worktree by
+	// design, so they are not the divergence unmatched_tasks names.
+	PeerTasks []TaskRowJSON `json:"peer_tasks"`
+	// RecentlyLanded are the last terminal tasks, newest first, the same rows
+	// the board's RECENTLY LANDED section draws.
+	RecentlyLanded []TaskRowJSON `json:"recently_landed"`
 }
 
 // LedgerJSON says what the reading of the ledger was like, because a board
@@ -34,6 +40,9 @@ type LedgerJSON struct {
 	Malformed      int  `json:"malformed"`
 	UnknownVersion bool `json:"unknown_version"`
 	StaleOpenTasks int  `json:"stale_open_tasks"`
+	// LastTS is the newest entry's timestamp — the freshness the board's
+	// header reports — null when the ledger is missing or empty.
+	LastTS *string `json:"last_ts"`
 }
 
 // RepoJSON is one repository's live rows. The same shape and reasons as the
@@ -102,6 +111,11 @@ func JSON(b Board) BoardJSON {
 		Escalations:    make([]TaskRowJSON, 0, len(b.Escalations)),
 		Repositories:   make([]RepoJSON, 0, len(b.Repos)),
 		UnmatchedTasks: make([]TaskRowJSON, 0, len(b.Orphans)),
+		PeerTasks:      make([]TaskRowJSON, 0, len(b.Peers)),
+		RecentlyLanded: make([]TaskRowJSON, 0, len(b.Recent)),
+	}
+	if !b.LedgerTS.IsZero() {
+		out.Ledger.LastTS = jsonout.String(b.LedgerTS.Format(time.RFC3339))
 	}
 	for _, row := range b.Escalations {
 		out.Escalations = append(out.Escalations, taskRowJSON(row))
@@ -121,6 +135,12 @@ func JSON(b Board) BoardJSON {
 	}
 	for _, row := range b.Orphans {
 		out.UnmatchedTasks = append(out.UnmatchedTasks, taskRowJSON(row))
+	}
+	for _, row := range b.Peers {
+		out.PeerTasks = append(out.PeerTasks, taskRowJSON(row))
+	}
+	for _, row := range b.Recent {
+		out.RecentlyLanded = append(out.RecentlyLanded, taskRowJSON(row))
 	}
 	return out
 }

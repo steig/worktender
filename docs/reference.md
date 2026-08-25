@@ -218,8 +218,18 @@ fleet controller keeps at `~/.local/state/fleet/ledger.jsonl`, per
 `ls --all-repos --reports` view: every repository herdr has worktree
 workspaces for, each worktree's agent status, what its worker last reported,
 and pull request state for the rows where the fleet claims one exists.
-Escalations render on top, safety tier first. Once and exit by default;
-`--json` for the document; `--watch` for the cockpit:
+
+The board is sectioned, most urgent first: **ESCALATIONS** (red, only when
+there are any, safety tier first) → **IN FLIGHT** (the live worktrees per
+repository, plus dispatched tasks with no live worktree) → **RECENTLY
+LANDED** (the last ten closed tasks — verdict glyph, pull request, repository,
+how long ago) → **PEERS** (open tasks dispatched to peer sessions). A summary
+header always leads — escalation and in-flight counts, workers, ledger
+freshness — and the idle fleet renders the header and what recently landed
+rather than a blank screen. Rows carry a state glyph (`!` escalated, `●`
+working, `✓` verified, `✗` failed, `◌` blocked, `·` idle), times are relative
+("4m ago"), and narrow panes drop detail columns rather than wrapping. Once
+and exit by default; `--json` for the document; `--watch` for the cockpit:
 
 ```sh
 worktender fleet board --watch
@@ -228,9 +238,9 @@ worktender fleet board --watch
 Watch mode redraws as the fleet moves and adds a cursor: `j`/`k` move,
 `enter` jumps to the selected worker's pane (herdr's `agent focus`, so
 jumping to a `done` worker also marks it seen), `o` opens the row's pull
-request in the browser, `r` refreshes now, `q` quits. It is **read-only plus
-navigation** — nothing on the board changes state. It needs a unix terminal;
-the one-shot and `--json` run anywhere.
+request in the browser, `r` refreshes now, `?` shows the full key list, `q`
+quits. It is **read-only plus navigation** — nothing on the board changes
+state. It needs a unix terminal; the one-shot and `--json` run anywhere.
 
 The board ships as a herdr pane entrypoint, so the whole cockpit — open the
 pane, or focus it where it is already open — is one command:

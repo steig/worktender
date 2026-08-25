@@ -70,10 +70,21 @@ func watchBoard(client *herdrapi.Client, out io.Writer) error {
 	ticker := time.NewTicker(watchInterval)
 	defer ticker.Stop()
 
+	// The render is width-aware — narrow panes drop columns — so the lines are
+	// rebuilt from the last board whenever the terminal is a different size
+	// than the frame it drew last. Refresh keeps the cursor by row identity,
+	// which a width change does not move.
 	model := fleet.Model{Sel: -1}
+	var board fleet.Board
+	haveBoard := false
+	lastWidth := 0
 	status := "loading fleet…"
 	draw := func() {
 		width, height := termSize()
+		if haveBoard && width != lastWidth {
+			model.Refresh(fleet.Lines(board, width))
+			lastWidth = width
+		}
 		fmt.Fprint(out, "\x1b[H\x1b[2J"+model.Frame(width, height, status))
 	}
 	draw()
@@ -86,16 +97,27 @@ func watchBoard(client *herdrapi.Client, out io.Writer) error {
 				// refresh that failed is a status line, not a blank fleet.
 				status = res.err.Error()
 			} else {
-				model.Refresh(fleet.Lines(res.board))
+				board, haveBoard, lastWidth = res.board, true, -1
 				status = ""
 			}
 			draw()
 		case <-ticker.C:
 			request()
 		case key := <-keys:
-			switch key {
-			case keyQuit:
+			if key == keyQuit {
 				return nil
+			}
+			if model.Help {
+				// The overlay is modal the cheap way: any key puts the board
+				// back, and does nothing else — a navigation pressed at a key
+				// list should not navigate.
+				model.Help = false
+				draw()
+				continue
+			}
+			switch key {
+			case keyHelp:
+				model.Help = true
 			case keyDown:
 				model.Move(1)
 				status = ""
@@ -187,6 +209,7 @@ const (
 	keyFocus
 	keyOpenPR
 	keyRefresh
+	keyHelp
 )
 
 // readKeys turns raw stdin bytes into board keys. It exits when the reader
@@ -244,6 +267,8 @@ func readKeys(r io.Reader, keys chan<- boardKey) {
 			keys <- keyOpenPR
 		case 'r':
 			keys <- keyRefresh
+		case '?':
+			keys <- keyHelp
 		}
 	}
 }

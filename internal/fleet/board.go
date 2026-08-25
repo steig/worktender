@@ -25,14 +25,30 @@ type Board struct {
 	// whose checkout is gone, or was never here. The divergence between what
 	// should be in flight and what is, which is the board's reason to exist.
 	Orphans []*TaskRow
+	// Peers are open tasks dispatched to peer sessions rather than worktree
+	// workers — work with no checkout to land on by design, kept apart from
+	// the orphans because a peer with no worktree is the ordinary case, not
+	// the divergence.
+	Peers []*TaskRow
+	// Recent is the RECENTLY LANDED section: the last terminal tasks, newest
+	// first. It is what the idle fleet shows — the board's default state is
+	// nothing in flight, and that state must read as "here is what just
+	// happened", never as a blank screen.
+	Recent []*TaskRow
+
+	// InFlight counts the open, unescalated tasks, for the summary header.
+	InFlight int
 
 	// LedgerFound is false when there is no ledger file yet — an ordinary
 	// state, said in the header rather than implied by empty sections.
 	LedgerFound bool
 	LedgerPath  string
-	Stale       int
-	Malformed   int
-	UnknownVer  bool
+	// LedgerTS is the newest entry's timestamp — the freshness the summary
+	// header reports — zero when the ledger is missing or empty.
+	LedgerTS   time.Time
+	Stale      int
+	Malformed  int
+	UnknownVer bool
 }
 
 // RepoSection is one repository's live rows.
@@ -67,8 +83,15 @@ type TaskRow struct {
 func Build(repos []wt.Repo, ledger Ledger, path string, found bool, now time.Time, lookupPR func(root, branch string) (string, error)) Board {
 	b := Board{Now: now, LedgerFound: found, LedgerPath: path,
 		Malformed: ledger.Malformed, UnknownVer: ledger.UnknownVersion}
+	if n := len(ledger.Entries); n > 0 {
+		// The last line in file order rather than the max timestamp: appends
+		// are the authority on what happened after what, and the timestamps
+		// are whatever clock the writer had.
+		b.LedgerTS = ledger.Entries[n-1].TS
+	}
 
-	open, stale := Open(Fold(ledger.Entries), now)
+	folded := Fold(ledger.Entries)
+	open, stale := Open(folded, now)
 	b.Stale = stale
 
 	var live []*LiveRow
@@ -94,13 +117,24 @@ func Build(repos []wt.Repo, ledger Ledger, path string, found bool, now time.Tim
 			if row != nil && row.Task == nil {
 				row.Task = t
 			}
-		case row == nil:
-			b.Orphans = append(b.Orphans, &TaskRow{Task: t})
-		default:
+		case row != nil:
+			b.InFlight++
 			row.Task = t
+		case t.Dispatch != nil && t.Dispatch.Executor == "peer":
+			b.InFlight++
+			b.Peers = append(b.Peers, &TaskRow{Task: t})
+		default:
+			b.InFlight++
+			b.Orphans = append(b.Orphans, &TaskRow{Task: t})
 		}
 	}
 	sortEscalations(b.Escalations)
+
+	// The landed tasks still match live rows when their worktrees are up, so
+	// jump-to-worker keeps working on a row whose work just finished.
+	for _, t := range Landed(folded, now) {
+		b.Recent = append(b.Recent, &TaskRow{Task: t, Live: match(t, live)})
+	}
 
 	if lookupPR != nil {
 		withPRStates(live, lookupPR)

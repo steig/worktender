@@ -11,6 +11,9 @@ type Model struct {
 	Lines []Line
 	// Sel indexes Lines; -1 when the board has no selectable row.
 	Sel int
+	// Help draws the key overlay instead of the board. The footer stays slim
+	// because this is where the full list lives.
+	Help bool
 	// top is the first line the viewport shows, kept so scrolling follows the
 	// cursor rather than snapping.
 	top int
@@ -95,17 +98,39 @@ func (m *Model) Refresh(lines []Line) {
 	}
 }
 
-// selected is the ANSI dressing on the cursor row. Reverse video rather than
-// color, because the board runs inside whatever theme the user's terminal
-// already has and reverse is the one emphasis every theme renders.
+// The cursor row is reverse video rather than another color, because the
+// board runs inside whatever theme the user's terminal already has and
+// reverse is the one emphasis every theme renders. Tones from the render ride
+// under it; reset ends both at once.
 const (
-	invertOn  = "\x1b[7m"
-	invertOff = "\x1b[27m"
+	invertOn = "\x1b[7m"
+	sgrReset = "\x1b[0m"
 )
 
-// Frame renders the viewport: width×height cells of the board with the cursor
-// row inverted and a status/key line at the bottom. It returns the text only —
-// screen clearing and cursor hiding belong to the terminal owner, not here.
+// footer is the slim one-line default at the bottom of every frame. The full
+// key list lives behind `?` — a cockpit's floor line, not its manual.
+const footer = "j/k move · enter focus · o pr · ? keys · q quit"
+
+// helpLines is the `?` overlay: every key the board answers, in one place.
+var helpLines = []string{
+	"fleet board keys",
+	"",
+	"  j / k, ↓ / ↑    move the cursor",
+	"  g / G           first / last row",
+	"  enter, f        focus the worker's pane",
+	"  o               open the row's pull request",
+	"  r               refresh now",
+	"  ?               toggle this help",
+	"  q, ctrl-c       quit",
+	"",
+	"read-only plus navigation: nothing on the board changes state",
+}
+
+// Frame renders the viewport: width×height cells of the board with each
+// line's tone painted, the cursor row inverted, and a status/footer line at
+// the bottom. It returns the text only — screen clearing and cursor hiding
+// belong to the terminal owner, not here. With Help set it draws the key
+// overlay instead of the board.
 //
 // Lines are joined with \r\n because the watch terminal is in raw mode, where
 // a bare \n moves down without returning.
@@ -115,8 +140,22 @@ func (m *Model) Frame(width, height int, status string) string {
 	}
 	body := height - 1
 
-	m.scrollTo(body)
 	var sb strings.Builder
+	if m.Help {
+		for i := 0; i < body; i++ {
+			if i > 0 {
+				sb.WriteString("\r\n")
+			}
+			if i < len(helpLines) {
+				sb.WriteString(clip(helpLines[i], width))
+			}
+		}
+		sb.WriteString("\r\n")
+		sb.WriteString(clip("any key closes help", width))
+		return sb.String()
+	}
+
+	m.scrollTo(body)
 	for i := m.top; i < m.top+body; i++ {
 		if i > m.top {
 			sb.WriteString("\r\n")
@@ -125,14 +164,18 @@ func (m *Model) Frame(width, height int, status string) string {
 			continue
 		}
 		text := clip(m.Lines[i].Text, width)
+		prefix := m.Lines[i].Tone
 		if i == m.Sel {
-			text = invertOn + text + invertOff
+			prefix += invertOn
+		}
+		if prefix != "" {
+			text = prefix + text + sgrReset
 		}
 		sb.WriteString(text)
 	}
 	sb.WriteString("\r\n")
 	if status == "" {
-		status = "j/k move · enter focus worker · o open PR · r refresh · q quit"
+		status = footer
 	}
 	sb.WriteString(clip(status, width))
 	return sb.String()

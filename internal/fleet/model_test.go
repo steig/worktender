@@ -97,13 +97,56 @@ func TestFrameInvertsTheCursorRowAndClips(t *testing.T) {
 		t.Errorf("the inverted line is %q, want the cursor row", selected)
 	}
 	for _, line := range lines {
-		plain := strings.ReplaceAll(strings.ReplaceAll(line, invertOn, ""), invertOff, "")
+		plain := strings.ReplaceAll(strings.ReplaceAll(line, invertOn, ""), sgrReset, "")
 		if n := len([]rune(plain)); n > 5 {
 			t.Errorf("line %q is %d cells wide, over the 5-cell terminal", plain, n)
 		}
 	}
 	if !strings.Contains(lines[len(lines)-1], "…") {
 		t.Errorf("the key line did not clip: %q", lines[len(lines)-1])
+	}
+}
+
+// Tones ride under the cursor's reverse video and both end at the reset, so
+// a colored line never bleeds its color into the one below.
+func TestFramePaintsLineTones(t *testing.T) {
+	m := NewModel([]Line{
+		{Text: "ESCALATIONS", Tone: ToneAlert},
+		{Text: "row a", Tone: ToneBad, Target: &Target{Label: "a"}},
+	})
+	frame := m.Frame(80, 10, "")
+	if !strings.Contains(frame, ToneAlert+"ESCALATIONS"+sgrReset) {
+		t.Errorf("the heading's tone is not painted:\n%q", frame)
+	}
+	if !strings.Contains(frame, ToneBad+invertOn+"row a"+sgrReset) {
+		t.Errorf("the selected row lost its tone or inversion:\n%q", frame)
+	}
+}
+
+// The footer is one slim line; the full key list lives behind `?`.
+func TestFrameHelpOverlayCarriesTheFullKeyList(t *testing.T) {
+	m := NewModel(modelLines())
+	frame := m.Frame(80, 24, "")
+	if !strings.Contains(frame, footer) {
+		t.Errorf("the frame lost its footer:\n%q", frame)
+	}
+	if strings.Contains(frame, "focus the worker's pane") {
+		t.Errorf("the full key list is on the board rather than behind ?:\n%q", frame)
+	}
+
+	m.Help = true
+	overlay := m.Frame(80, 24, "")
+	for _, want := range []string{
+		"focus the worker's pane",
+		"open the row's pull request",
+		"any key closes help",
+	} {
+		if !strings.Contains(overlay, want) {
+			t.Errorf("the help overlay is missing %q:\n%q", want, overlay)
+		}
+	}
+	if strings.Contains(overlay, "row a") {
+		t.Errorf("the board is drawn under the help overlay:\n%q", overlay)
 	}
 }
 

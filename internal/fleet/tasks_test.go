@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -185,6 +186,38 @@ func TestOpenAppliesTheHorizon(t *testing.T) {
 	}
 	if len(open) != 1 || open[0].ID != "fresh" {
 		t.Errorf("open = %v, want just the fresh task", ids(open))
+	}
+}
+
+// Landed is the RECENTLY LANDED section's content: terminal tasks inside the
+// horizon, newest first, capped so history stays a section and not a scroll.
+func TestLandedOrdersNewestFirstAndCaps(t *testing.T) {
+	now := at.Add(24 * time.Hour)
+	var entries []Entry
+	for i := 0; i < RecentLimit+2; i++ {
+		id := "t" + strconv.Itoa(i)
+		entries = append(entries,
+			entry(i, id, "dispatch"),
+			entry(100+i, id, "verify", func(e *Entry) { e.Result = "pass" }),
+		)
+	}
+	// Open, and terminal-but-ancient: neither lands.
+	entries = append(entries, entry(0, "open", "dispatch"))
+	old := entry(0, "old", "verify", func(e *Entry) { e.Result = "pass" })
+	old.TS = now.Add(-8 * 24 * time.Hour)
+	entries = append(entries, old)
+
+	landed := Landed(Fold(entries), now)
+	if len(landed) != RecentLimit {
+		t.Fatalf("landed %d tasks, want the %d cap", len(landed), RecentLimit)
+	}
+	if landed[0].ID != "t"+strconv.Itoa(RecentLimit+1) {
+		t.Errorf("newest landing is %q, want the last verify", landed[0].ID)
+	}
+	for _, task := range landed {
+		if task.ID == "open" || task.ID == "old" {
+			t.Errorf("%q landed; it is not a fresh terminal task", task.ID)
+		}
 	}
 }
 

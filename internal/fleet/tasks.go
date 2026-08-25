@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"sort"
 	"strconv"
 	"time"
 )
@@ -160,6 +161,34 @@ func Open(tasks []*Task, now time.Time) (open []*Task, stale int) {
 		open = append(open, t)
 	}
 	return open, stale
+}
+
+// RecentLimit bounds the RECENTLY LANDED section. Ten rows is a screenful of
+// history beside the live sections; the rest is the ledger's to keep, not the
+// board's to scroll.
+const RecentLimit = 10
+
+// Landed is the terminal tasks whose story ended inside the horizon, newest
+// last-entry first, capped at RecentLimit. It is the idle board's content:
+// with nothing in flight, "what just landed" is the answer the person opening
+// the board is owed instead of a blank screen.
+func Landed(tasks []*Task, now time.Time) []*Task {
+	var out []*Task
+	for _, t := range tasks {
+		if !t.Terminal() || now.Sub(t.Last.TS) > Horizon {
+			continue
+		}
+		out = append(out, t)
+	}
+	// Stable, so tasks whose last entries share a timestamp keep file order —
+	// the appends are the authority on what happened after what.
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Last.TS.After(out[j].Last.TS)
+	})
+	if len(out) > RecentLimit {
+		out = out[:RecentLimit]
+	}
+	return out
 }
 
 // Summary is the one phrase the board's task column prints: the latest fact

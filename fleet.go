@@ -72,7 +72,9 @@ func fleetBoardCommand(args []string, out io.Writer) error {
 	if *asJSON {
 		return jsonout.Write(out, fleet.JSON(board))
 	}
-	for _, line := range fleet.Lines(board) {
+	// Width zero: the one-shot is for scrollback and pipes, where every column
+	// earns its place and no pane is asking for less.
+	for _, line := range fleet.Lines(board, 0) {
 		fmt.Fprintln(out, line.Text)
 	}
 	return nil

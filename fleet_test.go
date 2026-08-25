@@ -120,11 +120,12 @@ func TestFleetBoardMergesLedgerAndLiveState(t *testing.T) {
 	text := out.String()
 
 	for _, want := range []string{
-		"escalations", "guard file touched", // the safety row
+		"ESCALATIONS", "guard file touched", // the safety row
 		"42-fix", "report done #12", // the matched task on its worktree
-		"done #12",                                 // the worker's own pane report
-		"OPEN",                                     // gh answered for the claimed PR
-		"ledger tasks with no live worktree", "t3", // the orphan
+		"done #12",        // the worker's own pane report
+		"OPEN",            // gh answered for the claimed PR
+		"RECENTLY LANDED", // the idle-state section renders even with nothing landed
+		"PEERS", "t3",     // the peer dispatch, apart from the worktree fleet
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("board is missing %q:\n%s", want, text)
@@ -132,7 +133,7 @@ func TestFleetBoardMergesLedgerAndLiveState(t *testing.T) {
 	}
 
 	// Escalations above the repositories: they are what the board is for.
-	if esc, repoAt := strings.Index(text, "escalations"), strings.Index(text, repo.RealRoot); esc < 0 || repoAt < 0 || esc > repoAt {
+	if esc, repoAt := strings.Index(text, "ESCALATIONS"), strings.Index(text, repo.RealRoot); esc < 0 || repoAt < 0 || esc > repoAt {
 		t.Errorf("escalations are not on top:\n%s", text)
 	}
 }
