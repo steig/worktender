@@ -273,6 +273,32 @@ type = "shell"
 command = "herdr plugin pane open --plugin steig.worktender --entrypoint board --focus"
 ```
 
+## Staffing the fleet controller
+
+`worktender fleet staff` is the controller's staffing one-shot: run by herdr's
+`[[startup]]` after the server is ready, and armed only by `FLEET_CONTROLLER`
+in herdr's own environment — a gate with the exact semantics of
+`WORKTENDER_EVENTS` (falsey and unset are off; an unrecognised value stays off
+and is named), kept separate from it because starting the session that
+dispatches work across every repository is a different opt-in from staffing
+worktrees you already made. See [the fleet controller](events.md#the-fleet-controller).
+
+When armed it does one thing: if no live agent named `fleet` exists, it staffs
+one in a dedicated workspace labelled `fleet` (created on first run, in the
+fleet state directory beside the ledger) and briefs it to load the
+fleet-coordinator skill — which ships separately, from
+[steig/skills](https://github.com/steig/skills), and must be installed for the
+session to have a job description: arming the gate on a machine without it
+staffs a controller with nothing to be. The lease is that agent's presence — never the
+workspace or its pane, which herdr restores across restarts without the
+process that was in them. A re-staff resumes the controller's prior
+conversation with `--continue`, and its first read after a restart is the
+ledger, not its memory.
+
+Two of these racing — herdr's startup entry beside a hand-run — resolve to one
+controller: herdr's agent namespace is global and refuses the second `fleet`
+by name.
+
 ## Binding a key to an action
 
 herdr has no `plugin_action` keybinding type — its key commands are `command`,

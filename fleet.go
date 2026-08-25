@@ -14,11 +14,12 @@ import (
 	"github.com/steig/worktender/internal/wt"
 )
 
-const fleetUsage = "usage: worktender fleet board [--watch|--json]"
+const fleetUsage = "usage: worktender fleet <board [--watch|--json] | staff>"
 
-// fleetCommand dispatches the fleet subcommands. There is one today; a
-// subcommand rather than `fleet-board` because the cockpit grows — a digest,
-// a stale-loops listing — and each of those is a view of the same ledger.
+// fleetCommand dispatches the fleet subcommands: `board`, the cockpit's read
+// side, and `staff`, the controller one-shot — a subcommand rather than
+// `fleet-board` because the cockpit grows, and each addition is a view of or
+// a hand on the same fleet.
 func fleetCommand(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return usagef("fleet needs a subcommand; %s", fleetUsage)
@@ -26,6 +27,8 @@ func fleetCommand(args []string, out io.Writer) error {
 	switch args[0] {
 	case "board":
 		return fleetBoardCommand(args[1:], out)
+	case "staff":
+		return fleetStaffCommand(args[1:], out)
 	default:
 		return usagef("unknown fleet subcommand %q; %s", args[0], fleetUsage)
 	}
