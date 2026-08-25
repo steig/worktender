@@ -515,6 +515,23 @@ func (c *Client) AgentGet(target string) (*AgentInfoResponse, error) {
 	return &out, nil
 }
 
+// AgentFocus focuses the pane hosting an agent, by agent name or by the pane
+// id — the same targets AgentGet resolves. It is the board's jump-to-worker:
+// beyond bringing the pane to the front, focusing an agent marks its `done`
+// state as seen, so jumping to a finished worker also clears it from herdr's
+// attention queue. It fails with agent_not_found when the target hosts no
+// agent; PaneFocus is the fallback for that pane.
+func (c *Client) AgentFocus(target string) error {
+	return c.call("agent.focus", map[string]any{"target": target}, nil)
+}
+
+// PaneFocus focuses one pane by id, agent or not. It carries none of
+// AgentFocus's seen-marking, which is why it is the fallback rather than the
+// first choice.
+func (c *Client) PaneFocus(paneID string) error {
+	return c.call("pane.focus", map[string]any{"pane_id": paneID}, nil)
+}
+
 // PaneRead returns a snapshot of a pane's terminal output.
 //
 // ReadSourceRecentUnwrapped is the source worth reaching for when the text is

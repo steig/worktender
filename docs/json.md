@@ -9,7 +9,9 @@ The commands split into two groups, and they behave differently in one way worth
 knowing up front:
 
 - **`ls`, `doctor`, `sync`, `prune`, `prune-apply`** — inspection and
-  reconciliation. Documented below.
+  reconciliation. Documented below. `fleet board` sits in this group too: its
+  document nests the same worktree rows `ls --all-repos` writes, under the
+  ledger merge described in [the reference](reference.md#the-fleet-board).
 - **`start`, `dispatch`, `report`, `gate`** — the four an agent orchestrates
   with. **These write their document on the failure paths too**, because the
   exit code alone cannot say *which* of five workers a `--any` gate was about,
