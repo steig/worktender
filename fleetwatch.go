@@ -19,6 +19,11 @@ import (
 // cache and do not run per tick.
 const watchInterval = 3 * time.Second
 
+// spinInterval is the spinner's frame rate. Frame ticks repaint from state
+// already in hand — no herdr call, no ledger read, not even a stty — and are
+// skipped entirely while nothing on the board is working.
+const spinInterval = 120 * time.Millisecond
+
 // watchBoard is the interactive board: the same render the one-shot prints,
 // redrawn as the fleet moves, with a cursor for the two navigations the
 // charter allows — focus a worker's pane, open a row's pull request. Nothing
@@ -69,6 +74,8 @@ func watchBoard(client *herdrapi.Client, out io.Writer) error {
 
 	ticker := time.NewTicker(watchInterval)
 	defer ticker.Stop()
+	spinTicker := time.NewTicker(spinInterval)
+	defer spinTicker.Stop()
 
 	// The render is width-aware — narrow panes drop columns — so the lines are
 	// rebuilt from the last board whenever the terminal is a different size
@@ -79,13 +86,23 @@ func watchBoard(client *herdrapi.Client, out io.Writer) error {
 	haveBoard := false
 	lastWidth := 0
 	status := "loading fleet…"
+	// draw measures the terminal and repaints; paint repaints at the size
+	// last measured. The split is for the spinner: its frame ticks must not
+	// run stty eight times a second, and the 3-second refresh re-measures
+	// often enough to follow a resize. The frame erases as it draws, so
+	// neither path clears the screen first — that is what keeps the spinner
+	// from flickering.
+	width, height := termSize()
+	paint := func() {
+		fmt.Fprint(out, "\x1b[H"+model.Frame(width, height, status)+"\x1b[J")
+	}
 	draw := func() {
-		width, height := termSize()
+		width, height = termSize()
 		if haveBoard && width != lastWidth {
 			model.Refresh(fleet.Lines(board, width))
 			lastWidth = width
 		}
-		fmt.Fprint(out, "\x1b[H\x1b[2J"+model.Frame(width, height, status))
+		paint()
 	}
 	draw()
 
@@ -102,7 +119,15 @@ func watchBoard(client *herdrapi.Client, out io.Writer) error {
 			}
 			draw()
 		case <-ticker.C:
+			// The refresh tick also re-measures the terminal, which is how a
+			// resize is noticed without a SIGWINCH handler.
+			draw()
 			request()
+		case <-spinTicker.C:
+			if haveBoard && model.Spinning() && !model.Help {
+				model.Spin++
+				paint()
+			}
 		case key := <-keys:
 			if key == keyQuit {
 				return nil

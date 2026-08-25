@@ -39,6 +39,11 @@ type Board struct {
 	// InFlight counts the open, unescalated tasks, for the summary header.
 	InFlight int
 
+	// Machine names the host in the top bar — a cockpit watching several
+	// machines' panes needs each board to say whose fleet it is. Empty when
+	// the caller has nothing to say.
+	Machine string
+
 	// LedgerFound is false when there is no ledger file yet — an ordinary
 	// state, said in the header rather than implied by empty sections.
 	LedgerFound bool

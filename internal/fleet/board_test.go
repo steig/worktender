@@ -144,7 +144,7 @@ func TestBuildLooksUpPRStateOnlyWhereOneIsClaimed(t *testing.T) {
 func boardText(lines []Line) string {
 	var texts []string
 	for _, l := range lines {
-		texts = append(texts, l.Text)
+		texts = append(texts, l.Plain())
 	}
 	return strings.Join(texts, "\n")
 }
@@ -171,25 +171,34 @@ func TestLinesKeepTheSectionHierarchy(t *testing.T) {
 		t.Errorf("the safety escalation's reason is not on the board:\n%s", all)
 	}
 
-	// The escalation rows are painted red, the heading as the siren.
+	// The design system: section headers are accent bands, and status color
+	// lands on the glyph — the row's text stays on the neutral base.
 	for _, line := range lines {
-		if line.Text == "ESCALATIONS" && line.Tone != ToneAlert {
-			t.Errorf("the ESCALATIONS heading carries tone %q, want alert", line.Tone)
+		text := line.Plain()
+		if strings.Contains(text, "ESCALATIONS") && line.Spans[0].Style != styleBand {
+			t.Errorf("the ESCALATIONS heading is not an accent band: %+v", line.Spans[0].Style)
 		}
-		if strings.Contains(line.Text, "guard file touched") && line.Tone != ToneBad {
-			t.Errorf("the escalation row carries tone %q, want red", line.Tone)
+		if strings.Contains(text, "guard file touched") {
+			if line.Spans[0].Style != styleBad {
+				t.Errorf("the escalation glyph is not red: %+v", line.Spans[0].Style)
+			}
+			for _, span := range line.Spans[2:] {
+				if span.Style.FG == ColorBad {
+					t.Errorf("status color bled past the glyph and severity into %q", span.Text)
+				}
+			}
 		}
 	}
 
 	// Every selectable line carries a target; headings carry none.
 	for _, line := range lines {
 		if line.Target != nil && line.Target.Label == "" {
-			t.Errorf("target without a label on %q", line.Text)
+			t.Errorf("target without a label on %q", line.Plain())
 		}
 	}
 
-	// The text itself stays pipe-clean: tones live beside the line, never in
-	// it, so the one-shot print carries no ANSI.
+	// The text itself stays pipe-clean: styles live beside the spans, never
+	// in them, so the one-shot print carries no ANSI.
 	if strings.Contains(all, "\x1b") {
 		t.Errorf("escape bytes leaked into the board text:\n%q", all)
 	}
@@ -210,8 +219,8 @@ func TestLinesOnAnIdleFleetShowTheSummaryAndWhatLanded(t *testing.T) {
 	all := boardText(Lines(b, 0))
 
 	for _, want := range []string{
-		"fleet · idle · 0 workers · ledger 30m ago", // the summary header
-		"nothing in flight",                         // IN FLIGHT says it is empty
+		"FLEET", "idle · 0 workers · ledger 30m ago", // the top bar
+		"nothing in flight", // IN FLIGHT says it is empty
 		"RECENTLY LANDED",
 		"✓", "proj#42", "#7", "verify pass", // the landed row: glyph, place, PR, outcome
 		"✗", "verify fail",
@@ -234,7 +243,7 @@ func TestLinesOnAnEmptyFleetStillSpeak(t *testing.T) {
 	b := Build(nil, Ledger{}, "/state/ledger.jsonl", false, at, nil)
 	all := boardText(Lines(b, 0))
 	for _, want := range []string{
-		"fleet · idle · 0 workers · no ledger",
+		"FLEET", "idle · 0 workers · no ledger",
 		"nothing in flight",
 		"nothing landed in the last 7 days",
 		"ledger: none at /state/ledger.jsonl",

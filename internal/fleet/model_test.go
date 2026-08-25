@@ -5,16 +5,41 @@ import (
 	"testing"
 )
 
+func row(text, name string) Line {
+	return Line{Spans: []Span{{Text: text}}, Target: &Target{Label: name, Root: "/r", Branch: name}}
+}
+
 func modelLines() []Line {
 	return []Line{
-		{Text: "fleet · header"},
-		{Text: "escalations"},
-		{Text: "row a", Target: &Target{Label: "a", Root: "/r", Branch: "a"}},
-		{Text: "/home/x/proj"},
-		{Text: "row b", Target: &Target{Label: "b", Root: "/r", Branch: "b"}},
-		{Text: "row c", Target: &Target{Label: "c", Root: "/r", Branch: "c"}},
-		{Text: "trailing note"},
+		textLine(styleBar, " FLEET  header "),
+		band("ESCALATIONS"),
+		row("row a", "a"),
+		textLine(styleDim, "/home/x/proj"),
+		row("row b", "b"),
+		row("row c", "c"),
+		textLine(styleDim, "trailing note"),
 	}
+}
+
+// stripped is a frame line without its dressing: SGR sequences and the
+// per-line erase dropped, the visible text kept.
+func stripped(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		switch {
+		case r == 0x1b:
+			inEsc = true
+		case inEsc:
+			// SGR and erase sequences end at their letter.
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func TestModelMovesOverSelectableRowsOnly(t *testing.T) {
@@ -46,7 +71,7 @@ func TestModelMovesOverSelectableRowsOnly(t *testing.T) {
 }
 
 func TestModelWithNoSelectableRowsHasNoCurrent(t *testing.T) {
-	m := NewModel([]Line{{Text: "fleet"}, {Text: "no repositories"}})
+	m := NewModel([]Line{textLine(Style{}, "fleet"), placeholder("nothing in flight")})
 	if m.Current() != nil {
 		t.Errorf("selected %v on a board with nothing to select", m.Current())
 	}
@@ -63,9 +88,9 @@ func TestRefreshKeepsTheCursorOnItsRow(t *testing.T) {
 	m.Move(1) // on b
 
 	fresh := []Line{
-		{Text: "fleet · header"},
-		{Text: "row new", Target: &Target{Label: "new", Root: "/r", Branch: "new"}},
-		{Text: "row b", Target: &Target{Label: "b", Root: "/r", Branch: "b"}},
+		textLine(styleBar, " FLEET  header "),
+		row("row new", "new"),
+		row("row b", "b"),
 	}
 	m.Refresh(fresh)
 	if got := m.Current(); got == nil || got.Label != "b" {
@@ -74,61 +99,97 @@ func TestRefreshKeepsTheCursorOnItsRow(t *testing.T) {
 
 	// The row vanished: fall back to the top, which is where escalations are.
 	m.Refresh([]Line{
-		{Text: "fleet · header"},
-		{Text: "row z", Target: &Target{Label: "z", Root: "/r", Branch: "z"}},
+		textLine(styleBar, " FLEET  header "),
+		row("row z", "z"),
 	})
 	if got := m.Current(); got == nil || got.Label != "z" {
 		t.Errorf("after its row vanished the cursor is on %v, want the first row", got)
 	}
 }
 
-func TestFrameInvertsTheCursorRowAndClips(t *testing.T) {
+// The selected row is a full-width accent-background highlight, not a caret:
+// the row's spans take the accent background and the rest of the width is
+// painted to match.
+func TestFrameHighlightsTheCursorRowFullWidth(t *testing.T) {
+	m := NewModel(modelLines())
+	frame := m.Frame(20, 10, "")
+
+	selected := Style{FG: ColorOnAccent, BG: ColorAccent}
+	if !strings.Contains(frame, selected.sgr()+"row a") {
+		t.Errorf("the cursor row is not painted onto the accent background:\n%q", frame)
+	}
+	fill := Style{BG: ColorAccent}
+	if !strings.Contains(frame, fill.sgr()+strings.Repeat(" ", 20-len("row a"))) {
+		t.Errorf("the highlight does not reach the full width:\n%q", frame)
+	}
+}
+
+func TestFrameClipsToTheTerminalWidth(t *testing.T) {
 	m := NewModel(modelLines())
 	frame := m.Frame(5, 10, "")
 
+	for _, line := range strings.Split(frame, "\r\n") {
+		if n := len([]rune(stripped(line))); n > 5 {
+			t.Errorf("line %q is %d cells wide, over the 5-cell terminal", stripped(line), n)
+		}
+	}
 	lines := strings.Split(frame, "\r\n")
-	var selected string
-	for _, line := range lines {
-		if strings.Contains(line, invertOn) {
-			selected = line
-		}
-	}
-	if !strings.Contains(selected, "row a") {
-		t.Errorf("the inverted line is %q, want the cursor row", selected)
-	}
-	for _, line := range lines {
-		plain := strings.ReplaceAll(strings.ReplaceAll(line, invertOn, ""), sgrReset, "")
-		if n := len([]rune(plain)); n > 5 {
-			t.Errorf("line %q is %d cells wide, over the 5-cell terminal", plain, n)
-		}
-	}
 	if !strings.Contains(lines[len(lines)-1], "…") {
-		t.Errorf("the key line did not clip: %q", lines[len(lines)-1])
+		t.Errorf("the footer did not clip: %q", lines[len(lines)-1])
 	}
 }
 
-// Tones ride under the cursor's reverse video and both end at the reset, so
-// a colored line never bleeds its color into the one below.
-func TestFramePaintsLineTones(t *testing.T) {
+// Styles paint spans, and only spans: the dressing must end at the reset so
+// a styled cell never bleeds into its neighbor.
+func TestFramePaintsSpanStyles(t *testing.T) {
 	m := NewModel([]Line{
-		{Text: "ESCALATIONS", Tone: ToneAlert},
-		{Text: "row a", Tone: ToneBad, Target: &Target{Label: "a"}},
+		band("ESCALATIONS"),
+		{Spans: []Span{{Text: "  !", Style: styleBad}, {Text: "  reason"}}, Target: &Target{Label: "x"}},
 	})
+	m.Sel = -1 // no highlight in the way of the assertion
 	frame := m.Frame(80, 10, "")
-	if !strings.Contains(frame, ToneAlert+"ESCALATIONS"+sgrReset) {
-		t.Errorf("the heading's tone is not painted:\n%q", frame)
+	if !strings.Contains(frame, styleBand.sgr()+" ESCALATIONS "+sgrReset) {
+		t.Errorf("the band style is not painted:\n%q", frame)
 	}
-	if !strings.Contains(frame, ToneBad+invertOn+"row a"+sgrReset) {
-		t.Errorf("the selected row lost its tone or inversion:\n%q", frame)
+	if !strings.Contains(frame, styleBad.sgr()+"  !"+sgrReset+"  reason") {
+		t.Errorf("the glyph's color leaks past its span:\n%q", frame)
 	}
 }
 
-// The footer is one slim line; the full key list lives behind `?`.
+// The working glyph animates in watch mode: each frame tick swaps it for the
+// next spinner frame, and Spinning tells the loop whether ticking is worth it.
+func TestFrameSpinsTheWorkingGlyph(t *testing.T) {
+	lines := []Line{
+		{Spans: []Span{{Text: "  " + glyphWorking, Style: styleGood, Spin: true}, {Text: "  42-fix"}},
+			Target: &Target{Label: "42-fix"}},
+	}
+	m := NewModel(lines)
+	if !m.Spinning() {
+		t.Fatal("a board with a working row does not report Spinning")
+	}
+
+	first := m.Frame(80, 10, "")
+	m.Spin++
+	second := m.Frame(80, 10, "")
+	if strings.Contains(first, glyphWorking) || strings.Contains(second, glyphWorking) {
+		t.Error("the static working glyph rendered in watch mode; the spinner should replace it")
+	}
+	if !strings.Contains(first, spinnerFrames[0]) || !strings.Contains(second, spinnerFrames[1]) {
+		t.Errorf("the spinner does not advance:\n%q\n%q", first, second)
+	}
+
+	still := NewModel(modelLines())
+	if still.Spinning() {
+		t.Error("a board with nothing working reports Spinning")
+	}
+}
+
+// The footer is one faint line; the full key list lives behind `?`.
 func TestFrameHelpOverlayCarriesTheFullKeyList(t *testing.T) {
 	m := NewModel(modelLines())
 	frame := m.Frame(80, 24, "")
-	if !strings.Contains(frame, footer) {
-		t.Errorf("the frame lost its footer:\n%q", frame)
+	if !strings.Contains(frame, styleDim.sgr()+footer) {
+		t.Errorf("the frame lost its faint footer:\n%q", frame)
 	}
 	if strings.Contains(frame, "focus the worker's pane") {
 		t.Errorf("the full key list is on the board rather than behind ?:\n%q", frame)
@@ -156,11 +217,11 @@ func TestFrameScrollsToKeepTheCursorVisible(t *testing.T) {
 	m := NewModel(modelLines())
 	m.End() // row c, line index 5
 
-	frame := m.Frame(80, 4, "") // 3 body lines + key line
+	frame := m.Frame(80, 4, "") // 3 body lines + footer
 	if !strings.Contains(frame, "row c") {
 		t.Errorf("the cursor row scrolled out of a 3-line viewport:\n%q", frame)
 	}
-	if strings.Contains(frame, "fleet · header") {
+	if strings.Contains(frame, "FLEET  header") {
 		t.Errorf("the top of the board is still drawn in a viewport too short for it:\n%q", frame)
 	}
 }

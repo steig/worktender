@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/steig/worktender/internal/fleet"
@@ -72,10 +73,11 @@ func fleetBoardCommand(args []string, out io.Writer) error {
 	if *asJSON {
 		return jsonout.Write(out, fleet.JSON(board))
 	}
-	// Width zero: the one-shot is for scrollback and pipes, where every column
-	// earns its place and no pane is asking for less.
+	// Width zero and Plain: the one-shot is for scrollback and pipes, where
+	// every column earns its place, no pane is asking for less, and styling
+	// bytes would only corrupt whatever parses the text next.
 	for _, line := range fleet.Lines(board, 0) {
-		fmt.Fprintln(out, line.Text)
+		fmt.Fprintln(out, line.Plain())
 	}
 	return nil
 }
@@ -108,7 +110,11 @@ func gatherBoard(client *herdrapi.Client, prs *prCache) (fleet.Board, error) {
 	}
 	wt.WithAgentSeqs(client, listings...)
 
-	return fleet.Build(repos, ledger, path, found, time.Now(), prs.lookup), nil
+	board := fleet.Build(repos, ledger, path, found, time.Now(), prs.lookup)
+	// The top bar names the machine; a host that will not say stays blank
+	// rather than failing the board.
+	board.Machine, _ = os.Hostname()
+	return board, nil
 }
 
 // prCache holds pull request states between refreshes. Each lookup is one

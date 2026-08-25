@@ -5,29 +5,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/steig/worktender/internal/safetext"
 	"github.com/steig/worktender/internal/wt"
 )
 
-// Tones are the ANSI colors a line asks for. They live on the Line rather
-// than inside its text so the tabwriter aligns visible characters only, the
-// one-shot print and --json stay pipe-clean, and the watch frame — the one
-// place that knows it is drawing on a terminal — is the one place that paints.
-const (
-	ToneAlert = "\x1b[1;31m" // the ESCALATIONS heading: bold red, the board's siren
-	ToneBad   = "\x1b[31m"   // failed, escalated, declined, expired
-	ToneGood  = "\x1b[32m"   // working and verified: a healthy fleet reads green
-	ToneWarn  = "\x1b[33m"   // blocked, ghosts, divergence, ledger warnings
-	ToneDim   = "\x1b[2m"    // idle rows, main checkouts, empty-section notes
-	ToneHead  = "\x1b[1m"    // section headings
-)
-
-// Glyphs are the one-rune state column. A glyph beside a color rather than a
-// color alone, because the one-shot print carries no color and the reader may
-// not see red anyway.
+// Glyphs are the one-rune state column, and the only place status color
+// lands: the design is a neutral base with one accent, so a row's state is a
+// colored glyph beside plain text, never a painted line. A glyph beside a
+// color rather than a color alone, because the one-shot print carries no
+// color and the reader may not see red anyway.
 const (
 	glyphEscalated = "!"
 	glyphWorking   = "●"
@@ -39,14 +27,34 @@ const (
 	glyphGhost     = "?"
 )
 
-// Line is one rendered board line. Target is nil on headings, notes and
-// blanks; set on the rows a cursor can land on.
+// Line is one rendered board line: styled spans, plus the navigation target.
+// Target is nil on headings, notes and blanks; set on the rows a cursor can
+// land on.
 type Line struct {
-	Text string
-	// Tone is the ANSI prefix the watch frame paints this line with, empty for
-	// the terminal's own foreground.
-	Tone   string
+	Spans  []Span
 	Target *Target
+}
+
+// Plain is the line without its dressing — what the one-shot prints, and
+// what a pipe receives.
+func (l Line) Plain() string {
+	var sb strings.Builder
+	for _, s := range l.Spans {
+		sb.WriteString(s.Text)
+	}
+	return sb.String()
+}
+
+// textLine is a whole line in one style.
+func textLine(style Style, text string) Line {
+	return Line{Spans: []Span{{Text: text, Style: style}}}
+}
+
+// band is a section header: the title as an accent-background chip rather
+// than a bare uppercase word. Chips are word-width while the selected row's
+// highlight is full-width, so the two accent uses stay distinguishable.
+func band(title string) Line {
+	return textLine(styleBand, " "+title+" ")
 }
 
 // Target is what navigation needs to know about a row: the pane to focus and
@@ -67,8 +75,8 @@ type Target struct {
 func (t *Target) Key() string { return t.Root + "\x00" + t.Branch + "\x00" + t.PaneID }
 
 // layout is how many columns the pane has room for. Sections drop their
-// right-hand columns rather than wrapping: a narrow pane still shows what each
-// row is and how old, and the detail waits for width.
+// right-hand columns rather than wrapping: a narrow pane still shows what
+// each row is and how old, and the detail waits for width.
 type layout int
 
 const (
@@ -88,59 +96,73 @@ func layoutFor(width int) layout {
 	}
 }
 
-// rowSpec is one table row before alignment: its cells, the tone the whole
-// line takes, and the navigation target the line keeps.
+// cell is one table cell before alignment: its text and its dressing.
+type cell struct {
+	text  string
+	style Style
+	spin  bool
+}
+
+// rowSpec is one table row before alignment.
 type rowSpec struct {
-	cells  []string
-	tone   string
+	cells  []cell
 	target *Target
 }
 
-// Lines renders the whole board as text rows with their navigation targets.
-// One function for the one-shot print and the watch frame, so the two cannot
-// disagree about what the fleet looks like. width picks the column layout;
-// zero or less means no pane is asking and every column renders.
+// Lines renders the whole board as styled rows with their navigation
+// targets. One function for the one-shot print and the watch frame, so the
+// two cannot disagree about what the fleet looks like. width picks the
+// column layout and the top bar's span; zero or less means no pane is asking
+// and every column renders unpadded.
 //
 // The idle fleet is the default state and renders as a full screen, not a
-// blank one: the summary header and RECENTLY LANDED are always there, and the
-// empty sections say they are empty instead of not appearing.
+// blank one: the top bar and RECENTLY LANDED are always there, and the empty
+// sections say they are empty instead of not appearing.
 func Lines(b Board, width int) []Line {
 	l := layoutFor(width)
-	out := []Line{summary(b)}
+	out := []Line{topBar(b, width)}
 	out = append(out, notes(b)...)
 
 	if len(b.Escalations) > 0 {
-		out = append(out, Line{}, Line{Text: "ESCALATIONS", Tone: ToneAlert})
-		out = append(out, table(b.Escalations, func(r *TaskRow) rowSpec {
-			return rowSpec{cells: escalationCells(b.Now, r, l), tone: ToneBad, target: escalationTarget(r)}
-		})...)
+		out = append(out, Line{}, band("ESCALATIONS"))
+		out = append(out, table(rowSpecs(b.Escalations, func(r *TaskRow) rowSpec {
+			return escalationRow(b.Now, r, l)
+		}))...)
 	}
 
-	out = append(out, Line{}, Line{Text: "IN FLIGHT", Tone: ToneHead})
+	out = append(out, Line{}, band("IN FLIGHT"))
 	out = append(out, inFlight(b, l)...)
 
-	out = append(out, Line{}, Line{Text: "RECENTLY LANDED", Tone: ToneHead})
+	out = append(out, Line{}, band("RECENTLY LANDED"))
 	if len(b.Recent) == 0 {
-		out = append(out, Line{Text: "  nothing landed in the last 7 days", Tone: ToneDim})
+		out = append(out, placeholder("nothing landed in the last 7 days"))
 	} else {
-		out = append(out, table(b.Recent, func(r *TaskRow) rowSpec {
+		out = append(out, table(rowSpecs(b.Recent, func(r *TaskRow) rowSpec {
 			return landedRow(b.Now, r, l)
-		})...)
+		}))...)
 	}
 
 	if len(b.Peers) > 0 {
-		out = append(out, Line{}, Line{Text: "PEERS", Tone: ToneHead})
-		out = append(out, table(b.Peers, func(r *TaskRow) rowSpec {
+		out = append(out, Line{}, band("PEERS"))
+		out = append(out, table(rowSpecs(b.Peers, func(r *TaskRow) rowSpec {
 			return peerRow(b.Now, r, l)
-		})...)
+		}))...)
 	}
 	return out
 }
 
-// summary is the header line a person reads before anything else, and the one
-// line the board always has: what the fleet is doing, how much of it there is,
-// and how fresh the ledger under it is.
-func summary(b Board) Line {
+// placeholder is an empty section saying so: styled to recede, present so
+// the section reads as empty rather than broken.
+func placeholder(text string) Line {
+	return textLine(styleDim, "  "+text)
+}
+
+// topBar is the header bar a person reads before anything else, and the one
+// line the board always has: the board's name, the machine it is watching,
+// what the fleet is doing, and how fresh the ledger under it is. It is a
+// full-width accent bar when a width is known; the counts stay plain text so
+// a pipe reads them too.
+func topBar(b Board, width int) Line {
 	workers := 0
 	for _, repo := range b.Repos {
 		for _, row := range repo.Rows {
@@ -150,7 +172,10 @@ func summary(b Board) Line {
 		}
 	}
 
-	parts := []string{"fleet"}
+	var parts []string
+	if b.Machine != "" {
+		parts = append(parts, safetext.Escape(b.Machine))
+	}
 	if n := len(b.Escalations); n > 0 {
 		parts = append(parts, plural(n, "escalation"))
 	}
@@ -163,14 +188,19 @@ func summary(b Board) Line {
 	parts = append(parts, plural(workers, "worker"))
 	parts = append(parts, ledgerFreshness(b))
 
-	tone := ToneHead
-	if len(b.Escalations) > 0 {
-		tone = ToneAlert
+	line := Line{Spans: []Span{
+		{Text: " FLEET ", Style: styleBand},
+		{Text: " " + strings.Join(parts, " · ") + " ", Style: styleBar},
+	}}
+	if width > 0 {
+		if n := len([]rune(line.Plain())); n < width {
+			line.Spans = append(line.Spans, Span{Text: strings.Repeat(" ", width-n), Style: styleBar})
+		}
 	}
-	return Line{Text: strings.Join(parts, " · "), Tone: tone}
+	return line
 }
 
-// ledgerFreshness is the header's last clause: how recently the record under
+// ledgerFreshness is the bar's last clause: how recently the record under
 // this board moved. Trust in the board is trust in the ledger's age.
 func ledgerFreshness(b Board) string {
 	switch {
@@ -183,13 +213,17 @@ func ledgerFreshness(b Board) string {
 	}
 }
 
-// notes are the warnings the contract wants said once rather than folded into
-// silence: a ledger that is not there, lines that did not parse, versions this
-// board cannot read, and open loops past the horizon.
+// notes are the warnings the contract wants said once rather than folded
+// into silence: a ledger that is not there, lines that did not parse,
+// versions this board cannot read, and open loops past the horizon. A yellow
+// glyph, dim text — a warning the eye can find without a painted line.
 func notes(b Board) []Line {
 	var out []Line
 	say := func(format string, a ...any) {
-		out = append(out, Line{Text: fmt.Sprintf(format, a...), Tone: ToneWarn})
+		out = append(out, Line{Spans: []Span{
+			{Text: "  " + glyphEscalated + " ", Style: styleWarn},
+			{Text: fmt.Sprintf(format, a...), Style: styleDim},
+		}})
 	}
 	if !b.LedgerFound {
 		say("ledger: none at %s; the board shows live state only", b.LedgerPath)
@@ -206,86 +240,115 @@ func notes(b Board) []Line {
 	return out
 }
 
-// inFlight is the live fleet: each repository's worktrees, then the dispatched
-// tasks with nothing on the ground flying them. An empty section says so — the
-// idle fleet is the default state, and a heading over nothing reads as broken.
+// inFlight is the live fleet: each repository's worktrees, then the
+// dispatched tasks with nothing on the ground flying them. An empty section
+// says so — the idle fleet is the default state, and a heading over nothing
+// reads as broken.
 func inFlight(b Board, l layout) []Line {
 	var out []Line
 	for _, repo := range b.Repos {
-		out = append(out, Line{Text: "  " + safetext.Escape(repo.Root), Tone: ToneDim})
+		out = append(out, textLine(styleDim, "  "+safetext.Escape(repo.Root)))
 		if repo.Err != "" {
-			out = append(out, Line{Text: "    cannot be read: " + safetext.Escape(repo.Err), Tone: ToneWarn})
+			out = append(out, Line{Spans: []Span{
+				{Text: "    " + glyphFailed + " ", Style: styleBad},
+				{Text: "cannot be read: " + safetext.Escape(repo.Err)},
+			}})
 			continue
 		}
 		if len(repo.Rows) == 0 {
-			out = append(out, Line{Text: "    no worktrees", Tone: ToneDim})
+			out = append(out, textLine(styleDim, "    no worktrees"))
 			continue
 		}
-		out = append(out, table(repo.Rows, func(r *LiveRow) rowSpec {
+		out = append(out, table(rowSpecs(repo.Rows, func(r *LiveRow) rowSpec {
 			return liveRow(b.Now, r, l)
-		})...)
+		}))...)
 	}
 	if len(b.Repos) == 0 {
-		out = append(out, Line{Text: "  nothing in flight — herdr has no worktree workspaces open", Tone: ToneDim})
+		out = append(out, placeholder("nothing in flight — herdr has no worktree workspaces open"))
 	}
 
 	if len(b.Orphans) > 0 {
-		out = append(out, Line{Text: "  dispatched, no live worktree", Tone: ToneWarn})
-		out = append(out, table(b.Orphans, func(r *TaskRow) rowSpec {
+		out = append(out, Line{Spans: []Span{
+			{Text: "  " + glyphEscalated + " ", Style: styleWarn},
+			{Text: "dispatched, no live worktree", Style: styleDim},
+		}})
+		out = append(out, table(rowSpecs(b.Orphans, func(r *TaskRow) rowSpec {
 			return orphanRow(b.Now, r, l)
-		})...)
+		}))...)
 	}
 	return out
 }
 
-// table renders one section through a tabwriter so its columns align, then
-// re-attaches each row's target and tone to the line it became. The tabwriter
-// is per section because the sections have different columns, and aligning an
-// escalation against a worktree row would be alignment of nothing with
-// nothing.
-func table[T any](rows []T, spec func(T) rowSpec) []Line {
-	specs := make([]rowSpec, 0, len(rows))
-	var sb strings.Builder
-	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
+// rowSpecs builds one section's rows.
+func rowSpecs[T any](rows []T, spec func(T) rowSpec) []rowSpec {
+	out := make([]rowSpec, 0, len(rows))
 	for _, row := range rows {
-		s := spec(row)
-		specs = append(specs, s)
-		fmt.Fprintln(tw, strings.Join(s.cells, "\t"))
-	}
-	if err := tw.Flush(); err != nil {
-		// A tabwriter writing into a strings.Builder cannot fail; if it ever
-		// does, an empty section is worse than an unaligned one.
-		return nil
-	}
-
-	lines := strings.Split(strings.TrimRight(sb.String(), "\n"), "\n")
-	out := make([]Line, 0, len(specs))
-	for i, s := range specs {
-		if i >= len(lines) {
-			break
-		}
-		out = append(out, Line{Text: lines[i], Tone: s.tone, Target: s.target})
+		out = append(out, spec(row))
 	}
 	return out
 }
 
-func escalationCells(now time.Time, r *TaskRow, l layout) []string {
-	if l == narrow {
-		return []string{
-			"  " + glyphEscalated,
-			cell(r.Task.ID),
-			cell(r.Task.Escalate.Reason),
-			ago(now, r.Task.Escalate.TS),
+// colCap bounds any one column so a long branch name or reason cannot push
+// the columns beside it off the pane; the cell ends in an ellipsis instead.
+const colCap = 40
+
+// table aligns one section's rows into columns: each column as wide as its
+// widest cell up to the cap, two spaces between columns, every cell keeping
+// its own style. Alignment counts visible runes — the styles ride beside the
+// text, not in it.
+func table(rows []rowSpec) []Line {
+	var widths []int
+	for _, r := range rows {
+		for i, c := range r.cells {
+			if i >= len(widths) {
+				widths = append(widths, 0)
+			}
+			n := len([]rune(c.text))
+			if n > colCap {
+				n = colCap
+			}
+			if n > widths[i] {
+				widths[i] = n
+			}
 		}
 	}
-	return []string{
-		"  " + glyphEscalated,
-		cell(r.Task.Escalate.Severity),
-		cell(r.Task.ID),
-		cell(taskPlace(r.Task)),
-		cell(r.Task.Escalate.Reason),
-		ago(now, r.Task.Escalate.TS),
+
+	out := make([]Line, 0, len(rows))
+	for _, r := range rows {
+		spans := make([]Span, 0, len(r.cells))
+		for i, c := range r.cells {
+			text := truncate(c.text, colCap)
+			if i < len(r.cells)-1 {
+				text = pad(text, widths[i]) + "  "
+			}
+			spans = append(spans, Span{Text: text, Style: c.style, Spin: c.spin})
+		}
+		out = append(out, Line{Spans: spans, Target: r.target})
 	}
+	return out
+}
+
+func escalationRow(now time.Time, r *TaskRow, l layout) rowSpec {
+	glyph := cell{text: "  " + glyphEscalated, style: styleBad}
+	var cells []cell
+	if l == narrow {
+		cells = []cell{
+			glyph,
+			{text: dash(r.Task.ID)},
+			{text: dash(r.Task.Escalate.Reason)},
+			{text: ago(now, r.Task.Escalate.TS), style: styleDim},
+		}
+	} else {
+		cells = []cell{
+			glyph,
+			{text: dash(r.Task.Escalate.Severity), style: styleBad},
+			{text: dash(r.Task.ID)},
+			{text: dash(taskPlace(r.Task)), style: styleDim},
+			{text: dash(r.Task.Escalate.Reason)},
+			{text: ago(now, r.Task.Escalate.TS), style: styleDim},
+		}
+	}
+	return rowSpec{cells: cells, target: escalationTarget(r)}
 }
 
 func escalationTarget(r *TaskRow) *Target {
@@ -297,79 +360,86 @@ func escalationTarget(r *TaskRow) *Target {
 	return taskTarget(r)
 }
 
-// liveState is a live row's glyph and tone, most alarming fact first: an
-// escalation outranks a failure, a failure outranks the agent still typing,
-// and only a row with nothing to say is idle.
-func liveState(r *LiveRow) (string, string) {
+// liveState is a live row's glyph, most alarming fact first: an escalation
+// outranks a failure, a failure outranks the agent still typing, and only a
+// row with nothing to say is idle. The third return marks the glyph that
+// spins while the agent works.
+func liveState(r *LiveRow) (string, Style, bool) {
 	switch {
 	case r.Main:
-		return glyphMain, ToneDim
+		return glyphMain, styleDim, false
 	case r.Ghost:
-		return glyphGhost, ToneWarn
+		return glyphGhost, styleWarn, false
 	}
 	if t := r.Task; t != nil {
 		switch {
 		case t.Escalated():
-			return glyphEscalated, ToneBad
+			return glyphEscalated, styleBad, false
 		case t.DeadlineState == "expired", t.Declined():
-			return glyphFailed, ToneBad
+			return glyphFailed, styleBad, false
 		}
 	}
-	switch r.AgentStatus {
-	case "working":
-		return glyphWorking, ToneGood
+	if r.AgentStatus == "working" {
+		return glyphWorking, styleGood, true
 	}
 	if rep := r.Report; rep != nil && rep.Found {
 		switch rep.Status {
 		case "blocked":
-			return glyphFailed, ToneBad
+			return glyphFailed, styleBad, false
 		case "done":
-			return glyphVerified, ToneGood
+			return glyphVerified, styleGood, false
 		}
 	}
 	switch r.AgentStatus {
 	case "blocked":
-		return glyphBlocked, ToneWarn
+		return glyphBlocked, styleWarn, false
 	case "done":
-		return glyphVerified, ToneGood
+		return glyphVerified, styleGood, false
 	}
-	return glyphIdle, ToneDim
+	return glyphIdle, styleDim, false
 }
 
 func liveRow(now time.Time, r *LiveRow, l layout) rowSpec {
-	glyph, tone := liveState(r)
+	glyph, style, spin := liveState(r)
 	name := r.Branch
 	if name == "" {
 		name = r.Dir
 	}
-	var cells []string
+	first := cell{text: "    " + glyph, style: style, spin: spin}
+	var cells []cell
 	switch l {
 	case narrow:
-		cells = []string{
-			"    " + glyph,
-			cell(name),
-			ago(now, lastMoved(r)),
+		cells = []cell{
+			first,
+			{text: dash(name)},
+			{text: ago(now, lastMoved(r)), style: styleDim},
 		}
 	case medium:
-		cells = []string{
-			"    " + glyph,
-			cell(name),
-			cell(r.AgentStatus),
-			cell(taskText(r.Task)),
-			ago(now, lastMoved(r)),
+		cells = []cell{
+			first,
+			{text: dash(name)},
+			{text: dash(r.AgentStatus), style: styleDim},
+			{text: dash(taskText(r.Task))},
+			{text: ago(now, lastMoved(r)), style: styleDim},
 		}
 	default:
-		cells = []string{
-			"    " + glyph,
-			cell(name),
-			cell(r.AgentStatus),
-			cell(reportText(r.Report)),
-			cell(taskText(r.Task)),
-			cell(prText(r.PR)),
-			ago(now, lastMoved(r)),
+		cells = []cell{
+			first,
+			{text: dash(name)},
+			{text: dash(r.AgentStatus), style: styleDim},
+			{text: dash(reportText(r.Report))},
+			{text: dash(taskText(r.Task))},
+			{text: dash(prText(r.PR))},
+			{text: ago(now, lastMoved(r)), style: styleDim},
 		}
 	}
-	return rowSpec{cells: cells, tone: tone, target: liveTarget(r)}
+	// The main checkout is context, not a worker: the whole row recedes.
+	if r.Main {
+		for i := range cells {
+			cells[i].style = styleDim
+		}
+	}
+	return rowSpec{cells: cells, target: liveTarget(r)}
 }
 
 // lastMoved is the newest ledger timestamp the row has, zero when it has
@@ -403,130 +473,133 @@ func liveTarget(r *LiveRow) *Target {
 	return t
 }
 
-// taskState is an on-its-own task's glyph and tone — orphans and peers, the
-// rows with no live worktree to speak for them.
-func taskState(t *Task) (string, string) {
+// taskState is an on-its-own task's glyph — orphans and peers, the rows with
+// no live worktree to speak for them.
+func taskState(t *Task) (string, Style, bool) {
 	switch {
 	case t.Escalated():
-		return glyphEscalated, ToneBad
+		return glyphEscalated, styleBad, false
 	case t.DeadlineState == "expired", t.Declined():
-		return glyphFailed, ToneBad
+		return glyphFailed, styleBad, false
 	case t.Report != nil && t.Report.Status == "blocked":
-		return glyphBlocked, ToneWarn
+		return glyphBlocked, styleWarn, false
 	case t.Report != nil && t.Report.Status == "done":
-		return glyphVerified, ToneGood
+		return glyphVerified, styleGood, false
 	default:
-		return glyphWorking, ""
+		return glyphWorking, Style{}, false
 	}
 }
 
 func orphanRow(now time.Time, r *TaskRow, l layout) rowSpec {
-	glyph, tone := taskState(r.Task)
-	var cells []string
+	glyph, style, spin := taskState(r.Task)
+	first := cell{text: "    " + glyph, style: style, spin: spin}
+	var cells []cell
 	switch l {
 	case narrow:
-		cells = []string{
-			"    " + glyph,
-			cell(r.Task.ID),
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(r.Task.ID)},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	default:
-		cells = []string{
-			"    " + glyph,
-			cell(r.Task.ID),
-			cell(taskPlace(r.Task)),
-			cell(r.Task.Summary()),
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(r.Task.ID)},
+			{text: dash(taskPlace(r.Task)), style: styleDim},
+			{text: dash(r.Task.Summary())},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	}
-	return rowSpec{cells: cells, tone: tone, target: taskTarget(r)}
+	return rowSpec{cells: cells, target: taskTarget(r)}
 }
 
 // landedState is how a terminal task closed: the verdict glyph the RECENTLY
 // LANDED section leads with, and the phrase beside it.
-func landedState(t *Task) (glyph, tone, outcome string) {
+func landedState(t *Task) (glyph string, style Style, outcome string) {
 	switch {
 	case t.Verify != nil && t.Verify.Result == "pass":
-		return glyphVerified, ToneGood, "verify pass"
+		return glyphVerified, styleGood, "verify pass"
 	case t.Verify != nil:
-		return glyphFailed, ToneBad, "verify " + t.Verify.Result
+		return glyphFailed, styleBad, "verify " + t.Verify.Result
 	default:
-		return glyphEscalated, ToneDim, "escalation acked"
+		return glyphEscalated, styleDim, "escalation acked"
 	}
 }
 
 func landedRow(now time.Time, r *TaskRow, l layout) rowSpec {
-	glyph, tone, outcome := landedState(r.Task)
+	glyph, style, outcome := landedState(r.Task)
 	pr := "-"
 	if r.Task.Report != nil && r.Task.Report.PR > 0 {
 		pr = "#" + strconv.Itoa(r.Task.Report.PR)
 	}
-	var cells []string
+	first := cell{text: "  " + glyph, style: style}
+	var cells []cell
 	switch l {
 	case narrow:
-		cells = []string{
-			"  " + glyph,
-			cell(taskPlace(r.Task)),
-			pr,
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(taskPlace(r.Task)), style: styleDim},
+			{text: pr},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	case medium:
-		cells = []string{
-			"  " + glyph,
-			cell(taskPlace(r.Task)),
-			pr,
-			outcome,
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(taskPlace(r.Task)), style: styleDim},
+			{text: pr},
+			{text: outcome},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	default:
-		cells = []string{
-			"  " + glyph,
-			cell(r.Task.ID),
-			cell(taskPlace(r.Task)),
-			pr,
-			outcome,
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(r.Task.ID)},
+			{text: dash(taskPlace(r.Task)), style: styleDim},
+			{text: pr},
+			{text: outcome},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	}
-	return rowSpec{cells: cells, tone: tone, target: taskTarget(r)}
+	return rowSpec{cells: cells, target: taskTarget(r)}
 }
 
 func peerRow(now time.Time, r *TaskRow, l layout) rowSpec {
-	glyph, tone := taskState(r.Task)
+	glyph, style, spin := taskState(r.Task)
 	target := ""
 	if r.Task.Dispatch != nil {
 		target = r.Task.Dispatch.Target
 	}
-	var cells []string
+	first := cell{text: "  " + glyph, style: style, spin: spin}
+	var cells []cell
 	switch l {
 	case narrow:
-		cells = []string{
-			"  " + glyph,
-			cell(r.Task.ID),
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(r.Task.ID)},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	case medium:
-		cells = []string{
-			"  " + glyph,
-			cell(r.Task.ID),
-			cell(target),
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(r.Task.ID)},
+			{text: dash(target)},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	default:
-		cells = []string{
-			"  " + glyph,
-			cell(r.Task.ID),
-			cell(target),
-			cell(r.Task.Summary()),
-			ago(now, r.Task.Last.TS),
+		cells = []cell{
+			first,
+			{text: dash(r.Task.ID)},
+			{text: dash(target)},
+			{text: dash(r.Task.Summary())},
+			{text: ago(now, r.Task.Last.TS), style: styleDim},
 		}
 	}
-	return rowSpec{cells: cells, tone: tone, target: taskTarget(r)}
+	return rowSpec{cells: cells, target: taskTarget(r)}
 }
 
-// taskTarget is navigation for a task rendered on its own. With a live row it
-// is that row's; without one it can only ever open a pull request — there is
-// no pane, that being what makes the task an orphan.
+// taskTarget is navigation for a task rendered on its own. With a live row
+// it is that row's; without one it can only ever open a pull request — there
+// is no pane, that being what makes the task an orphan.
 func taskTarget(r *TaskRow) *Target {
 	if r.Live != nil {
 		t := liveTarget(r.Live)
@@ -587,10 +660,10 @@ func prText(pr *wt.PR) string {
 	return pr.State
 }
 
-// cell is one column's text: escaped, and a dash when there is nothing to
+// dash is one column's text: escaped, and a dash when there is nothing to
 // show — the same renderer contract ls keeps, because the reader is the same
 // person.
-func cell(s string) string {
+func dash(s string) string {
 	if s == "" {
 		return "-"
 	}
@@ -598,8 +671,8 @@ func cell(s string) string {
 }
 
 // ago says how long ago in words a person says — "4m ago", never a raw
-// timestamp: the board redraws, so precision would be churn, and the column is
-// read relatively down the rows.
+// timestamp: the board redraws, so precision would be churn, and the column
+// is read relatively down the rows.
 func ago(now time.Time, ts time.Time) string {
 	if ts.IsZero() {
 		return "-"
