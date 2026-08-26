@@ -97,29 +97,6 @@ title = "Worktender: prune (apply)"
 platforms = ["windows"]
 command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "& .\\bin\\worktender.exe prune-apply"]
 
-# The fleet board — a long-running TUI, so it is a [[panes]] entrypoint rather
-# than an action: an action's output lands in the plugin log after exit, and a
-# pane gets a real terminal. Opened (and focused) with:
-#
-#   herdr plugin pane open --plugin steig.worktender --entrypoint board --focus
-#
-# which is also the line to put behind a [[keys.command]] binding in your own
-# config.toml — this plugin deliberately ships no keybindings, and herdr has no
-# manifest surface for a plugin to declare one anyway. See "The fleet board" in
-# docs/reference.md.
-#
-# Placement `popup`: the board is a cockpit to summon over whatever is in
-# hand — glance, jump, dismiss — not a destination to switch tabs to. The
-# open command above is unchanged; it now raises the popup. No windows twin:
-# watch mode drives the terminal through stty, which windows does not have.
-[[panes]]
-id = "board"
-title = "Worktender: fleet board"
-description = "The fleet ledger merged with live worktree, agent and pull request state; escalations on top."
-platforms = ["linux", "macos"]
-placement = "popup"
-command = ["./bin/worktender", "fleet", "board", "--watch"]
-
 # Startup — the one-shot herdr runs after the server is ready.
 #
 # This is what replaces the zsh original's `wt watch`, a 90s loop that asked the
