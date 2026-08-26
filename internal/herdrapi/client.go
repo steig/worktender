@@ -454,23 +454,6 @@ func (c *Client) WorktreeCreate(cwd, branch, base, label string, focus bool) (*W
 	return &out, nil
 }
 
-// WorkspaceCreate makes a new plain workspace — no worktree, just a shell in
-// cwd — answering with the workspace and its root pane, the shape
-// WorktreeCreate answers with and for the same reason: a caller about to staff
-// the pane should not have to go and look it up.
-//
-// focus is a parameter for the reason it is on WorktreeOpen: this runs at
-// server start, and yanking the user into a workspace they did not ask to see
-// is not this plugin's call to make.
-func (c *Client) WorkspaceCreate(cwd, label string, focus bool) (*WorkspaceCreatedResponse, error) {
-	params := map[string]any{"cwd": cwd, "label": label, "focus": focus}
-	var out WorkspaceCreatedResponse
-	if err := c.call("workspace.create", params, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // PaneSendText types text into a pane. It does NOT submit it — see PaneSendKeys.
 //
 // This rather than agent.prompt, which blocks against an agent herdr still has
@@ -530,23 +513,6 @@ func (c *Client) AgentGet(target string) (*AgentInfoResponse, error) {
 		return nil, err
 	}
 	return &out, nil
-}
-
-// AgentFocus focuses the pane hosting an agent, by agent name or by the pane
-// id — the same targets AgentGet resolves. It is the board's jump-to-worker:
-// beyond bringing the pane to the front, focusing an agent marks its `done`
-// state as seen, so jumping to a finished worker also clears it from herdr's
-// attention queue. It fails with agent_not_found when the target hosts no
-// agent; PaneFocus is the fallback for that pane.
-func (c *Client) AgentFocus(target string) error {
-	return c.call("agent.focus", map[string]any{"target": target}, nil)
-}
-
-// PaneFocus focuses one pane by id, agent or not. It carries none of
-// AgentFocus's seen-marking, which is why it is the fallback rather than the
-// first choice.
-func (c *Client) PaneFocus(paneID string) error {
-	return c.call("pane.focus", map[string]any{"pane_id": paneID}, nil)
 }
 
 // PaneRead returns a snapshot of a pane's terminal output.

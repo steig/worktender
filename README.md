@@ -461,23 +461,6 @@ Staffing starts `claude`, and **resumes rather than restarts**: a checkout that
 already has a Claude Code transcript in `~/.claude/projects` is picked up with
 `--continue`, so re-staffing does not throw away the conversation.
 
-## The fleet board
-
-`worktender fleet board --watch` is the cockpit: the fleet ledger a
-coordinator keeps (see [the contract](docs/fleet-ledger-contract.md)) merged
-with the live `ls --all-repos --reports` view and pull request state,
-escalations on top, redrawn as the fleet moves. Navigation only — jump to a
-worker's pane, open a row's pull request — never state-changing. It ships as a
-popup pane entrypoint — summoned over whatever you are doing, then dismissed —
-raised or refocused with one command:
-
-```sh
-herdr plugin pane open --plugin steig.worktender --entrypoint board --focus
-```
-
-Plugins cannot ship keybindings, so the key is yours to bind — the one-liner
-is in [the reference](docs/reference.md#the-fleet-board).
-
 ## Trust
 
 **A herdr plugin is not sandboxed.** This one runs as you, with your files, your
@@ -524,7 +507,6 @@ thread, with five worked examples — which has no markdown source here.
 | [Dispatching a worker](docs/dispatch.md) | `dispatch`, `report` and `gate` — handing a slice to another agent and waiting for it, and why the report has fixed slots. |
 | [How removal is decided](docs/pruning.md) | What authorises a removal, why git topology never does it alone, and the guards. |
 | [Events and startup](docs/events.md) | The hooks that adopt and staff automatically, and the one-shot pass that covers what they cannot. |
-| [The fleet ledger contract](docs/fleet-ledger-contract.md) | The append-only JSONL the fleet board renders and a fleet controller writes: entry types, concurrency, replay, versioning. |
 | [Reference](docs/reference.md) | Exit codes, the errors you are likely to meet, keybindings, and the smaller behaviours. |
 | [Trust](docs/trust.md) | What running unsandboxed means here, and what the install path does and does not prove. |
 

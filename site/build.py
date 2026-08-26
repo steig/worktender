@@ -31,7 +31,6 @@ PAGES = [
     ("json", "JSON", "json.md", "The --json output every command takes, what each null means, and why absence and unanswered are different fields."),
     ("pruning", "Pruning", "pruning.md", "What authorises a removal, why git topology never does it alone, and the guards."),
     ("events", "Events", "events.md", "The hooks that adopt and staff automatically, and why they are off until you ask."),
-    ("fleet-ledger-contract", "Fleet ledger", "fleet-ledger-contract.md", "The append-only JSONL contract between the fleet controller that writes it and the board that renders it."),
     ("trust", "Trust", "trust.md", "What running unsandboxed means here, and what the install path does and does not prove."),
     ("reference", "Reference", "reference.md", "Exit codes, the errors you are likely to meet, keybindings, and the smaller behaviours."),
 ]

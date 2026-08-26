@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "fleet", "doctor", "update", "start", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "start", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "on-event", "startup"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -58,9 +58,6 @@ func run(args []string, out io.Writer) error {
 	switch args[0] {
 	case "ls", "list":
 		return lsCommand(args[1:], out)
-	case "fleet":
-		// The cockpit: read-only plus navigation, never state-changing.
-		return fleetCommand(args[1:], out)
 	case "doctor":
 		// Read-only, takes no lock, works from outside a repository.
 		return doctorCommand(args[1:], out)

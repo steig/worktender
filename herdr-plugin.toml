@@ -97,29 +97,6 @@ title = "Worktender: prune (apply)"
 platforms = ["windows"]
 command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "& .\\bin\\worktender.exe prune-apply"]
 
-# The fleet board — a long-running TUI, so it is a [[panes]] entrypoint rather
-# than an action: an action's output lands in the plugin log after exit, and a
-# pane gets a real terminal. Opened (and focused) with:
-#
-#   herdr plugin pane open --plugin steig.worktender --entrypoint board --focus
-#
-# which is also the line to put behind a [[keys.command]] binding in your own
-# config.toml — this plugin deliberately ships no keybindings, and herdr has no
-# manifest surface for a plugin to declare one anyway. See "The fleet board" in
-# docs/reference.md.
-#
-# Placement `popup`: the board is a cockpit to summon over whatever is in
-# hand — glance, jump, dismiss — not a destination to switch tabs to. The
-# open command above is unchanged; it now raises the popup. No windows twin:
-# watch mode drives the terminal through stty, which windows does not have.
-[[panes]]
-id = "board"
-title = "Worktender: fleet board"
-description = "The fleet ledger merged with live worktree, agent and pull request state; escalations on top."
-platforms = ["linux", "macos"]
-placement = "popup"
-command = ["./bin/worktender", "fleet", "board", "--watch"]
-
 # Startup — the one-shot herdr runs after the server is ready.
 #
 # This is what replaces the zsh original's `wt watch`, a 90s loop that asked the
@@ -142,30 +119,6 @@ command = ["./bin/worktender", "startup"]
 [[startup]]
 platforms = ["windows"]
 command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "& .\\bin\\worktender.exe startup"]
-
-# Fleet controller staffing — the second startup one-shot, behind a gate of
-# its own.
-#
-# THIS DOES NOTHING UNLESS FLEET_CONTROLLER IS SET, and that gate is separate
-# from WORKTENDER_EVENTS on purpose: events start workers inside worktrees the
-# user already made, while this starts the always-on session that dispatches
-# workers across every repository on the machine. Different blast radii,
-# different opt-ins. The gate reads the same values the events gate reads and
-# fails closed the same way — an unrecognised value is off, and the run says
-# so. It is armed by a human exporting it into herdr's own environment;
-# nothing worktender starts is ever handed it.
-#
-# The lease is a live agent named `fleet`, never the pane: herdr restores
-# panes across a restart but not the processes in them, so after a restart the
-# pane exists exactly when the controller is gone. Re-staffing resumes the
-# controller's own conversation with --continue.
-[[startup]]
-platforms = ["linux", "macos"]
-command = ["./bin/worktender", "fleet", "staff"]
-
-[[startup]]
-platforms = ["windows"]
-command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "& .\\bin\\worktender.exe fleet staff"]
 
 # Events — the live half. herdr invokes these when worktrees appear, so a new
 # checkout is adopted and staffed as it happens rather than the next time

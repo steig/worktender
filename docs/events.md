@@ -48,34 +48,6 @@ It shares the `WORKTENDER_EVENTS` opt-in above, and is off without it. Same
 reason, more so: it starts agents across every open repository at once, on every
 launch.
 
-## The fleet controller
-
-A second startup one-shot, `worktender fleet staff`, can staff the machine's
-fleet controller — the always-on session that loads the fleet-coordinator
-skill and dispatches workers across every repository. **It is off by default
-and armed only by its own variable, `FLEET_CONTROLLER`,** which reads exactly
-the values `WORKTENDER_EVENTS` reads and fails closed the same way: falsey
-spellings and unset are off, and a value the gate does not recognise leaves
-the controller down and says which value it refused.
-
-The gate is separate from `WORKTENDER_EVENTS` because the blast radii are
-different: events start workers inside worktrees you already made, while this
-starts the session that goes on to create work across the whole machine. You
-can opt in to either without getting the other. Like the events gate it is
-read from herdr's own environment — set by you, before herdr starts, as a
-deliberate choice. **No agent worktender starts is ever handed this variable,
-and nothing an agent can run arms it.**
-
-When armed, the one-shot leases on **agent presence, never pane existence**:
-while a live agent named `fleet` exists anywhere in the session, it staffs
-nothing. herdr restores panes across a restart but not the processes that
-were in them, so "the fleet pane is open" is true precisely when the
-controller is gone — which is why the pane is never the lease. The controller
-lives in a dedicated workspace labelled `fleet`, in the fleet state directory
-(`~/.local/state/fleet`, beside its ledger), and a re-staff after a restart
-resumes the controller's own conversation with `--continue` rather than
-starting its memory over.
-
 ---
 
 [← README](../README.md)
