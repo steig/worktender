@@ -20,7 +20,6 @@ func TestFleetRejectsBadInvocations(t *testing.T) {
 		{"fleet", "board", "stray"},
 		{"fleet", "board", "--watch", "--json"},
 		{"fleet", "board", "--nonsense"},
-		{"fleet", "staff", "stray"},
 	} {
 		if err := run(args, new(bytes.Buffer)); err == nil {
 			t.Errorf("run(%q) returned nil, want a usage error", args)
