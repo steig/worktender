@@ -37,6 +37,21 @@ func TestBriefSendsTheWorkerToReadTheIssueRatherThanCarryingIt(t *testing.T) {
 	}
 }
 
+// The coordinator has no visibility into a worker between dispatch and its
+// final report unless the brief asks for one. "planned" is a real status the
+// report envelope accepts (see report.go) that the brief used to never
+// mention.
+func TestBriefAsksForAPlannedCheckpointBeforeTheDoneReport(t *testing.T) {
+	line := brief(42, "42-fix-the-thing")
+
+	if !strings.Contains(line, "planned once you have a plan") {
+		t.Errorf("the brief must ask the worker to report a plan before changing code; got %q", line)
+	}
+	if !strings.Contains(line, "done with --pr") || !strings.Contains(line, "or blocked with") {
+		t.Errorf("the brief must still cover the done and blocked statuses; got %q", line)
+	}
+}
+
 // paneReadChunk is the largest read a pane delivers, measured against protocol
 // 17: a 4400-byte payload arrived as four reads of 1022 and one of 312, and the
 // submit followed 10µs behind the last of them. A brief that fits in one read
