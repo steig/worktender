@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/steig/worktender/internal/herdrapi"
@@ -197,13 +198,40 @@ func joinNoteChunks(tokens map[string]string) (string, bool) {
 	return note.String(), true
 }
 
+// maxBoundaryShift bounds how far chunkRunes will pull a split point back to
+// dodge whitespace. A real note's word gaps are a handful of runes at most, so
+// this comfortably covers them. The cap matters for the input a real note
+// never has: a long run of interior whitespace (reportNote does not limit run
+// length), which would otherwise erode the boundary one rune at a time toward
+// a zero-width chunk, spraying a note across far more than noteChunks slots
+// and rejecting a note that was never actually too long. Past this cap the
+// boundary is left on whitespace, and confirmTokens is what catches the
+// resulting mismatch at delivery — the same path that already catches
+// herdr's other undocumented cuts.
+const maxBoundaryShift = 16
+
 // chunkRunes splits by runes rather than bytes: the limit is counted in runes,
 // and a byte-wise split would cut a character in half.
+//
+// A split point is pulled back off a run of whitespace when a plain size-wide
+// cut would land on one: herdr trims a stored value's leading and trailing
+// whitespace before this plugin's write ever gets a reply (issue #166 — a note
+// that split "raw SQL error, PR open" into "raw SQL error," and " PR open"
+// came back missing that second chunk's leading space), the same undocumented
+// behavior as the length cut above. A chunk boundary on whitespace is
+// therefore not a chunk that reassembles into what the worker wrote, so the
+// boundary moves instead of the content — up to maxBoundaryShift.
 func chunkRunes(s string, size int) []string {
 	var chunks []string
 	runes := []rune(s)
-	for start := 0; start < len(runes); start += size {
-		chunks = append(chunks, string(runes[start:min(start+size, len(runes))]))
+	for start := 0; start < len(runes); {
+		end := min(start+size, len(runes))
+		floor := max(start+1, end-maxBoundaryShift)
+		for end > floor && end < len(runes) && (unicode.IsSpace(runes[end-1]) || unicode.IsSpace(runes[end])) {
+			end--
+		}
+		chunks = append(chunks, string(runes[start:end]))
+		start = end
 	}
 	return chunks
 }

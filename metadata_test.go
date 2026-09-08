@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/herdrtest"
@@ -296,6 +298,91 @@ func TestAReportHerdrStoredIntactSucceeds(t *testing.T) {
 	r := report{status: "done", pr: 12, note: strings.Repeat("a", noteLimit)}
 	if err := writeReport(mangler(t, func(map[string]string) {}), "w1:p1", r); err != nil {
 		t.Fatalf("writeReport rejected an intact delivery: %v", err)
+	}
+}
+
+// A plain size-wide cut can land squarely on a space, and herdr trims a
+// stored value's leading and trailing whitespace — so a chunk boundary must
+// never fall there. Each case below is built so a naive cut at exactly
+// tokenValueLimit runes would split on whitespace.
+func TestChunkRunesNeverSplitsOnWhitespace(t *testing.T) {
+	for _, note := range []string{
+		// Issue #166's own repro: the boundary at rune 80 falls on the space
+		// between "error," and "PR".
+		"Fixed duplicate attribute_definition key to return 409 instead of raw SQL error, PR open as draft",
+		// A run of spaces straddling the boundary rather than a single one.
+		strings.Repeat("a", 78) + "     " + strings.Repeat("b", 78),
+		// The boundary itself sits inside the run of spaces.
+		strings.Repeat("a", 79) + "  " + strings.Repeat("b", 79),
+		// A run right at maxBoundaryShift's edge, still small enough to clear.
+		strings.Repeat("a", 70) + strings.Repeat(" ", maxBoundaryShift-1) + strings.Repeat("b", 100),
+		// No whitespace anywhere near a boundary: must be left untouched.
+		strings.Repeat("a", 200),
+	} {
+		t.Run(note, func(t *testing.T) {
+			chunks := chunkRunes(note, tokenValueLimit)
+
+			if got := strings.Join(chunks, ""); got != note {
+				t.Fatalf("chunks joined to %q, want the original %q", got, note)
+			}
+			for i, chunk := range chunks {
+				if n := utf8.RuneCountInString(chunk); n > tokenValueLimit {
+					t.Errorf("chunk %d is %d runes, over herdr's %d-rune limit", i, n, tokenValueLimit)
+				}
+				runes := []rune(chunk)
+				if i > 0 && unicode.IsSpace(runes[0]) {
+					t.Errorf("chunk %d %q starts with whitespace; herdr would trim it off", i, chunk)
+				}
+				if i < len(chunks)-1 && unicode.IsSpace(runes[len(runes)-1]) {
+					t.Errorf("chunk %d %q ends with whitespace; herdr would trim it off", i, chunk)
+				}
+			}
+		})
+	}
+}
+
+// A run of whitespace longer than maxBoundaryShift cannot be dodged — some
+// chunk boundary must land inside it — but chunkRunes must still degrade to
+// that cleanly rather than eroding one rune at a time into far more than
+// noteChunks slots, which would reject a note that was never too long.
+func TestChunkRunesBoundsGrowthOnAnUnavoidableWhitespaceRun(t *testing.T) {
+	for _, note := range []string{
+		// A run just past tokenValueLimit: no split anywhere avoids it.
+		"a" + strings.Repeat(" ", 79) + strings.Repeat("b", 120),
+		strings.Repeat(" ", 90) + strings.Repeat("a", 110),
+		strings.Repeat("a", 100) + strings.Repeat(" ", 90) + "b",
+	} {
+		t.Run(note, func(t *testing.T) {
+			chunks := chunkRunes(note, tokenValueLimit)
+
+			if got := strings.Join(chunks, ""); got != note {
+				t.Fatalf("chunks joined to %q, want the original %q", got, note)
+			}
+			if len(chunks) > noteChunks {
+				t.Errorf("a %d-rune note produced %d chunks, over the %d slots the layout has", utf8.RuneCountInString(note), len(chunks), noteChunks)
+			}
+			for i, chunk := range chunks {
+				if n := utf8.RuneCountInString(chunk); n > tokenValueLimit {
+					t.Errorf("chunk %d is %d runes, over herdr's %d-rune limit", i, n, tokenValueLimit)
+				}
+			}
+		})
+	}
+}
+
+// The end-to-end version of the same bug: herdr's real trimming, simulated
+// here, must not turn an intact write into a reported mismatch.
+func TestAReportSurvivesHerdrTrimmingChunkWhitespace(t *testing.T) {
+	trimWhitespace := func(tokens map[string]string) {
+		for key, value := range tokens {
+			tokens[key] = strings.TrimSpace(value)
+		}
+	}
+
+	note := "Fixed duplicate attribute_definition key to return 409 instead of raw SQL error, PR open as draft"
+	r := report{status: "done", pr: 448, note: note}
+	if err := writeReport(mangler(t, trimWhitespace), "w1:p1", r); err != nil {
+		t.Fatalf("writeReport failed on a note herdr's whitespace trimming should not have touched: %v", err)
 	}
 }
 
