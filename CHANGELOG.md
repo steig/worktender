@@ -10,6 +10,21 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ### Added
 
+- **`start`'s brief now asks the worker for a `planned` checkpoint before it
+  touches code**, ahead of the existing final `done`/`blocked` report. (#164)
+  The report envelope already accepted `planned` as one of its three statuses,
+  but nothing ever asked a worker to send one, so a coordinator had no
+  visibility into a dispatched worker between dispatch and its last report.
+  The added sentence reuses the brief's one mention of the plugin path rather
+  than repeating it, so the worst-case brief (a six-digit issue, the longest
+  branch slug, an installed plugin path) still fits in one pane read.
+- **The `coordinator` skill now covers merge sequencing, external-message
+  triage, and pruning.** (#164) It names which PR merges next (never runs
+  `gh pr merge` itself — that stays a human action), is documented as the
+  fleet's inbox for cross-workspace herdr activity and GitHub PR/issue
+  activity, and is told to prune merged worktrees as it goes rather than only
+  at the end of a session.
+
 - **The repository now installs as a Claude Code plugin.** (#151)
   `.claude-plugin/plugin.json` names the plugin `worktender` and Claude Code
   auto-discovers the existing `skills/worktrees` and `skills/coordinator`, so a

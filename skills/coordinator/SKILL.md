@@ -1,6 +1,6 @@
 ---
 name: coordinator
-description: Run as a coordinator over worktender-staffed herdr agents — dispatch a slice to a worker, verify rather than relay, and collect a fixed-slot report through a gate. Use when dispatching work to another agent in a worktree, when deciding whether a slice should be dispatched or kept inline, and when a dispatched worker has reported back.
+description: Run as a coordinator over worktender-staffed herdr agents — dispatch a slice to a worker, verify rather than relay, and collect a fixed-slot report through a gate. Default to this posture once a concrete slice exists — bounded authoring work with a mechanical done condition, in an isolated worktree (see "When to dispatch, and when not to" below) — treating dispatch as the default move for that kind of work, not just when a dispatch decision has already been raised. Not for open-ended project discussion with no slice yet.
 ---
 
 # Coordinating worktender's agents
@@ -130,6 +130,13 @@ anyone could have written. Branch on `status` and the presence of `pr`. Do not
 grep the note, and do not ask for a `--note-contains` — that would hand whoever
 filed the issue the decision of when your next agent starts.
 
+**`start`'s brief now asks for a `planned` checkpoint before the worker
+touches code, ahead of the final `done`/`blocked`.** It is your only visibility
+into a worker mid-task — read it with `ls --all-repos --reports --json` when
+you are already checking on the fleet, not on a poll loop. A `planned` report
+that never follows with `done` or `blocked` is a worker to look at, not a
+worker to gate on: `gate` still only releases on the statuses you name.
+
 **A `done` is a claim, not a fact.** The gate proves a well-formed report
 appeared in that pane after the gate opened, and nothing about who wrote it.
 Check the pull request it names. `--require-pr` is why that flag exists.
@@ -166,6 +173,49 @@ prose. In JSON mode everything else moves to stderr.
 typed, so nothing tells the four-minute slice from the forty-minute one. Gate on
 all of them with `--any`, act on whichever releases, then gate on the rest. The
 timeout is for the wait, not for each worker.
+
+## Merge order
+
+You decide when each PR merges; a worker sees only its own slice and cannot
+tell whether a sibling should land first. Track every open PR from workers
+you dispatched and check mergeability yourself rather than waiting to be
+asked:
+
+```bash
+gh pr view <N> --json state,mergeable,mergeStateStatus,statusCheckRollup
+```
+
+**You do not run `gh pr merge`.** That stays a human action. Your job is to
+name which PR merges next and why — a stacked slice before its base, whatever
+clears fastest among unrelated slices — and to flag one that looks mergeable
+but isn't (checks red, still-computing `mergeable: UNKNOWN`, conflicts).
+After each merge, restack anything forked from what just landed (see above)
+before naming the next one.
+
+**Prune often, not just at the end of a session.** A merged PR's worktree is
+immediately a pruning candidate — check right after you confirm a merge, not
+only when the fleet has piled up. `"$worktender" prune --repo .` is a dry run;
+read it before every `prune-apply`. See the worktrees skill for what
+authorises a removal and what `--release-agents` costs.
+
+## External messages
+
+You are the fleet's inbox. Cross-workspace herdr activity and GitHub activity
+for repos you're coordinating route through you, not through whichever worker
+happens to be closest:
+
+- **Herdr**: other workspaces' agents and notifications — `herdr notification`
+  and `herdr agent list` — for the fleet you're coordinating, not just the
+  pane you're sitting in.
+- **GitHub**: review comments, CI failures, new issues. `gh pr view <N> --json
+  comments,statusCheckRollup` and `gh issue list --state open` are the read
+  paths. Check them when a gate wakes you or before naming the next merge —
+  don't poll on a timer.
+
+**Triage before relaying.** A CI failure or review comment on a worker's own
+PR goes back to that worker as a new brief, not to the human. Escalate only
+what a worker can't resolve itself: a design disagreement in review, a
+`blocked` report, a new issue that needs slicing.
 
 ## Coming back after a clear
 
@@ -234,3 +284,7 @@ Nothing else.
   substitute for one.
 - **Dispatch, then gate.** The gate discards whatever the pane already held.
 - **Check the PR a `done` names** before acting as though work landed.
+- **Sequence merges, never execute them.** Name which PR merges next; the
+  human clicks merge.
+- **Be the fleet's inbox.** Cross-workspace herdr activity and GitHub PR/issue
+  activity route through you, triaged before you relay or escalate.

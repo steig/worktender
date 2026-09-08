@@ -1,6 +1,6 @@
 ---
 name: worktrees
-description: Drive git worktrees as herdr workspaces through the worktender plugin — list them, adopt orphans, staff empty workspaces with agents, and remove worktrees whose work has landed. Use when starting work in isolation or in parallel, when a task would mean checking out a branch over work already in progress, and when cleaning up finished worktrees.
+description: Drive git worktrees as herdr workspaces through the worktender plugin — list them, adopt orphans, staff empty workspaces with agents, and remove worktrees whose work has landed. Default to this once the work is bounded and isolable — a GitHub issue, or a task that would mean checking out a branch over existing work — preferring `worktender start <issue>` over working inline, not just when isolation or parallelism is explicitly requested. Not for open-ended project discussion with no dispatchable slice yet.
 ---
 
 # Worktrees via the `steig.worktender` herdr plugin
