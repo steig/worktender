@@ -10,6 +10,17 @@ install` tracks branch HEAD rather than a tag — the version in
 
 Nothing yet.
 
+## [0.10.1] — 2026-09-08
+
+### Fixed
+
+- **`report`'s note chunks no longer split on whitespace.** (#167) herdr trims
+  a stored token's leading and trailing whitespace, so a plain size-wide cut
+  landing on a space silently dropped that space from the reassembled note
+  (#166). `chunkRunes` now pulls a split point back off a run of whitespace,
+  bounded to 16 runes so a long interior run can't erode a boundary toward a
+  zero-width chunk.
+
 ## [0.10.0] — 2026-09-07
 
 ### Added
