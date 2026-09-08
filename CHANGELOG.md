@@ -8,7 +8,16 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`inbox`: a global, threaded, durable log for agent-to-agent messages.**
+  (#169) `inbox post --thread <id> --from <name> --note <text>` appends to
+  `<plugin state dir>/inbox/<thread-id>.ndjson`; `inbox read --thread <id>`
+  replays a thread in order; `inbox search <query>` substring-matches across
+  every thread. Fleet-wide rather than scoped to one repository, and pull-only
+  — there is no watch or subscribe, and it is not wired to `SendMessage` or any
+  other live channel, deliberately: an agent that wants a message durable
+  calls both. No retention yet; append-only.
 
 ## [0.10.1] — 2026-09-08
 

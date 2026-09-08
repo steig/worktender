@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "start", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "start", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "inbox", "on-event", "startup"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -88,6 +88,11 @@ func run(args []string, out io.Writer) error {
 	case "gate":
 		// A coordinator waiting on a worker; reads herdr, not the repository.
 		return gateCommand(args[1:], out)
+	case "inbox":
+		// A durable, threaded log for agent-to-agent messages, global across
+		// the fleet rather than scoped to one repository. Touches neither
+		// herdr nor a git checkout, so it needs no session either.
+		return inboxCommand(args[1:], out)
 	case "on-event":
 		// Invoked by herdr, never by hand. Off unless opted in.
 		return onEventCommand(args[1:], out)
