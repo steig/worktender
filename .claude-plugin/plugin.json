@@ -1,6 +1,6 @@
 {
   "name": "worktender",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "One command from a GitHub issue to a coding agent working on it in its own worktree.",
   "author": {
     "name": "Tom Steigerwald"
