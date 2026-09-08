@@ -68,6 +68,54 @@ worktender report --status planned|blocked|done [--pr N] --note <text>
 worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--timeout 15m]
 ```
 
+## A durable, global inbox for agent-to-agent messages
+
+`report` and `gate` are a live handshake between one worker and the coordinator
+that dispatched it: the moment either side exits, the channel is gone. `inbox`
+is the other thing — a message that has to survive that, and be findable by
+whoever asks later, not just by whoever it was sent to.
+
+```sh
+# Any agent, in any worktree, on any repository — the inbox is fleet-wide, not
+# scoped to one checkout.
+"$worktender" inbox post --thread 169 --from wt-169-inbox-016aab \
+  --note "storage lands under the plugin state dir, one NDJSON file per thread"
+
+# Read a thread in order.
+"$worktender" inbox read --thread 169
+
+# Or find it without knowing which thread it landed in.
+"$worktender" inbox search "NDJSON file per thread"
+```
+
+```sh
+worktender inbox post --thread <id> --from <name> --note <text> [--json]
+worktender inbox read --thread <id> [--json]
+worktender inbox search [--json] <query>
+```
+
+**It is not wired to `SendMessage` or any other live channel, on purpose.**
+worktender has no hook into that transport, and auto-logging every message
+would be a scope decision this plugin should not make silently. An agent that
+wants something durable calls both: its live channel to deliver it now, `inbox
+post` to make it findable later.
+
+**Pull only.** `read` and `search` are the whole interface — there is no
+watch or subscribe here, because that is what the live channel is already for.
+A coordinator or a freshly spun-up worker with no memory of this conversation
+runs `inbox search` when it is explicitly told to look for something; nothing
+here pushes a message at an agent that did not ask.
+
+**Thread ids are freeform**, same posture `report` already takes toward its
+note: an issue number or a task slug is the convention, but nothing here
+enforces or interprets one. They are restricted to letters, digits, `-`, `_`
+and `.` — enough for either convention, and never a path separator, so a
+caller-supplied id can never resolve outside the inbox directory.
+
+**No retention.** Append-only, unbounded, for now — a deliberate gap rather
+than an oversight. Better to ship without a pruning story and add one once
+real growth is observed than to guess a TTL today.
+
 ## Stacking on a branch that is still in review
 
 `start --base <ref>` forks the new worktree from any ref, not just the trunk. So
