@@ -512,6 +512,14 @@ thread, with five worked examples — which has no markdown source here.
 
 ## For coding agents
 
+**`herdr plugin install` does not put a skill anywhere Claude Code looks.** It
+clones this repository into herdr's own plugin directory and builds the binary
+there — the clone does contain `skills/`, but no coding session's working
+directory is ever inside a herdr plugin install, and nothing about Claude
+Code's skill discovery reads one. Getting a skill in front of an agent is a
+separate step, the same one regardless of how — or whether — the worktender
+binary got installed.
+
 An agent driving this plugin gets a few things wrong without being told: that
 `plugin action invoke` returns an invocation record rather than the action's
 output, that `prune` and `prune-apply` are different in kind, and that enabling
@@ -533,6 +541,15 @@ never read a worker's diff, verify with targeted commands instead of relaying
 claims, ask whether something was run or merely reasoned, pass a brief inline so
 no worker stalls on a file-read prompt, and keep anything touching live or shared
 state out of a dispatch entirely.
+
+Or install through the [`steig/skills`](https://github.com/steig/skills) Claude Code
+marketplace, which lists both skills under a `worktender` plugin sourced from this
+repository:
+
+```sh
+claude plugin marketplace add steig/skills
+claude plugin install worktender@steig
+```
 
 Or vendor `skills/worktrees/SKILL.md` and `skills/coordinator/SKILL.md` into your
 own agent configuration, which pins them rather than tracking this repository.
