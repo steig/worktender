@@ -290,6 +290,28 @@ A gate also proves shape and position, never authorship — a pane is a buffer t
 controls. A `done` report is a claim, so check the pull request it names before acting as
 though the work landed.
 
+## Inbox
+
+`report` and `gate` are a live handshake — the moment either side exits, that
+channel is gone. `inbox` is for a message that has to survive past that, and
+be findable by whoever asks later, not just by whoever it was sent to:
+
+```bash
+"$worktender" inbox post --thread <id> --from <name> --note <text>
+"$worktender" inbox read --thread <id>
+"$worktender" inbox search <query>
+```
+
+Fleet-wide, not scoped to one repository or worktree. **Not wired to any live
+channel** — an agent that wants a message durable calls both: its live
+channel to deliver it now, `inbox post` to make it findable later. Pull only:
+`read` and `search` are the whole interface, there is no watch or subscribe.
+
+Thread ids are freeform — an issue number or a task slug is the convention,
+nothing here enforces one — restricted to letters, digits, `-`, `_` and `.`
+so a caller-supplied id can never resolve outside the inbox directory. No
+retention: append-only, unbounded, for now.
+
 ## Events
 
 The plugin declares two hooks — `worktree.created` and `worktree.opened` — so

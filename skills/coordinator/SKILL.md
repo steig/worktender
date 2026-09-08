@@ -212,6 +212,12 @@ happens to be closest:
   paths. Check them when a gate wakes you or before naming the next merge —
   don't poll on a timer.
 
+**That's a role, not the `inbox` command.** `worktender inbox post|read|search`
+(see the worktrees skill) is a separate, literal thing — a durable, fleet-wide,
+threaded log any agent can post to or query directly, independent of you. You
+still triage the live channels above; `inbox` is for a message that needs to
+survive past a live handshake, not for routing through you.
+
 **Triage before relaying.** A CI failure or review comment on a worker's own
 PR goes back to that worker as a new brief, not to the human. Escalate only
 what a worker can't resolve itself: a design disagreement in review, a
