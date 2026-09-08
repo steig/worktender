@@ -8,6 +8,10 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.10.0] — 2026-09-07
+
 ### Added
 
 - **`start`'s brief now asks the worker for a `planned` checkpoint before it
