@@ -10,6 +10,23 @@ install` tracks branch HEAD rather than a tag — the version in
 
 Nothing yet.
 
+## [0.11.1] — 2026-09-08
+
+### Fixed
+
+- **`skills/worktrees/SKILL.md` and `skills/coordinator/SKILL.md` now
+  document `inbox`.** (#174) They shipped without it when #170 landed after
+  the skills were last touched — a gap that mattered once nixos-config
+  started deriving its vendored copies straight from these files at the
+  pinned tag instead of hand-copying them.
+- **The README now says plainly that `herdr plugin install` does not put a
+  skill anywhere Claude Code looks.** (#173) It clones this repository and
+  builds the binary, and the clone does contain `skills/`, but no coding
+  session's working directory is ever inside a herdr plugin install and
+  nothing about Claude Code's skill discovery reads one. Also documents the
+  `steig/skills` Claude Code marketplace as a third install path, alongside
+  the two (`npx skills add`, hand-vendoring) already there.
+
 ## [0.11.0] — 2026-09-08
 
 ### Added
