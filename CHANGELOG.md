@@ -8,6 +8,10 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.11.0] — 2026-09-08
+
 ### Added
 
 - **`inbox`: a global, threaded, durable log for agent-to-agent messages.**
