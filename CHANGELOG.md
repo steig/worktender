@@ -10,6 +10,19 @@ install` tracks branch HEAD rather than a tag — the version in
 
 Nothing yet.
 
+## [0.11.2] — 2026-09-08
+
+### Fixed
+
+- **The `worktrees` and `coordinator` skills now say *when* to `inbox post`,
+  not just how.** (#176) `inbox` shipped, was tested and released, and went
+  completely unused through a multi-hour cross-session coordination effort
+  that was exactly its intended case — live `SendMessage` delivery already
+  satisfies the immediate need, so nothing prompted anyone to also log it
+  durably. Both skills now name the trigger: before sending a cross-session
+  message that isn't purely "go now" — a decision, a handoff, a status
+  another session will need after this one is gone — post it too.
+
 ## [0.11.1] — 2026-09-08
 
 ### Fixed
