@@ -312,6 +312,14 @@ nothing here enforces one — restricted to letters, digits, `-`, `_` and `.`
 so a caller-supplied id can never resolve outside the inbox directory. No
 retention: append-only, unbounded, for now.
 
+**When to actually post, not just how.** Before sending a cross-session
+message that isn't purely "go now" — a decision, a handoff, a design call, a
+status another session might need after this one is gone — `inbox post` it
+too, with the same thread id (an issue number, usually). The live message is
+easy to remember because someone is waiting on it; the durable copy is the one
+that gets skipped, and it is the one a coordinator with no memory of this
+conversation is stuck without.
+
 ## Events
 
 The plugin declares two hooks — `worktree.created` and `worktree.opened` — so
