@@ -33,6 +33,16 @@ included — do not guess the name. **It is not the branch name.** herdr's agent
 namespace spans every repository at once and refuses a duplicate, so the name
 carries a digest of the repository that you cannot derive by eye.
 
+**Judge the model tier before you dispatch; don't leave `--model` at whatever
+the default happens to be.** A slice with a mechanical, well-bounded done
+condition — a documented bug fix, a small refactor with an obvious shape — is
+cheaper on a lower-tier model without losing quality; a slice with real design
+surface (ambiguous scope, architectural judgment, something that needs careful
+review) isn't. Make the call from the issue itself. If it genuinely isn't
+obvious which tier fits, ask the user rather than guessing — that ambiguity is
+the sign it needs a human, not a reason to default to whichever tier is safest
+to assume.
+
 **When the slice is not an issue**, the older four-step path is still there:
 `herdr worktree create`, then `dispatch --pane <pane> --name <agent>`, then
 `herdr agent prompt <pane> "$(cat brief.md)"`, then `gate`. Use `ls` to get the
