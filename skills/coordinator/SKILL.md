@@ -218,6 +218,13 @@ threaded log any agent can post to or query directly, independent of you. You
 still triage the live channels above; `inbox` is for a message that needs to
 survive past a live handshake, not for routing through you.
 
+**A decision you relay is worth posting, not just relaying.** When a cross-
+session message you're triaging turns into something worth acting on — a
+design call, a merge decision, a status the human or another session will want
+later — `inbox post` it under the issue's thread id before you move on. The
+live relay gets the human's attention now; the durable copy is what a session
+with no memory of this one finds when it asks.
+
 **Triage before relaying.** A CI failure or review comment on a worker's own
 PR goes back to that worker as a new brief, not to the human. Escalate only
 what a worker can't resolve itself: a design disagreement in review, a
