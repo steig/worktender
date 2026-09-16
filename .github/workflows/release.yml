@@ -1,10 +1,12 @@
 name: release
 
-# scripts/build.sh falls back to
-# releases/latest/download/worktender_<os>_<arch> when the installing machine has
-# no Go toolchain. That URL only resolves if a release actually carries those
-# assets under exactly those names, so this workflow is what makes installing
-# without Go work at all.
+# Two install paths download these assets rather than building from source, and
+# both address them by exact name — scripts/build.sh as
+# releases/download/v<manifest version>/worktender_<os>_<arch> when the machine
+# herdr is installing on has no Go toolchain, and scripts/install.sh as the same
+# path under whatever tag releases/latest currently resolves to. Neither URL
+# exists unless a release carries those assets and a checksums.txt covering them,
+# so this workflow is what makes installing without Go work at all.
 
 on:
   push:
@@ -29,14 +31,24 @@ jobs:
         # CGO_ENABLED=0 keeps that true rather than accidental.
         env:
           CGO_ENABLED: "0"
+          # The tag is stamped into the binary. A plugin install reads its
+          # version out of the manifest beside it, and a standalone install from
+          # scripts/install.sh has no manifest at all — so without this a
+          # standalone `worktender doctor` could not name the release it is,
+          # which is half of what that command is for. Via env rather than
+          # inline interpolation, for the reason the publish step gives.
+          TAG: ${{ github.ref_name }}
         run: |
           mkdir -p dist
+          # Stamped without the leading v, so it reads the way herdr-plugin.toml
+          # spells the same version.
+          ldflags="-X main.releaseVersion=${TAG#v}"
           for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
             os="${target%_*}"
             arch="${target#*_}"
-            GOOS="$os" GOARCH="$arch" go build -trimpath -o "dist/worktender_${target}" .
+            GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "dist/worktender_${target}" .
           done
-          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/worktender_windows_amd64.exe .
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$ldflags" -o dist/worktender_windows_amd64.exe .
 
       - name: checksums
         run: cd dist && sha256sum worktender_* > checksums.txt && cat checksums.txt

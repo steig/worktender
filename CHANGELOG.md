@@ -21,6 +21,42 @@ install` tracks branch HEAD rather than a tag — the version in
   first, because the counter only ever answers which worker herdr saw move
   longest ago. Ties keep git's order, no `--sort` keeps it entirely, and the
   order applies to `--json` as well as the table.
+- **`scripts/install.sh` — worktender without herdr and without Go.** (#144)
+  The degraded path #143 built never fired on the only install route that
+  existed: `herdr plugin install` means herdr is present by definition. One
+  documented step now puts the binary on `PATH` for someone who runs neither:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/steig/worktender/main/scripts/install.sh | sh
+  ```
+
+  It follows `releases/latest` to a tag and pins **both** the binary and the
+  `checksums.txt` to that one release, verifies the SHA-256 before making
+  anything executable, and fails closed — a missing checksum line is as fatal as
+  a mismatched one, and every failure path removes the staged download. Nothing
+  is ever written to the destination path unverified, and it never wants sudo.
+  `--version` pins a release, `--dir` moves the destination off `~/.local/bin`.
+  See [Trust](docs/trust.md#installing-without-herdr) for what the checksum does
+  and does not prove.
+
+### Changed
+
+- **The release workflow stamps the version into the binary.** (#144) A plugin
+  install reads its version out of the manifest beside it and a standalone
+  install has no manifest at all, so without this `doctor` could not name the
+  release it was — half of what that command is for.
+- **`update` and `doctor` answer for a standalone install.** (#144) `update`
+  moves a plugin *checkout* forward and a standalone install has none, so it
+  names the one step that does — re-running the installer — rather than
+  reporting a missing `herdr-plugin.toml`. It deliberately does not run that
+  itself. `doctor`'s `version` line reports the release and says plainly that
+  nothing compared it against the newest. A binary that is neither — a hand
+  `go build` — is still told what was looked for.
+- **Resolving the binary is PATH-first everywhere it is documented.** (#144)
+  `herdr plugin list --json` is not available to a standalone install, so the
+  README, both skills, `docs/dispatch.md` and `docs/json.md` now take what is on
+  `PATH` and fall back to the plugin root. `doctor` says `on PATH already` when
+  typing `worktender` reaches the binary printing the line.
 
 ## [0.11.2] — 2026-09-08
 

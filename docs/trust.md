@@ -33,6 +33,56 @@ proof of authorship. That is the same trust nearly all software installed from
 GitHub asks for — which is a reason to say so plainly, not a reason to imply the
 checksum is doing more work than it is.
 
+## Installing without herdr
+
+`scripts/install.sh` is the other route — the one that puts the binary on `PATH`
+for someone who does not run herdr at all. It is meant to be run the way these
+things are run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/steig/worktender/main/scripts/install.sh | sh
+```
+
+**That line is a decision, and it is worth naming what it grants.** You are
+executing a script fetched from this repository's default branch before you have
+anything that could verify it — `curl | sh` has no equivalent of the checksum the
+script itself then applies to the binary. Whoever can push to `main` here can
+change what that command does. The mitigation is not technical and there is no
+point dressing it up as one: open the URL and read the script first. It is short,
+it is deliberately boring, and it is the same file the one-liner runs.
+
+What the script does do, once you have run it:
+
+- **It resolves one release and pins both halves to it.** `releases/latest` is
+  followed once, to a tag, and the binary and the `checksums.txt` are then both
+  fetched from that tag — so a release landing mid-install cannot hand you a
+  binary and somebody else's checksums. `--version` pins it yourself, which is
+  what you want when you are reproducing an environment rather than starting one.
+- **It verifies before it makes anything executable, and fails closed.** The
+  download is staged under a dotted name inside the destination directory, never
+  at `worktender`, and is `chmod +x`'d only after the published SHA-256 matches.
+  A missing checksum line is as fatal as a mismatched one. Every failure path
+  removes the staged file, which is a trap rather than a cleanup line at the
+  bottom — `set -e` inside a download exits before any line below it runs.
+- **The last step is a rename within one filesystem**, so nothing ever observes a
+  half-written binary at the path it is about to run.
+- **It never asks for sudo.** `~/.local/bin` is the user's own. A script that
+  curls from the network and then asks for root is asking for two kinds of trust
+  to answer one question.
+
+The ceiling is exactly the ceiling of the no-Go plugin path above, and for the
+same reason: the binary and its checksum come from the same release, published by
+whoever can publish releases here. There is no signature and no attestation. If
+you want the stronger story, install Go and build this repository — or install as
+a herdr plugin on a machine that has Go, which does it for you.
+
+## Upgrading
+
+A standalone install has no plugin checkout, so `worktender update` has nothing
+to fetch and rebuild and says so rather than improvising. Re-running the
+installer is the upgrade, and `worktender doctor` names the release you are on so
+you can tell whether you need to.
+
 See [SECURITY.md](../SECURITY.md) for the trust boundary in full, and for how to
 report something privately.
 

@@ -181,11 +181,13 @@ orchestrates with — write their document on the failure paths too, and carry t
 exit code in it, because with `--any` a number cannot say *which* of five
 workers the gate was about. See [Machine-readable output](docs/json.md).
 
-Everything is a subcommand of one binary, which herdr installs rather than
-putting on `PATH`. Resolve it once:
+Everything is a subcommand of one binary. A [standalone
+install](#on-its-own-with-neither-herdr-nor-go) puts it on `PATH`; a plugin
+install does not, because herdr owns that install. One line covers both — take
+what is on `PATH`, and fall back to asking herdr where it put it:
 
 ```sh
-worktender=$(herdr plugin list --json \
+worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
 ```
 
@@ -266,18 +268,91 @@ immediately, whatever `timeout_ms` the request carried. Staffing waits the pane
 out itself, for up to a minute, re-checking each time that nobody else has
 claimed the workspace meanwhile.
 
+## Install
+
+Two routes, and which you want follows from whether you run herdr.
+
+### As a herdr plugin
+
+The full command set — `start`, `dispatch`, `gate`, `sync` and the event hooks
+all need herdr, because herdr is what has workspaces and agents in it.
+
+```sh
+herdr plugin install steig/worktender
+```
+
+Read [Trust](docs/trust.md) first: this runs unsandboxed. With a Go toolchain
+present it compiles the source it just cloned, which is the stronger of the two
+install paths by a distance — what you can read is what you run. Without Go it
+falls back to the prebuilt release the manifest pins, checksummed.
+
+herdr owns the install, so the binary is not on `PATH`. Resolve it once:
+
+```sh
+worktender=$(herdr plugin list --json \
+  | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
+```
+
+### On its own, with neither herdr nor Go
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/steig/worktender/main/scripts/install.sh | sh
+```
+
+One step, onto your `PATH`, no sudo. What you get is the half of worktender that
+was never herdr's — `ls`, `prune` and `prune-apply`, whose every removal rule is
+git and `gh`. [Without herdr](#without-herdr) is what that costs.
+
+The script resolves the newest release, downloads the binary for your platform,
+**verifies it against the `checksums.txt` published alongside it**, and installs
+to `~/.local/bin/worktender`. A missing or mismatched checksum aborts; nothing
+unverified is ever made executable, and no failure path leaves a file behind.
+
+**Read it before you run it.** Piping a script from the network into a shell is
+the trust being extended here, and the only thing that makes it a decision rather
+than a habit is having looked:
+<https://github.com/steig/worktender/blob/main/scripts/install.sh>.
+
+Flags need `sh -s --`, because the script arrives down a pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/steig/worktender/main/scripts/install.sh \
+  | sh -s -- --version vX.Y.Z --dir ~/bin
+```
+
+- `--version <vX.Y.Z>` installs that release rather than resolving the newest.
+  The default follows `releases/latest`, which is a *moving* pointer — pin it if
+  you are reproducing an environment.
+- `--dir <path>` puts the binary somewhere else. `~/.local/bin` is the default
+  because it is the user's own and on the default `PATH` of most distributions;
+  the script says so when it is not on yours.
+
+**Upgrading is re-running the same line.** A standalone install has no plugin
+checkout to fetch into and no build script to run, so `worktender update` — which
+is how a plugin install moves forward — says that plainly and points back here
+rather than doing something surprising. `worktender doctor` names the release you
+are on.
+
+**Windows** has no POSIX `sh`. The release publishes `worktender_windows_amd64.exe`
+on the [releases page](https://github.com/steig/worktender/releases); download and
+verify it yourself. Note that the degraded path needs `HERDR_SOCKET_PATH` on
+Windows regardless — see [Without herdr](#without-herdr).
+
 ## Quickstart
 
 ```sh
-# 1. install — read Trust below first; this runs unsandboxed
+# 1. install — see Install above, and read Trust before either line
 herdr plugin install steig/worktender
+# ...or, with no herdr and no Go:
+#   curl -fsSL https://raw.githubusercontent.com/steig/worktender/main/scripts/install.sh | sh
 
-# 2. resolve the binary; herdr owns the install, so it is not on PATH
-worktender=$(herdr plugin list --json \
+# 2. resolve the binary. A standalone install is already on PATH and this line
+#    just finds it; a plugin install is not, because herdr owns it.
+worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
 
 # 3. see where you stand — and, if anything looks wrong, why.
-#    doctor also prints the line above, so you only need the jq once.
+#    doctor prints the path to itself, so you only need the jq once.
 "$worktender" ls
 "$worktender" doctor
 
@@ -291,6 +366,7 @@ worktender=$(herdr plugin list --json \
 "$worktender" prune-apply
 
 # 7. when doctor's version line says origin has moved past you
+#    (a standalone install re-runs the installer instead; `update` says so)
 "$worktender" update
 ```
 
@@ -351,6 +427,11 @@ A few things worth knowing before step 5 surprises you:
   Without it, the only removals left are the ones a deleted upstream authorises
   (see [How removal is decided](docs/pruning.md)), and a
   repository that uses pull requests will prune almost nothing.
+
+The [standalone installer](#on-its-own-with-neither-herdr-nor-go) needs none of
+herdr, Go or `jq` — only `curl` or `wget`, and `sha256sum` or `shasum` to verify
+what it downloaded with. It refuses rather than installing unverified if it
+cannot find one.
 
 ## Without herdr
 
@@ -474,8 +555,16 @@ re-checked at the moment of removal regardless, so the cost is repeated work
 rather than lost work.
 
 Note this is about herdr not *running*. Installed as a herdr plugin, herdr is
-present by definition; what this covers is the binary invoked from a plain
-shell.
+present by definition, so everything above is unreachable by that route alone —
+the binary has to arrive some other way, which is what the [standalone
+install](#on-its-own-with-neither-herdr-nor-go) is for. What this section covers
+is that binary, invoked from a plain shell.
+
+What you give up, beyond the columns going empty: `start`, `dispatch`, `sync`,
+`gate` and the event hooks, all of which are herdr's; the repository lock, which
+lives in the plugin state directory herdr provides; and `update`, which moves a
+plugin *checkout* forward and has nothing to move here — re-run the installer
+instead.
 
 ## Actions
 
@@ -517,6 +606,11 @@ With a Go toolchain the binary is compiled from the source that was just cloned,
 so what you can read is what you run. Without Go, a prebuilt release binary is
 downloaded, pinned to the manifest version and checksummed — which proves the
 download arrived intact and **nothing about who published it**.
+
+The [standalone installer](#on-its-own-with-neither-herdr-nor-go) is the same
+trust with one more link in it: a script fetched from this repository's default
+branch, which you are executing before you have the binary it verifies. Reading
+it first is the whole of the difference, and the link to it is above.
 
 The full argument, including what the checksum does not establish, is in
 [docs/trust.md](docs/trust.md). How to report something privately is in

@@ -184,7 +184,24 @@ func binaryLine() string {
 	if path == "" {
 		return ""
 	}
+	if onPath(path) {
+		return fmt.Sprintf("\non PATH already, so run it as `worktender` (%s)\n", safetext.Escape(path))
+	}
 	return fmt.Sprintf("\nrun it from a shell with:\n  worktender=%s\n", safetext.Escape(path))
+}
+
+// onPath reports whether typing `worktender` reaches THIS binary.
+//
+// The question is not "is there a worktender on PATH" — a plugin install with a
+// stale copy in ~/.local/bin would answer yes to that and send the reader to a
+// different build than the one printing the line. Resolving the name and
+// comparing it to our own path is the only form of the question worth asking.
+func onPath(path string) bool {
+	found, err := exec.LookPath("worktender")
+	if err != nil {
+		return false
+	}
+	return gitx.Resolve(found) == path
 }
 
 func binaryPath() string {
@@ -219,10 +236,24 @@ type check struct {
 // nothing in ordinary use ever mentions moving forward.
 func versionCheck(client *herdrapi.Client) check {
 	root, err := installRoot()
-	if err != nil {
-		return check{name: "version", value: "unknown", state: stateWarn, note: err.Error()}
+	if err == nil {
+		return installCheck(client, root)
 	}
-	return installCheck(client, root)
+	// A standalone install has no checkout to compare against origin, so the
+	// drift this check exists to report cannot be computed — but it does know
+	// exactly which release it is, and saying so is most of what the check is
+	// for. `ok` rather than `warn`: nothing is wrong with this install, and a
+	// warning nobody can clear is a warning people learn to scroll past.
+	//
+	// It deliberately does not go and ask GitHub which release is newest. That
+	// is a second network call on a read-only command, on a path where the
+	// answer is actionable only by re-running the installer anyway — so the note
+	// says the one thing the user can act on and leaves the timing to them.
+	if standalone() {
+		return check{name: "version", value: releaseVersion, state: stateOK,
+			note: "standalone install; nothing here compares it against the newest release — re-run the installer to move forward"}
+	}
+	return check{name: "version", value: "unknown", state: stateWarn, note: err.Error()}
 }
 
 // installCheck is versionCheck against an explicit install root. It reports two

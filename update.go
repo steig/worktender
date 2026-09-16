@@ -37,6 +37,25 @@ const manifestName = "herdr-plugin.toml"
 // rebuild never writes over the file it is replacing; see rebuild.
 const buildOutEnv = "WORKTENDER_BUILD_OUT"
 
+// releaseVersion is the release this binary was cut as, stamped at link time by
+// .github/workflows/release.yml. It is empty for every other build, and that
+// emptiness is load-bearing rather than a gap: a plugin install reads its
+// version out of the manifest beside it, and a `go build` from a working tree
+// has no release to name at all. A non-empty value therefore means exactly one
+// thing — this is a published release binary standing on its own, installed by
+// scripts/install.sh or downloaded by hand.
+var releaseVersion string
+
+// repoSlug is this repository, as scripts/install.sh and the release URLs name
+// it.
+const repoSlug = "steig/worktender"
+
+// installerCommand is the one documented step a standalone install is moved
+// forward by, and the line `update` prints when it is asked to do a job it
+// cannot. Built from repoSlug rather than written out, so moving the repository
+// moves this too.
+const installerCommand = "curl -fsSL https://raw.githubusercontent.com/" + repoSlug + "/main/scripts/install.sh | sh"
+
 // remoteTimeout bounds the one network read. `doctor` performs it on every run
 // and must not hang on an unreachable origin.
 const remoteTimeout = 10 * time.Second
@@ -51,10 +70,36 @@ func updateCommand(args []string, out io.Writer) error {
 	}
 	root, err := installRoot()
 	if err != nil {
+		if standalone() {
+			// Not an error about a missing file, which is what installRoot
+			// would say. There is nothing wrong here: a standalone install has
+			// no checkout to fetch into and no build script to run, so `update`
+			// has no work it could do and the honest answer is the one step
+			// that does move it forward.
+			//
+			// Deliberately not running the installer itself. Piping a script
+			// from the network into a shell is a decision its author makes
+			// once, on purpose, reading the URL; a binary doing it on their
+			// behalf from inside an unrelated command is the same act with the
+			// decision removed.
+			return withCode(exitEnvironment, fmt.Errorf(
+				"this is a standalone install of %s, not a plugin checkout, so there is nothing here to fetch and rebuild.\n"+
+					"re-run the installer to move it forward:\n  %s",
+				releaseVersion, installerCommand))
+		}
 		return err
 	}
 	return update(root, out)
 }
+
+// standalone reports whether this process is a released binary living outside a
+// plugin install — the shape scripts/install.sh leaves on PATH.
+//
+// It is the stamp rather than the absence of a manifest, because those are
+// different claims. No manifest beside a binary that was never stamped is a
+// `go build` someone ran in a working tree, and telling that person to re-run an
+// installer would be telling them to throw their own build away.
+func standalone() bool { return releaseVersion != "" }
 
 const updateUsage = "usage: worktender update"
 
