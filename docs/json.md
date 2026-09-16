@@ -31,11 +31,14 @@ name gets longer. And the table has one word for four different absences:
 
 ```sh
 $ worktender ls --pr
-* main                      w21  w21:p1  idle     1057  -       worktender
-  worktree/brave-valley     -    -       -        -     -       brave-valley-66f8
+   BRANCH                 WORKSPACE  PANE    STATUS  SEQ   PR  DIR
+*  main                   w21        w21:p1  idle    1057  -   worktender
+   worktree/brave-valley  -          -       -       -     -   brave-valley-66f8
 ```
 
-Every `-` there means something different — no workspace, no pane, no agent, no
+The labels say which column is which. They do not say what any one cell means,
+and that is the gap this document exists for: every `-` there means something
+different — no workspace, no pane, no agent, no
 counter, no pull request — and the last one means *two* things the table cannot
 separate:
 this branch has no pull request, and `gh` could not be asked. That second
@@ -272,9 +275,10 @@ coordinator, read back off the pane's own herdr metadata — the same place
 
 ```sh
 $ worktender ls --reports
-* main                      w21  w21:p1  idle     1057  -        worktender
-  feat/1-reconcile-execute  w22  w22:p1  working  1055  planned  1-reconcile-execute
-  fix/257-erasure-comments  w1K  w1K:p1  idle     812   done #4  257-erasure-comments
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   REPORT   DIR
+*  main                      w21        w21:p1  idle     1057  -        worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  planned  1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   done #4  257-erasure-comments
 ```
 
 ```json

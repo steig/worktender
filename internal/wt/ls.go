@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -31,6 +32,13 @@ type Options struct {
 	// the command that defines it, not to the listing that displays it.
 	LookupReport func(paneID string) (Report, error)
 	JSON         bool
+	// Header draws the label row above the columns. Positive rather than the
+	// --no-header the flag spells, so there is one polarity in this file and
+	// the negation happens once, where the flag is read.
+	Header bool
+	// Sort orders the rows before they are written. SortNone keeps the order
+	// herdr answered in, which is git's.
+	Sort SortField
 }
 
 // missing is printed for a column with nothing to show.
@@ -339,6 +347,121 @@ func OnlyBlocked(rows []Row) []Row {
 	return kept
 }
 
+// SortField is the column a listing is ordered by.
+//
+// A named type rather than a string so the parse happens once, at the flag, and
+// every caller downstream holds a value that is already known to be a column
+// this table has.
+type SortField string
+
+const (
+	// SortNone keeps the order herdr answered in, which is git's worktree order
+	// with the ghosts appended. It is the default because it is stable across
+	// runs in a way no content-derived order is: a listing people watch refresh
+	// should not reshuffle because one agent changed state.
+	SortNone SortField = ""
+	// SortBranch is lexicographic by branch name.
+	SortBranch SortField = "branch"
+	// SortStatus is by how much the row wants a human — see statusRank.
+	SortStatus SortField = "status"
+	// SortSeq is by herdr's state counter, lowest first, which puts the worker
+	// it last saw move longest ago at the top. See seqRank for why that end.
+	SortSeq SortField = "seq"
+)
+
+// SortFields is every accepted --sort value, in the order the usage text lists
+// them. Shared so the flag's error cannot name a field Sort does not implement.
+var SortFields = []SortField{SortBranch, SortStatus, SortSeq}
+
+// ParseSort resolves a --sort value, and reports the ones it would have taken
+// when it cannot.
+func ParseSort(s string) (SortField, error) {
+	for _, field := range SortFields {
+		if s == string(field) {
+			return field, nil
+		}
+	}
+	names := make([]string, 0, len(SortFields))
+	for _, field := range SortFields {
+		names = append(names, string(field))
+	}
+	return SortNone, fmt.Errorf("unknown sort field %q; want one of: %s", s, strings.Join(names, ", "))
+}
+
+// Sort orders rows in place.
+//
+// Stable, so rows that tie keep git's order rather than an arbitrary one that
+// moves between runs — which matters here more than it usually does, because
+// this listing is watched on a refresh loop and a row that jumps for no reason
+// costs the reader the scan they were in the middle of.
+//
+// It runs before both the table and the JSON, so the two cannot disagree about
+// what order the answer was in. A consumer that wants its own order sorts the
+// document itself; one that piped `--sort` in asked for this one.
+func Sort(rows []Row, field SortField) {
+	var less func(a, b Row) bool
+	switch field {
+	case SortBranch:
+		// Empty last rather than first: a ghost and a detached head have no
+		// branch, and they are not what someone sorting by branch is looking
+		// for.
+		less = func(a, b Row) bool {
+			if (a.Branch == "") != (b.Branch == "") {
+				return b.Branch == ""
+			}
+			return a.Branch < b.Branch
+		}
+	case SortStatus:
+		less = func(a, b Row) bool { return statusRank(a.AgentStatus) < statusRank(b.AgentStatus) }
+	case SortSeq:
+		less = func(a, b Row) bool { return seqRank(a.AgentStatusSeq) < seqRank(b.AgentStatusSeq) }
+	default:
+		return
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return less(rows[i], rows[j]) })
+}
+
+// statusRank orders the agent statuses by how much the row wants a person,
+// which is the question this listing gets read for — not alphabetically, which
+// only happens to put `blocked` first and would stop doing so the moment herdr
+// names a new status.
+//
+// The reading is the README's own: blocked sits there until somebody looks,
+// idle is finished-or-wedged and is therefore the coordinator's next move, and
+// working resolves itself. A status herdr has that this list does not sorts
+// after all of them but ahead of the rows with no agent at all, which are not
+// waiting on anyone.
+func statusRank(status string) int {
+	switch herdrapi.AgentStatus(status) {
+	case herdrapi.AgentStatusBlocked:
+		return 0
+	case herdrapi.AgentStatusIdle:
+		return 1
+	case herdrapi.AgentStatusDone:
+		return 2
+	case herdrapi.AgentStatusWorking:
+		return 3
+	case "":
+		return 5
+	default:
+		return 4
+	}
+}
+
+// seqRank is the sort key for the counter column: the counter itself, and the
+// maximum for a row that has none.
+//
+// Lowest first, because the counter is only ever read as "who stopped moving
+// first" — a high one is a worker herdr saw a moment ago, which is the row
+// nobody needs to look at. A row with no counter has no agent to be stale, so
+// it goes to the bottom with the rest of the unstaffed ones.
+func seqRank(seq *uint64) uint64 {
+	if seq == nil {
+		return ^uint64(0)
+	}
+	return *seq
+}
+
 // Render writes the rows as an aligned table.
 //
 // The pull request column is omitted rather than dashed when it was not asked
@@ -362,12 +485,18 @@ func Render(w io.Writer, rows []Row, cols Columns) error {
 type Columns struct {
 	PR      bool
 	Reports bool
+	// Header draws a label row above the rows. Not a column, but the same
+	// decision in the same place: what this table puts on the page.
+	Header bool
 }
 
 // renderRows writes the row lines into an open tabwriter, each marker cell
 // prefixed with indent. Shared so the grouped listing draws the same columns as
 // the flat one rather than a second table that resembles it.
 func renderRows(w io.Writer, rows []Row, cols Columns, indent string) {
+	if cols.Header {
+		renderHeader(w, cols, indent)
+	}
 	for _, row := range rows {
 		marker := indent + " "
 		switch {
@@ -390,6 +519,28 @@ func renderRows(w io.Writer, rows []Row, cols Columns, indent string) {
 		cells = append(cells, cell(dirCell(row)))
 		fmt.Fprintln(w, strings.Join(cells, "\t"))
 	}
+}
+
+// renderHeader writes the label row, in the same cell order renderRows uses so
+// the two cannot drift apart.
+//
+// The marker column gets a blank label rather than one of its own: the cell
+// holds `*`, `?` or nothing, and no word covers all three — the README does,
+// and a header is not where that explanation fits.
+//
+// Upper case because there is no rule above the labels to separate them from
+// the rows, and every value in this table is lower case except a pull request
+// state. The case is the separator.
+func renderHeader(w io.Writer, cols Columns, indent string) {
+	cells := []string{indent + " ", "BRANCH", "WORKSPACE", "PANE", "STATUS", "SEQ"}
+	if cols.Reports {
+		cells = append(cells, "REPORT")
+	}
+	if cols.PR {
+		cells = append(cells, "PR")
+	}
+	cells = append(cells, "DIR")
+	fmt.Fprintln(w, strings.Join(cells, "\t"))
 }
 
 // RenderRepos writes a cross-repository listing: a line naming the repository,
@@ -423,7 +574,11 @@ func RenderRepos(w io.Writer, repos []Repo, opts Options) error {
 			fmt.Fprintf(tw, "  cannot be read: %s\n", safetext.Escape(repo.Err))
 			continue
 		}
-		renderRows(tw, repo.Rows, Columns{Reports: opts.LookupReport != nil}, "  ")
+		// The header repeats per repository rather than once at the top, and
+		// that is tabwriter's rule rather than a choice: the repository line
+		// carries no tab, which ends the column block, so a header above it
+		// would be aligned against nothing and sit at the wrong offsets.
+		renderRows(tw, repo.Rows, Columns{Reports: opts.LookupReport != nil, Header: opts.Header}, "  ")
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -825,6 +980,7 @@ func Ls(client *herdrapi.Client, root, dir string, lookupPR func(branch string) 
 	if lookupPR != nil {
 		WithPRs(rows, lookupPR)
 	}
+	Sort(rows, opts.Sort)
 
 	if opts.JSON {
 		return jsonout.Write(out, ListJSON{Worktrees: JSON(rows)})
@@ -835,7 +991,7 @@ func Ls(client *herdrapi.Client, root, dir string, lookupPR func(branch string) 
 		fmt.Fprintln(out, "no blocked agents in "+safetext.Escape(root))
 		return nil
 	}
-	return Render(out, rows, Columns{PR: lookupPR != nil, Reports: opts.LookupReport != nil})
+	return Render(out, rows, Columns{PR: lookupPR != nil, Reports: opts.LookupReport != nil, Header: opts.Header})
 }
 
 // LsAll lists every worktree of every supplied repository, grouped by
@@ -864,6 +1020,15 @@ func LsAll(client *herdrapi.Client, roots []string, opts Options, out io.Writer)
 		listings = append(listings, repos[i].Rows)
 	}
 	WithAgentSeqs(client, listings...)
+	// Within each repository rather than across them: the listing is grouped,
+	// so there is no single sequence to put in order, and the repositories keep
+	// the order the caller asked for them in.
+	//
+	// After the counter lookup, not before — SortSeq reads a column WithAgentSeqs
+	// is what fills.
+	for i := range repos {
+		Sort(repos[i].Rows, opts.Sort)
+	}
 
 	if opts.JSON {
 		return jsonout.Write(out, ListJSON{Repositories: ReposJSON(repos)})

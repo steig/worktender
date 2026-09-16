@@ -736,7 +736,13 @@ func TestLsWorksWithoutHerdr(t *testing.T) {
 	if linked == "" {
 		t.Fatalf("the linked worktree should be listed:\n%s", got)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(got), "*") {
+	// The marker on whichever line carries it, not on the first line: the label
+	// row is above them now.
+	var marked bool
+	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+		marked = marked || strings.HasPrefix(line, "*")
+	}
+	if !marked {
 		t.Errorf("the main checkout should be listed and marked:\n%s", got)
 	}
 
@@ -950,4 +956,64 @@ func TestHerdrOnlyCommandsExitEnvironmentWithoutHerdr(t *testing.T) {
 			}
 		})
 	}
+}
+
+// #179 asked for sorting by "pid". There is no process id in this listing —
+// the column it names is herdr's state counter, which `--sort seq` orders. A
+// field the table has no column for is a usage error rather than a listing
+// quietly in git's order, which is what ignoring it would look like.
+func TestLsRejectsASortFieldItHasNoColumnFor(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	noHerdr(t)
+	t.Chdir(repo.Root)
+
+	err := lsCommand([]string{"--sort", "pid"}, &strings.Builder{})
+	if err == nil {
+		t.Fatal("ls --sort pid was accepted")
+	}
+	if got := exitCode(err); got != exitUsage {
+		t.Errorf("exit %d (%v), want exitUsage (%d)", got, err, exitUsage)
+	}
+	if !strings.Contains(err.Error(), "seq") {
+		t.Errorf("the error should name the fields it would have taken: %v", err)
+	}
+}
+
+// The labels are on by default — the whole complaint was that the columns were
+// unlabelled — and `--no-header` is the way back out for anything reading the
+// table by line.
+func TestLsLabelsTheColumnsUnlessToldNotTo(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	repo.AddWorktree("wip", "wip")
+	noHerdr(t)
+	t.Chdir(repo.Root)
+
+	var labelled strings.Builder
+	if err := lsCommand(nil, &labelled); err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if !strings.Contains(labelled.String(), "BRANCH") {
+		t.Errorf("the default listing should label its columns:\n%s", labelled.String())
+	}
+
+	var bare strings.Builder
+	if err := lsCommand([]string{"--no-header"}, &bare); err != nil {
+		t.Fatalf("ls --no-header: %v", err)
+	}
+	if strings.Contains(bare.String(), "BRANCH") {
+		t.Errorf("--no-header should leave the label row out:\n%s", bare.String())
+	}
+	// One line fewer and otherwise the same table: --no-header is for things
+	// that parse this by line, and it has to give them what they had.
+	if got, want := lines(bare.String()), lines(labelled.String())-1; got != want {
+		t.Errorf("--no-header dropped more than the label row: %d lines, want %d", got, want)
+	}
+}
+
+// lines counts the non-empty lines of some output.
+func lines(s string) int {
+	if strings.TrimSpace(s) == "" {
+		return 0
+	}
+	return len(strings.Split(strings.TrimSpace(s), "\n"))
 }

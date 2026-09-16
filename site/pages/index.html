@@ -56,14 +56,16 @@
 
 <figure>
   <div class="terminal"><span class="prompt">$ worktender ls</span>
-<span class="here">*</span> main                      w21  w21:p1  <span class="none">idle</span>     1057  worktender
-  feat/1-reconcile-execute  w22  w22:p1  <span class="busy">working</span>  1055  1-reconcile-execute
-  fix/257-erasure-comments  w1K  w1K:p1  <span class="none">idle</span>     812   257-erasure-comments
-  worktree/brave-valley     <span class="none">-</span>    <span class="none">-</span>       <span class="none">-</span>        <span class="none">-</span>     brave-valley-66f8</div>
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   DIR
+<span class="here">*</span>  main                      w21        w21:p1  <span class="none">idle</span>     1057  worktender
+   feat/1-reconcile-execute  w22        w22:p1  <span class="busy">working</span>  1055  1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  <span class="none">idle</span>     812   257-erasure-comments
+   worktree/brave-valley     <span class="none">-</span>          <span class="none">-</span>       <span class="none">-</span>        <span class="none">-</span>     brave-valley-66f8</div>
   <figcaption>
-    Branch, workspace, pane, agent status, state counter, directory. A
-    <code>-</code> means herdr has nothing for that worktree — the last row is a
-    checkout with no workspace and no agent.
+    A <code>-</code> means herdr has nothing for that worktree — the last row is
+    a checkout with no workspace and no agent. <code>--sort status</code> brings
+    the rows that want a person to the top; <code>--no-header</code> drops the
+    labels for anything reading the table by line.
   </figcaption>
 </figure>
 

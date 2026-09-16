@@ -33,14 +33,14 @@ worktree.**
 
 ```sh
 $ worktender ls
-* main                      w21  w21:p1  idle     1057  worktender
-  feat/1-reconcile-execute  w22  w22:p1  working  1055  1-reconcile-execute
-  fix/257-erasure-comments  w1K  w1K:p1  idle     812   257-erasure-comments
-  worktree/brave-valley     -    -       -        -     brave-valley-66f8
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   DIR
+*  main                      w21        w21:p1  idle     1057  worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   257-erasure-comments
+   worktree/brave-valley     -          -       -        -     brave-valley-66f8
 ```
 
-Columns are branch, herdr workspace, pane, agent status, state counter, and
-directory. `*` marks the repository's main checkout; `-` means herdr has nothing
+`*` marks the repository's main checkout; `-` means herdr has nothing
 for that worktree — the last row is a checkout with no workspace and no agent,
 which is exactly what `sync` picks up.
 
@@ -82,9 +82,10 @@ one `gh` call per branch:
 
 ```sh
 $ worktender ls --pr
-* main                      w21  w21:p1  idle     1057  -       worktender
-  feat/1-reconcile-execute  w22  w22:p1  working  1055  OPEN    1-reconcile-execute
-  fix/257-erasure-comments  w1K  w1K:p1  idle     812   MERGED  257-erasure-comments
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   PR      DIR
+*  main                      w21        w21:p1  idle     1057  -       worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  OPEN    1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   MERGED  257-erasure-comments
 ```
 
 `--reports` adds a column carrying what the worker in each pane last told its
@@ -93,9 +94,10 @@ attached it and a gate reads it:
 
 ```sh
 $ worktender ls --reports
-* main                      w21  w21:p1  idle     1057  -        worktender
-  feat/1-reconcile-execute  w22  w22:p1  working  1055  planned  1-reconcile-execute
-  fix/257-erasure-comments  w1K  w1K:p1  idle     812   done #4  257-erasure-comments
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   REPORT   DIR
+*  main                      w21        w21:p1  idle     1057  -        worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  planned  1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   done #4  257-erasure-comments
 ```
 
 This is what a coordinator asks after its context is cleared, instead of having
@@ -113,10 +115,12 @@ that cannot be read says so on its own line and costs the others nothing:
 ```sh
 $ worktender ls --all-repos
 /Users/you/code/worktender
-  *  main                   w21  w21:p1  idle     1057  worktender
-     77-cross-repo          w30  w30:p1  blocked  812   77-cross-repo
+     BRANCH         WORKSPACE  PANE    STATUS   SEQ   DIR
+  *  main           w21        w21:p1  idle     1057  worktender
+     77-cross-repo  w30        w30:p1  blocked  812   -
 /Users/you/code/lighthouse
-  *  main  w4  w4:p1  working  1061  lighthouse
+     BRANCH  WORKSPACE  PANE   STATUS   SEQ   DIR
+  *  main    w4         w4:p1  working  1061  lighthouse
 ```
 
 `--pr` is deliberately not available across repositories: the lookup runs in
@@ -131,7 +135,8 @@ somebody looks, which is why it is worth a question of its own:
 ```sh
 $ worktender ls --all-repos --blocked
 /Users/you/code/worktender
-     77-cross-repo  w30  w30:p1  blocked  812  77-cross-repo
+     BRANCH         WORKSPACE  PANE    STATUS   SEQ  DIR
+     77-cross-repo  w30        w30:p1  blocked  812  -
 ```
 
 Repositories with nothing blocked are left out rather than drawn as empty
@@ -139,6 +144,36 @@ headings, and nothing blocked anywhere says so instead of printing nothing.
 This is herdr's own agent status, not a worker's `report --status blocked`,
 which is worktender's own envelope and reaches only whoever gated on it.
 `doctor` names blocked worktrees too, rather than folding them into a count.
+
+`--sort` orders the rows, which is what this listing wanted once people started
+watching it refresh in a pane rather than reading it once. Three fields, each
+sorted the way the column is actually read:
+
+```sh
+$ worktender ls --sort status
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   DIR
+   77-cross-repo             w30        w30:p1  blocked  812   -
+*  main                      w21        w21:p1  idle     1057  worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  1-reconcile-execute
+```
+
+- **`status`** puts the rows that want a person first — blocked, then idle,
+  then done, then working, then the worktrees with no agent at all. That is the
+  same reading as above rather than an alphabet: blocked sits there until
+  somebody looks, idle is finished-or-wedged and is the coordinator's next move,
+  and working resolves itself.
+- **`seq`** is lowest first, because the counter only ever answers *who stopped
+  moving first*. A high one is a worker herdr saw a moment ago.
+- **`branch`** is alphabetical, with the branchless rows — ghosts, a detached
+  head — at the bottom.
+
+Rows that tie keep git's order, and no `--sort` keeps git's order entirely: a
+listing on a refresh loop should not reshuffle because one agent changed state.
+The order applies to `--json` too, so a consumer that asked for one gets it.
+
+`--no-header` drops the label row for anything reading the table by line. The
+labels are on by default — the columns were unlabelled and the only place that
+said what they were was this file.
 
 **Every command takes `--json`** if you are building on this rather than
 reading it. `start`, `dispatch`, `report` and `gate` — the four an agent
@@ -325,9 +360,10 @@ question. So the commands built on them run with herdr absent:
 
 ```sh
 $ worktender ls
-*  main                    -  -  -  -  worktender
-   120-json-stops-here     -  -  -  -  -
-   worktree/brave-valley   -  -  -  -  brave-valley-66f8
+   BRANCH                 WORKSPACE  PANE  STATUS  SEQ  DIR
+*  main                   -          -     -       -    worktender
+   120-json-stops-here    -          -     -       -    -
+   worktree/brave-valley  -          -     -       -    brave-valley-66f8
 ```
 
 The workspace, pane, agent and counter columns are empty because **those facts

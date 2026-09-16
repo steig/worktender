@@ -29,6 +29,7 @@ worktender=$(herdr plugin list --json \
 "$worktender" ls --pr # ...and each branch's PR state, at one gh call per branch
 "$worktender" ls --all-repos          # every repository herdr has open, not just this one
 "$worktender" ls --all-repos --blocked # only the agents that have stopped and need a person
+"$worktender" ls --sort status         # blocked first, then idle, then working — for a listing you watch
 "$worktender" doctor  # what is wrong, and the path to this binary
 "$worktender" sync    # adopt orphans, staff empty workspaces
 "$worktender" prune   # DRY RUN — lists candidates, removes nothing

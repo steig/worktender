@@ -283,8 +283,11 @@ func reportsFigure() []wt.Row {
 // where the tabwriter pads with two, and that is a legible figure rather than a
 // lie — but a cell that is present in one and absent in the other is not.
 func TestTheReportsFigureDrawsTheCellsTheRendererPrints(t *testing.T) {
+	// With the label row, because that is what the figures draw and what the
+	// command prints unasked — a figure pinned to the headerless table would be
+	// pinned to output nobody sees by default.
 	var real strings.Builder
-	if err := wt.Render(&real, reportsFigure(), wt.Columns{Reports: true}); err != nil {
+	if err := wt.Render(&real, reportsFigure(), wt.Columns{Reports: true, Header: true}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	var want [][]string

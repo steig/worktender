@@ -8,7 +8,19 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`ls` labels its columns, and `--sort` orders the rows.** (#179) The table
+  printed up to eight columns and said what none of them were, so every reading
+  of it started by counting cells against the README — and the listing is
+  watched on a refresh loop, where that cost is paid again every time. A label
+  row is now drawn by default; `--no-header` leaves it out for anything parsing
+  the table by line. `--sort` takes `status`, `seq` or `branch`. `status` ranks
+  by how much the row wants a person — blocked, idle, done, working, then the
+  worktrees with no agent — rather than alphabetically, and `seq` is lowest
+  first, because the counter only ever answers which worker herdr saw move
+  longest ago. Ties keep git's order, no `--sort` keeps it entirely, and the
+  order applies to `--json` as well as the table.
 
 ## [0.11.2] — 2026-09-08
 
