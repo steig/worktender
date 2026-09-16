@@ -114,10 +114,17 @@ else
 	die "no sha256 tool to verify the download with; install one, or install Go and build from source"
 fi
 
+# fetch downloads one URL, or dies saying which one.
+#
+# Both branches say so themselves rather than leaning on `set -e` to end the
+# script silently. curl under -s still writes its own reason to stderr and wget
+# under -q writes nothing at all, so -nv is what keeps the two halves reporting
+# the same amount — a 404 that exits 1 with no output is the worst failure this
+# script has, because every other one names itself.
 fetch() {
 	case "$http" in
-	curl) curl -fsSL "$1" -o "$2" ;;
-	wget) wget -qO "$2" "$1" ;;
+	curl) curl -fsSL "$1" -o "$2" || die "could not fetch $1" ;;
+	wget) wget -nv -O "$2" "$1" || die "could not fetch $1" ;;
 	esac
 }
 
@@ -135,8 +142,19 @@ fetch() {
 # answer is the same one a browser gets.
 resolve_latest() {
 	case "$http" in
-	curl) curl -fsSL -o /dev/null -w '%{url_effective}' "$BASE/latest" ;;
-	wget) wget -S --spider -O /dev/null "$BASE/latest" 2>&1 | awk 'tolower($1) == "location:" { print $2 }' | tail -1 ;;
+	curl)
+		curl -fsSL -o /dev/null -w '%{url_effective}' "$BASE/latest"
+		;;
+	wget)
+		# wget has no --write-out, so the redirect comes back out of its own
+		# header trace. The trace is CAPTURED before it is parsed, deliberately:
+		# piping wget straight into awk makes the pipeline's status awk's, so a
+		# wget that failed outright — no network, no such host, a 404 — would be
+		# indistinguishable from a resolution that simply found no Location, and
+		# the caller's "could not ask which release is newest" could never fire.
+		latest_headers=$(wget -S --spider -O /dev/null "$BASE/latest" 2>&1) || return 1
+		printf '%s\n' "$latest_headers" | awk 'tolower($1) == "location:" { print $2 }' | tail -1
+		;;
 	esac
 }
 

@@ -105,10 +105,19 @@ func (r *release) asked(path string) bool {
 
 // install runs the real script against this release, into a fresh directory.
 func (r *release) install(t *testing.T, args ...string) (dir, out string, err error) {
+	return r.installWith(t, "", args...)
+}
+
+// installWith is install with a PATH override, which is the only way to reach
+// the wget branch on a machine that also has curl.
+func (r *release) installWith(t *testing.T, path string, args ...string) (dir, out string, err error) {
 	t.Helper()
 	dir = t.TempDir()
 	cmd := exec.Command("sh", append([]string{"scripts/install.sh", "--dir", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "WORKTENDER_DOWNLOAD_BASE="+r.server.URL)
+	if path != "" {
+		cmd.Env = append(cmd.Env, "PATH="+path)
+	}
 	combined, err := cmd.CombinedOutput()
 	return dir, string(combined), err
 }
@@ -310,12 +319,7 @@ func TestTheInstallerWorksWithWgetAndNoCurl(t *testing.T) {
 	r := newRelease(t, "v9.9.9")
 	r.publish("v9.9.9", asset, []byte("via wget\n"))
 
-	dir := t.TempDir()
-	cmd := exec.Command("sh", "scripts/install.sh", "--dir", dir)
-	cmd.Env = append(os.Environ(),
-		"WORKTENDER_DOWNLOAD_BASE="+r.server.URL,
-		"PATH="+pathWithoutCurl(t))
-	out, err := cmd.CombinedOutput()
+	dir, out, err := r.installWith(t, pathWithoutCurl(t))
 	if err != nil {
 		t.Fatalf("install without curl failed: %v\n%s", err, out)
 	}
@@ -326,6 +330,55 @@ func TestTheInstallerWorksWithWgetAndNoCurl(t *testing.T) {
 	if strings.TrimSpace(string(body)) != "via wget" {
 		t.Errorf("installed %q", body)
 	}
+}
+
+// Both halves of the wget branch used to fail SILENTLY or fail as the wrong
+// thing, and neither is visible from the curl path.
+//
+// `wget -q` writes nothing, so a 404 under `set -e` ended the script with no
+// output at all — the one failure mode worse than a bad message, on the branch
+// taken by the machines least able to work around it. And piping wget into awk
+// made the resolution's exit status awk's, so a wget that failed outright fell
+// through to the tag-format check and was reported as a release endpoint that
+// answered with something odd, rather than as one that did not answer.
+func TestTheWgetPathSaysWhyItFailed(t *testing.T) {
+	if _, err := exec.LookPath("wget"); err != nil {
+		t.Skip("no wget")
+	}
+	installAsset(t)
+	bin := pathWithoutCurl(t)
+
+	t.Run("an endpoint that does not answer is reported as one", func(t *testing.T) {
+		r := newRelease(t, "v9.9.9")
+		r.server.Close()
+
+		dir, out, err := r.installWith(t, bin)
+		if err == nil {
+			t.Fatalf("an unreachable release endpoint still installed something:\n%s", out)
+		}
+		if !strings.Contains(out, "could not ask") {
+			t.Errorf("reported as something other than an endpoint that did not answer:\n%s", out)
+		}
+		if got := leftovers(t, dir); len(got) != 0 {
+			t.Errorf("left %v behind in the install directory", got)
+		}
+	})
+
+	t.Run("a download that failed names the URL", func(t *testing.T) {
+		// The release resolves and holds nothing, so the asset is a 404.
+		r := newRelease(t, "v9.9.9")
+
+		dir, out, err := r.installWith(t, bin, "--version", "v9.9.9")
+		if err == nil {
+			t.Fatalf("a 404 still reported success:\n%s", out)
+		}
+		if !strings.Contains(out, "could not fetch") {
+			t.Errorf("a failed download said nothing about what it could not fetch:\n%s", out)
+		}
+		if got := leftovers(t, dir); len(got) != 0 {
+			t.Errorf("left %v behind in the install directory", got)
+		}
+	})
 }
 
 // pathWithoutCurl builds a PATH holding every tool the script uses except curl,
