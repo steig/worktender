@@ -67,12 +67,17 @@ install` tracks branch HEAD rather than a tag — the version in
   laptop, which is also what pushes the tag. Every release from v0.10.0
   through v0.11.2 built and checksummed fine and then failed to publish with
   *a release with the same tag name already exists*, shipping with zero
-  assets attached. Nothing downstream said so: `scripts/build.sh`'s no-Go
-  fallback just 404s on
+  assets attached. Nothing downstream said so: `scripts/install.sh` and
+  `scripts/build.sh`'s no-Go fallback just 404 on
   `releases/download/v<version>/worktender_<os>_<arch>`. The step now goes
   through `scripts/release-publish.sh`, which creates a release only when the
-  tag has none and always uploads the assets with `--clobber`, leaving notes
-  already on an existing release untouched.
+  tag has none and always ends in `gh release upload --clobber`, leaving
+  notes already on an existing release untouched. Losing the create to
+  something else — two runs of the workflow for one tag — is not fatal
+  either; whoever won made the release this run still has to upload to. And
+  the assets are checked to be real files first, because `release.yml`
+  passes an unquoted `dist/*` and an empty `dist/` would otherwise publish
+  the literal glob.
 
 ## [0.11.2] — 2026-09-08
 

@@ -36,15 +36,48 @@ fi
 tag="$1"
 shift
 
+# The caller is release.yml passing an unquoted `dist/*`, so an empty or
+# missing dist/ does not arrive here as zero arguments — the shell leaves the
+# glob unexpanded and this script is handed the literal string "dist/*" as one
+# perfectly well-formed argument. Counting arguments therefore says nothing.
+# Every asset has to actually be a file, or the upload below is a release job
+# that succeeds having published nothing, which is the failure this script
+# exists to end.
+for asset in "$@"; do
+	if [ ! -f "$asset" ]; then
+		echo "release-publish: $asset is not a file; refusing to publish $tag with assets missing" >&2
+		exit 1
+	fi
+done
+
 # `gh release view` is the only way to ask whether a release exists; it exits
-# non-zero when there is none. Its output is noise here — the exit code is the
-# answer — but stderr is kept quiet only for the not-found case, which is not
-# an error condition from where this script stands.
-if gh release view "$tag" >/dev/null 2>&1; then
+# non-zero when there is none. Its stdout is noise here — the exit code is the
+# answer — but its stderr is not: a token problem or a network hiccup fails the
+# same way "no release" does, and throwing the message away turns a diagnosable
+# outage into a confusing `create` failure further down. So it is captured and
+# printed rather than sunk into /dev/null.
+view_err=$(mktemp)
+trap 'rm -f "$view_err"' EXIT
+
+if gh release view "$tag" >/dev/null 2>"$view_err"; then
 	echo "release-publish: $tag already has a release; uploading assets to it" >&2
 else
-	echo "release-publish: no release for $tag yet; creating one" >&2
-	gh release create "$tag" --generate-notes --title "$tag"
+	echo "release-publish: no release for $tag yet ($(tr -d '\n' <"$view_err")); creating one" >&2
+
+	# Deliberately not fatal. `view` then `create` is check-then-act, and two
+	# runs of this workflow for the same tag — a manual re-run, a retried job —
+	# can both see no release; the loser's create then fails with the very "a
+	# release with the same tag name already exists" that #182 is about, and
+	# under `set -e` that would end the script without uploading anything.
+	#
+	# Whatever the reason create failed, the next line is the one that has to
+	# work, and it is the honest test of whether a release is there to upload
+	# to. A create that failed for a real reason — no token, no permission —
+	# fails the upload too, with a message about the thing that actually
+	# matters.
+	if ! gh release create "$tag" --generate-notes --title "$tag"; then
+		echo "release-publish: creating $tag failed; trying the upload anyway in case something else created it" >&2
+	fi
 fi
 
 # --clobber rather than a bare upload: a re-run of a failed workflow, or a
