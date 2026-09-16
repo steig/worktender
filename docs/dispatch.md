@@ -5,9 +5,10 @@ coordinating agent hands a slice of work to another and needs to know when it is
 done — without reading everything that agent did to get there.
 
 ```sh
-# Resolve the binary once. It is not on PATH; herdr owns the install.
-# `worktender doctor` prints this line, so you need the jq only once.
-worktender=$(herdr plugin list --json \
+# Resolve the binary once. A standalone install is on PATH; a plugin install
+# is not, because herdr owns it. `worktender doctor` prints the answer either
+# way, so you need the jq only once.
+worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
 
 # COORDINATOR — when the slice is a GitHub issue, one command does all of it.

@@ -595,7 +595,7 @@ in the plugin log rather than on your stdout anyway. Resolve the binary once and
 run it directly:
 
 ```sh
-worktender=$(herdr plugin list --json \
+worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
 
 "$worktender" ls --pr --json | jq '.worktrees[] | select(.agent_status == "working")'

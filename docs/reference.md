@@ -87,6 +87,35 @@ Three things worth knowing:
   manifest *version* it re-reads, so the two disagree. Nothing in this plugin can
   correct that record; `update` says so, and `doctor` repeats it on every run.
 
+### A standalone install upgrades differently
+
+`worktender update` is a command about a *plugin checkout*: it fetches, resets
+and rebuilds. A binary installed by `scripts/install.sh` has none of those — no
+clone, no manifest, no build script — so there is nothing for it to move, and it
+refuses by naming the one step that does:
+
+```sh
+$ worktender update
+worktender: this is a standalone install of 0.11.2, not a plugin checkout, so
+there is nothing here to fetch and rebuild.
+re-run the installer to move it forward:
+  curl -fsSL https://raw.githubusercontent.com/steig/worktender/main/scripts/install.sh | sh
+```
+
+It does not run that for you. Piping a script from the network into a shell is a
+decision someone makes once, on purpose, having read the URL; a binary doing it
+on their behalf from inside an unrelated command is the same act with the
+decision removed.
+
+`doctor`'s `version` line names the release a standalone install is, and says
+that nothing compared it against the newest — there is no checkout to compare,
+and a read-only command has no business making a second network call whose only
+actionable answer is "re-run the installer" anyway.
+
+A binary that is neither — somebody's own `go build` from a working tree — is
+told what was looked for instead, because sending it to an installer would be
+telling its owner to throw their own build away.
+
 It refuses two checkouts: one on a **branch** — that is what `herdr plugin link`
 leaves, and it is yours to move with git — and one with **uncommitted changes**,
 which a hard reset would destroy.

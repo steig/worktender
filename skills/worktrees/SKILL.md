@@ -16,10 +16,11 @@ decision, not a routine setup step: if you are asked to install it, say what it 
 ## Invoking it
 
 **Everything is a subcommand of one binary. Resolve it once, then call it directly.**
-It is not on `PATH` — herdr owns the install:
+A standalone install (`scripts/install.sh`) is on `PATH`; a plugin install is not,
+because herdr owns it. This handles both:
 
 ```bash
-worktender=$(herdr plugin list --json \
+worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
 ```
 
@@ -35,6 +36,15 @@ worktender=$(herdr plugin list --json \
 "$worktender" prune   # DRY RUN — lists candidates, removes nothing
 "$worktender" update  # fetch and rebuild this plugin's own install
 ```
+
+**A standalone install has no herdr behind it, and that changes what you may
+call.** `scripts/install.sh` puts the binary on `PATH` for someone who does not
+run herdr at all; there, `ls`, `prune` and `prune-apply` work in full and every
+other command exits 2 and says what is missing — `start`, `dispatch`, `sync`,
+`gate` and `ls --all-repos/--blocked/--reports` are all questions only herdr can
+answer. `update` refuses too: it moves a plugin *checkout* forward, and a
+standalone install upgrades by re-running its installer, which is the user's call
+and not yours to make for them.
 
 `doctor` also prints the path to the binary, so you can skip the `jq` above by
 running it once. Several of this plugin's failures are environmental and look

@@ -17,7 +17,7 @@ becomes one.
 ## The loop
 
 ```bash
-worktender=$(herdr plugin list --json \
+worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
 
 # 1. Issue -> worktree -> agent -> brief. Repeat for each slice.
