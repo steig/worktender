@@ -58,6 +58,22 @@ install` tracks branch HEAD rather than a tag — the version in
   `PATH` and fall back to the plugin root. `doctor` says `on PATH already` when
   typing `worktender` reaches the binary printing the line.
 
+### Fixed
+
+- **A pushed tag now reliably gets a release carrying the build assets.**
+  (#182) `release.yml`'s `publish` step ran `gh release create`, which is
+  fatal when a release already exists for the tag — and one usually does,
+  because the release object with hand-written notes is created from a
+  laptop, which is also what pushes the tag. Every release from v0.10.0
+  through v0.11.2 built and checksummed fine and then failed to publish with
+  *a release with the same tag name already exists*, shipping with zero
+  assets attached. Nothing downstream said so: `scripts/build.sh`'s no-Go
+  fallback just 404s on
+  `releases/download/v<version>/worktender_<os>_<arch>`. The step now goes
+  through `scripts/release-publish.sh`, which creates a release only when the
+  tag has none and always uploads the assets with `--clobber`, leaving notes
+  already on an existing release untouched.
+
 ## [0.11.2] — 2026-09-08
 
 ### Fixed

@@ -59,4 +59,7 @@ jobs:
           # Via env rather than inline interpolation: a tag name is attacker
           # controlled in the general case, and this is a shell.
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --generate-notes --title "$TAG"
+        # The logic lives in a script so it can be tested without cutting a real
+        # release; it tolerates a release that already exists for the tag, which
+        # is why v0.10.0 through v0.11.2 shipped with no assets. See #182.
+        run: sh scripts/release-publish.sh "$TAG" dist/*
