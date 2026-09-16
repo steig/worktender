@@ -437,7 +437,7 @@ func jsonFlag(fs *flag.FlagSet) *bool {
 	return fs.Bool("json", false, "write a machine-readable document instead of the table")
 }
 
-const lsUsage = "usage: worktender ls [--all-repos] [--blocked] [--pr] [--reports] [--json]"
+const lsUsage = "usage: worktender ls [--all-repos] [--blocked] [--pr] [--reports] [--sort branch|status|seq] [--no-header] [--json]"
 
 func lsCommand(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
@@ -446,6 +446,11 @@ func lsCommand(args []string, out io.Writer) error {
 	allRepos := fs.Bool("all-repos", false, "list every repository herdr has a worktree workspace for, not only this one")
 	blocked := fs.Bool("blocked", false, "keep only the worktrees herdr reports a blocked agent in")
 	reports := fs.Bool("reports", false, "ask each staffed pane what its worker last reported")
+	// The field names are the table's columns. `seq` is the counter column, and
+	// it is the one #179 asked for as `pid` — there is no process id anywhere in
+	// this listing, because herdr exposes none.
+	sortBy := fs.String("sort", "", "order the rows by branch, status (blocked first) or seq (lowest first); default is git's order")
+	noHeader := fs.Bool("no-header", false, "leave out the label row above the columns")
 	asJSON := jsonFlag(fs)
 
 	if err := fs.Parse(args); err != nil {
@@ -454,7 +459,17 @@ func lsCommand(args []string, out io.Writer) error {
 	if fs.NArg() > 0 {
 		return usagef("unexpected argument %q; %s", fs.Arg(0), lsUsage)
 	}
-	opts := wt.Options{Blocked: *blocked, JSON: *asJSON}
+	// Parsed here rather than inside the listing so a typo costs a usage error
+	// and not a listing silently in git's order — which is what an unrecognised
+	// field falling through to SortNone would look like.
+	var sortField wt.SortField
+	if *sortBy != "" {
+		var err error
+		if sortField, err = wt.ParseSort(*sortBy); err != nil {
+			return usagef("%v; %s", err, lsUsage)
+		}
+	}
+	opts := wt.Options{Blocked: *blocked, JSON: *asJSON, Header: !*noHeader, Sort: sortField}
 	if *reports {
 		// Unlike --pr this works across repositories: the lookup is one herdr
 		// call on a pane herdr already told us about, so there is no wrong

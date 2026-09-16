@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -779,3 +780,318 @@ func TestRenderMarksAGhostRow(t *testing.T) {
 		t.Errorf("the ghost row must name the checkout herdr holds open, got %q", lines[1])
 	}
 }
+
+// #179: the table printed eight columns and said what none of them were, so
+// every reading of it started by counting cells against the README. The labels
+// are the fix, and they have to be the columns actually drawn — a header naming
+// a PR column the table left out would be worse than none.
+func TestRenderLabelsTheColumnsItDraws(t *testing.T) {
+	var buf bytes.Buffer
+	err := wt.Render(&buf, []wt.Row{
+		{Branch: "fix-auth", WorkspaceID: "w2", PaneID: "w2:p1",
+			AgentStatus: "working", AgentStatusSeq: u64(412), Dir: "fix-auth-wt"},
+	}, wt.Columns{Header: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want a label row and one row, got %d: %q", len(lines), buf.String())
+	}
+	header, row := lines[0], lines[1]
+	for _, want := range []string{"BRANCH", "WORKSPACE", "PANE", "STATUS", "SEQ", "DIR"} {
+		if !strings.Contains(header, want) {
+			t.Errorf("label row missing %q: %q", want, header)
+		}
+	}
+	// A label in the wrong place is a wrong label. tabwriter puts it right only
+	// if the header has the same cell count as the rows, which is the mistake
+	// this asserts against.
+	for label, value := range map[string]string{
+		"BRANCH": "fix-auth", "WORKSPACE": "w2", "PANE": "w2:p1",
+		"STATUS": "working", "SEQ": "412", "DIR": "fix-auth-wt",
+	} {
+		if strings.Index(header, label) != strings.Index(row, value) {
+			t.Errorf("%s is not above %s:\n%q\n%q", label, value, header, row)
+		}
+	}
+}
+
+// The two optional columns are omitted rather than dashed when nobody asked for
+// them, so their labels have to be too.
+func TestRenderHeaderNamesOnlyTheOptionalColumnsDrawn(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cols  wt.Columns
+		want  []string
+		avoid []string
+	}{
+		{"neither", wt.Columns{Header: true}, nil, []string{"REPORT", "PR"}},
+		{"reports", wt.Columns{Header: true, Reports: true}, []string{"REPORT"}, []string{"PR"}},
+		{"pr", wt.Columns{Header: true, PR: true}, []string{"PR"}, []string{"REPORT"}},
+		{"both", wt.Columns{Header: true, Reports: true, PR: true}, []string{"REPORT", "PR"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := wt.Render(&buf, []wt.Row{{Branch: "b", Dir: "b"}}, tc.cols); err != nil {
+				t.Fatal(err)
+			}
+			header := strings.SplitN(buf.String(), "\n", 2)[0]
+			for _, want := range tc.want {
+				if !strings.Contains(header, want) {
+					t.Errorf("label row missing %q: %q", want, header)
+				}
+			}
+			for _, avoid := range tc.avoid {
+				if strings.Contains(header, avoid) {
+					t.Errorf("label row names a column it does not draw (%q): %q", avoid, header)
+				}
+			}
+		})
+	}
+}
+
+// Anything parsing the table by line — and `--no-header` exists because such
+// things exist — must get exactly what it got before the labels landed.
+func TestRenderWithoutAHeaderDrawsNothingButRows(t *testing.T) {
+	rows := []wt.Row{{Main: true, Branch: "main", Dir: "repo"}, {Branch: "wip", Dir: "wip"}}
+
+	var buf bytes.Buffer
+	if err := wt.Render(&buf, rows, wt.Columns{}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != len(rows) {
+		t.Fatalf("want %d lines and no label row, got %d: %q", len(rows), len(lines), buf.String())
+	}
+	if strings.Contains(buf.String(), "BRANCH") {
+		t.Errorf("no header was asked for:\n%s", buf.String())
+	}
+}
+
+// Per repository rather than once at the top, and not for the aesthetics: the
+// repository heading carries no tab, which ends tabwriter's column block, so a
+// single header above the first heading would be aligned against nothing.
+func TestRenderReposLabelsEveryGroup(t *testing.T) {
+	repos := []wt.Repo{
+		{Root: "/code/worktender", Rows: []wt.Row{{Branch: "main", Main: true, Dir: "worktender"}}},
+		{Root: "/code/lighthouse", Rows: []wt.Row{{Branch: "main", Main: true, Dir: "lighthouse"}}},
+	}
+
+	var buf bytes.Buffer
+	if err := wt.RenderRepos(&buf, repos, wt.Options{Header: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	if got := strings.Count(out, "BRANCH"); got != len(repos) {
+		t.Fatalf("want one label row per repository (%d), got %d:\n%s", len(repos), got, out)
+	}
+	// Directly under the heading it belongs to, not floating anywhere in the
+	// group: a label row below a data row labels nothing.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "BRANCH") {
+			if i == 0 || !strings.HasPrefix(lines[i-1], "/code/") {
+				t.Errorf("label row at line %d does not sit under a repository heading:\n%s", i, out)
+			}
+		}
+	}
+}
+
+// A repository that could not be read has no rows, so labelling its group would
+// name columns that are not there.
+func TestRenderReposDoesNotLabelARepositoryItCouldNotRead(t *testing.T) {
+	var buf bytes.Buffer
+	err := wt.RenderRepos(&buf, []wt.Repo{{Root: "/code/lighthouse", Err: "not a git repository"}},
+		wt.Options{Header: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "BRANCH") {
+		t.Errorf("a failed repository has no columns to label:\n%s", buf.String())
+	}
+}
+
+// The listing is watched on a refresh loop, and what it is watched for is the
+// row that has stopped and needs a person. Ranked by that rather than
+// alphabetically — alphabetical only happens to put blocked first, and would
+// stop the moment herdr names a new status.
+func TestSortStatusPutsTheRowsThatWantAPersonFirst(t *testing.T) {
+	rows := []wt.Row{
+		{Branch: "unstaffed"},
+		{Branch: "working", AgentStatus: "working"},
+		{Branch: "done", AgentStatus: "done"},
+		{Branch: "idle", AgentStatus: "idle"},
+		{Branch: "surprise", AgentStatus: "reticulating"},
+		{Branch: "blocked", AgentStatus: "blocked"},
+	}
+
+	wt.Sort(rows, wt.SortStatus)
+
+	want := []string{"blocked", "idle", "done", "working", "surprise", "unstaffed"}
+	if got := branches(rows); !slices.Equal(got, want) {
+		t.Errorf("status order:\n got %v\nwant %v", got, want)
+	}
+}
+
+// The counter only ever answers "who stopped moving first", so the low end is
+// the interesting one. A row with no counter has no agent to be stale and goes
+// to the bottom rather than to the top with the genuinely stalled ones.
+func TestSortSeqPutsTheWorkerHerdrSawMoveLongestAgoFirst(t *testing.T) {
+	rows := []wt.Row{
+		{Branch: "recent", AgentStatusSeq: u64(1057)},
+		{Branch: "none"},
+		{Branch: "stalled", AgentStatusSeq: u64(812)},
+		{Branch: "middling", AgentStatusSeq: u64(1055)},
+	}
+
+	wt.Sort(rows, wt.SortSeq)
+
+	want := []string{"stalled", "middling", "recent", "none"}
+	if got := branches(rows); !slices.Equal(got, want) {
+		t.Errorf("seq order:\n got %v\nwant %v", got, want)
+	}
+}
+
+// A ghost and a detached head have no branch, and they are not what someone
+// sorting by branch went looking for.
+func TestSortBranchPutsTheBranchlessLast(t *testing.T) {
+	rows := []wt.Row{
+		{Branch: "zeta"},
+		{Ghost: true, Dir: "brave-valley-66f8"},
+		{Branch: "alpha"},
+		{Branch: "main", Main: true},
+	}
+
+	wt.Sort(rows, wt.SortBranch)
+
+	want := []string{"alpha", "main", "zeta", ""}
+	if got := branches(rows); !slices.Equal(got, want) {
+		t.Errorf("branch order:\n got %v\nwant %v", got, want)
+	}
+}
+
+// This listing is read on a refresh loop, where a row that moves for no reason
+// costs the reader the scan they were in the middle of. Ties keep git's order.
+func TestSortKeepsGitsOrderForRowsThatTie(t *testing.T) {
+	rows := []wt.Row{
+		{Branch: "third", AgentStatus: "idle"},
+		{Branch: "first", AgentStatus: "idle"},
+		{Branch: "second", AgentStatus: "idle"},
+	}
+	before := branches(rows)
+
+	wt.Sort(rows, wt.SortStatus)
+
+	if got := branches(rows); !slices.Equal(got, before) {
+		t.Errorf("rows on one status were reordered:\n got %v\nwant %v", got, before)
+	}
+}
+
+// SortNone is the default, and the default has to be the order the listing had
+// before --sort existed.
+func TestSortNoneLeavesTheRowsAlone(t *testing.T) {
+	rows := []wt.Row{
+		{Branch: "zeta", AgentStatus: "working"},
+		{Branch: "alpha", AgentStatus: "blocked"},
+	}
+
+	wt.Sort(rows, wt.SortNone)
+
+	if got := branches(rows); !slices.Equal(got, []string{"zeta", "alpha"}) {
+		t.Errorf("no sort was asked for, got %v", got)
+	}
+}
+
+func TestParseSortTakesEveryFieldItAdvertises(t *testing.T) {
+	for _, field := range wt.SortFields {
+		got, err := wt.ParseSort(string(field))
+		if err != nil {
+			t.Errorf("ParseSort(%q) is advertised but refused: %v", field, err)
+		}
+		if got != field {
+			t.Errorf("ParseSort(%q) = %q", field, got)
+		}
+	}
+}
+
+// An unknown field must not fall through to "git's order": that is a listing
+// that silently ignored what it was asked for.
+func TestParseSortNamesTheFieldsItWouldHaveTaken(t *testing.T) {
+	_, err := wt.ParseSort("pid")
+	if err == nil {
+		t.Fatal("an unknown sort field was accepted")
+	}
+	for _, field := range wt.SortFields {
+		if !strings.Contains(err.Error(), string(field)) {
+			t.Errorf("the error should name %q: %v", field, err)
+		}
+	}
+}
+
+// The JSON is a view of exactly the rows the table renders, so the sort has to
+// happen before the two part company — otherwise `--sort --json` is a flag that
+// does nothing and says nothing about it.
+func TestLsSortsTheJSONTheSameWayAsTheTable(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	for _, branch := range []string{"zeta", "alpha", "mid"} {
+		repo.AddWorktree(branch, branch)
+	}
+	// No herdr: the branch column comes from git, which is all this sort reads.
+	t.Setenv("HERDR_SOCKET_PATH", "")
+
+	var table, doc bytes.Buffer
+	opts := wt.Options{Sort: wt.SortBranch}
+	if err := wt.Ls(nil, repo.RealRoot, repo.RealRoot, nil, opts, &table); err != nil {
+		t.Fatalf("Ls: %v", err)
+	}
+	opts.JSON = true
+	if err := wt.Ls(nil, repo.RealRoot, repo.RealRoot, nil, opts, &doc); err != nil {
+		t.Fatalf("Ls --json: %v", err)
+	}
+
+	var listing struct {
+		Worktrees []struct {
+			Branch *string `json:"branch"`
+		} `json:"worktrees"`
+	}
+	if err := json.Unmarshal(doc.Bytes(), &listing); err != nil {
+		t.Fatalf("decode: %v\n%s", err, doc.String())
+	}
+	var fromJSON []string
+	for _, row := range listing.Worktrees {
+		fromJSON = append(fromJSON, *row.Branch)
+	}
+	want := []string{"alpha", "main", "mid", "zeta"}
+	if !slices.Equal(fromJSON, want) {
+		t.Errorf("json order:\n got %v\nwant %v", fromJSON, want)
+	}
+
+	// And the table agrees, which is the claim that matters: one order, two
+	// renderings of it.
+	var fromTable []string
+	for _, line := range strings.Split(strings.TrimSpace(table.String()), "\n") {
+		fields := strings.Fields(line)
+		// The main checkout's marker cell is the only one with anything in it.
+		if fields[0] == "*" {
+			fields = fields[1:]
+		}
+		fromTable = append(fromTable, fields[0])
+	}
+	if !slices.Equal(fromTable, want) {
+		t.Errorf("table order:\n got %v\nwant %v", fromTable, want)
+	}
+}
+
+// branches is the branch column of every row, in order.
+func branches(rows []wt.Row) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Branch)
+	}
+	return out
+}
+
+func u64(n uint64) *uint64 { return &n }
