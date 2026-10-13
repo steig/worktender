@@ -21,7 +21,8 @@ worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "steig.worktender") | .plugin_root')/bin/worktender
 
 # 1. Issue -> worktree -> agent -> brief. Repeat for each slice.
-"$worktender" start 12 --model sonnet
+"$worktender" start 12 --repo .              # role from the issue's labels, or the default
+"$worktender" start 13 --repo . --role ux    # or name one
 
 # 2. Wait on the report, not on a clock. Start them all, then wait on them all.
 "$worktender" gate --any wt-12-the-thing-3f9a1c,wt-13-other-8b40de --until done --timeout 20m
@@ -32,6 +33,15 @@ worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
 included — do not guess the name. **It is not the branch name.** herdr's agent
 namespace spans every repository at once and refuses a duplicate, so the name
 carries a digest of the repository that you cannot derive by eye.
+
+**Pick the worker by role, not by model.** A role in the user's
+`~/.config/worktender/config.json` names a Claude Code agent — which carries its
+own model — a brief style (`code`, `design`, `analysis`) and directories to read.
+`start` prints `role: <name> (<why>) · agent: <agent> (<repo|user>)`; check that
+line, because a label can choose the role and a repository's `.claude/agents`
+can redefine the agent. `--model` still overrides the agent's model for one
+start. With no configuration, `start` behaves as it always has. See
+`docs/roles.md`.
 
 **When the slice is not an issue**, the older four-step path is still there:
 `herdr worktree create`, then `dispatch --pane <pane> --name <agent>`, then

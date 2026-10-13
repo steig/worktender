@@ -370,3 +370,25 @@ func TestFindAgentStopsAtTheScanLimit(t *testing.T) {
 		t.Errorf("a truncated repository scan fell through to %s", l.AgentFile)
 	}
 }
+
+// The shipped example is what people copy, so it has to load, and every agent
+// it names has to be one the examples define under the name it is called by.
+func TestTheExampleConfigurationLoads(t *testing.T) {
+	root := filepath.Join("..", "..", "examples", "roles")
+	data, err := os.ReadFile(filepath.Join(root, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse("examples/roles/config.json", data)
+	if err != nil {
+		t.Fatalf("the example configuration does not parse: %v", err)
+	}
+	for name, role := range c.Roles {
+		if role.Agent == "" {
+			continue
+		}
+		if path, _ := FindAgent(filepath.Join(root, "agents"), role.Agent); path == "" {
+			t.Errorf("role %s names agent %s, and examples/roles/agents defines no agent by that name", name, role.Agent)
+		}
+	}
+}

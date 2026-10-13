@@ -44,8 +44,9 @@ import (
 )
 
 // Briefs are the brief styles a role may name. "code" is the brief `start`
-// has always typed.
-var Briefs = map[string]bool{"code": true}
+// has always typed; "design" ends in specs, mockups or copy, and "analysis" in
+// written findings — each still as a pull request.
+var Briefs = map[string]bool{"code": true, "design": true, "analysis": true}
 
 // DefaultBrief is what a role that names no brief style gets.
 const DefaultBrief = "code"
