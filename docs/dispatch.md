@@ -63,11 +63,64 @@ Branch on the code, not on the message. The full table is in
 [Reference](reference.md#exit-codes-and-errors).
 
 ```sh
-worktender start <issue> [--model <model>] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
-worktender dispatch --pane <id> --name <agent> [--model <model>] [--permission-mode <mode>] [--resume]
+worktender start <issue> [--role <role>] [--model <model>] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
+worktender dispatch --pane <id> --name <agent> [--role <role>] [--model <model>] [--permission-mode <mode>] [--resume]
 worktender report --status planned|blocked|done [--pr N] --note <text>
 worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--timeout 15m]
 ```
+
+## Starting a worker as a role
+
+`--role` starts the worker as one of the roles in your own configuration,
+`~/.config/worktender/config.json` (or under `$XDG_CONFIG_HOME`). A role is a
+Claude Code agent and, optionally, directories the worker may read beside its
+worktree:
+
+```json
+{
+  "default_role": "engineer",
+  "labels": [ { "match": "role:ux", "role": "ux" } ],
+  "roles": {
+    "engineer": {},
+    "ux": { "agent": "ux-designer", "add_dirs": ["~/kb/design-system"] }
+  }
+}
+```
+
+```sh
+$ worktender start 42 --repo .
+role: ux (label role:ux) · agent: ux-designer (user) · dirs: /home/you/kb/design-system
+```
+
+The role is the flag if you gave one, else the first `labels` rule matching one
+of the issue's labels (a trailing `*` matches a prefix), else `default_role`.
+It becomes `--agent` and `--add-dir` on `claude`, and the line above says which
+role was chosen and why; `--json` carries the same as `launch`.
+
+**The model lives in the agent file.** An agent whose frontmatter says
+`model: opus` runs on Opus; `--model` on the command line still overrides it.
+**Autonomy is never configured.** `--permission-mode` stays a flag.
+
+**A label chooses among your roles and nothing else.** Whoever can label an
+issue can pick which of the roles you defined it runs as. No label can name an
+agent, a directory or a model of its own. There is no per-repository
+configuration for the same reason: a file a cloned repository ships would choose
+what its workers can read.
+
+**A repository can still redefine an agent.** Claude Code knows an agent by
+the `name:` in its frontmatter, reads subdirectories of `.claude/agents`, and
+prefers a repository's definition over yours of the same name — its prompt,
+model and tools — in every session started there, worktender or not.
+That is not refused; it is reported. The line ends `agent: ux-designer (repo)`
+when the repository's file is the one that will load, and `--json` carries
+`agent_file` and `agent_source`.
+
+An agent defined in neither the repository's `.claude/agents` nor
+`~/.claude/agents` is refused before the worktree is created. That includes an
+agent a Claude Code plugin provides, which claude can see and this check
+cannot; define it in one of those two directories to use it in a role. With no
+configuration file, nothing changes. `worktender doctor` reports the file it
+read and any agent or directory a role names that is missing.
 
 ## A durable, global inbox for agent-to-agent messages
 

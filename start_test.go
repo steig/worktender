@@ -606,6 +606,7 @@ func TestStartTakesFlagsOnEitherSideOfTheIssueNumber(t *testing.T) {
 func TestStartUsageIsAnOrderThatParses(t *testing.T) {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	fs.String("role", "", "")
 	fs.String("model", "", "")
 	fs.String("permission-mode", "", "")
 	fs.String("base", "", "")
@@ -615,7 +616,7 @@ func TestStartUsageIsAnOrderThatParses(t *testing.T) {
 
 	// The usage line with its placeholders filled in and its brackets dropped.
 	replacer := strings.NewReplacer(
-		"<model>", "sonnet", "<mode>", "bypassPermissions", "<ref>", "origin/main",
+		"<role>", "ux", "<model>", "sonnet", "<mode>", "bypassPermissions", "<ref>", "origin/main",
 		"<path>", ".", "<issue>", "42", "[", "", "]", "")
 	fields := strings.Fields(replacer.Replace(strings.TrimPrefix(startUsage, "usage: worktender start ")))
 

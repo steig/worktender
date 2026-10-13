@@ -9,10 +9,12 @@ import (
 	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/jsonout"
 	"github.com/steig/worktender/internal/reconcile"
+	"github.com/steig/worktender/internal/roles"
 )
 
 // dispatch starts an agent in a named pane with configuration `sync` never
-// supplies: which model to spend, and how much autonomy to grant.
+// supplies: which model to spend, how much autonomy to grant, and which role
+// the agent starts as.
 //
 // It is separate from `sync` because sync runs from a keybinding and from event
 // hooks, where nothing knows what the work is — an unattended reconciler with an
@@ -31,6 +33,7 @@ func dispatchCommand(args []string, out io.Writer) error {
 	name := fs.String("name", "", "herdr agent name")
 	model := fs.String("model", "", "model to pass to the agent")
 	permissionMode := fs.String("permission-mode", "", "agent permission mode")
+	role := fs.String("role", "", "role to start the agent as, from the user's config")
 	resume := fs.Bool("resume", false, "continue the pane's existing transcript")
 	asJSON := jsonFlag(fs)
 
@@ -47,7 +50,10 @@ func dispatchCommand(args []string, out io.Writer) error {
 		return usagef("--name is required; %s", dispatchUsage)
 	}
 
-	agentArgs := agentArgsFor(*model, *permissionMode, os.Stderr)
+	config, err := roles.Load()
+	if err != nil {
+		return withCode(exitUsage, err)
+	}
 
 	// Dispatch reads herdr and starts an agent; it changes no worktree and
 	// removes nothing, so it needs no repository and takes no lock.
@@ -55,6 +61,16 @@ func dispatchCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+
+	// There is no issue here, so no labels: the flag or the default decides.
+	launch, err := config.Resolve(*role, nil, s.root)
+	if err == nil {
+		err = launch.CheckAgent(s.root)
+	}
+	if err != nil {
+		return withCode(exitUsage, err)
+	}
+	agentArgs := append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...)
 
 	workspace, err := workspaceForPane(s, *pane)
 	if err != nil {
@@ -75,12 +91,16 @@ func dispatchCommand(args []string, out io.Writer) error {
 	if *asJSON {
 		notes = os.Stderr
 	}
+	if line := launch.Line(); line != "" {
+		fmt.Fprintln(notes, line)
+	}
 	fmt.Fprint(notes, execute.Render(results))
 
 	doc := &dispatchJSON{
 		PaneID:      *pane,
 		WorkspaceID: jsonout.String(workspace),
 		AgentName:   *name,
+		Launch:      launch.JSON(),
 		Staffing:    execute.JSON(results),
 	}
 	var failed error
@@ -143,7 +163,7 @@ const unsandboxedWarning = "worktender: --permission-mode %s stops the agent ask
 	"spelling: a sandbox profile, or a separate uid.\n"
 
 const dispatchUsage = "usage: worktender dispatch --pane <id> --name <agent> " +
-	"[--model <model>] [--permission-mode <mode>] [--resume]"
+	"[--role <role>] [--model <model>] [--permission-mode <mode>] [--resume]"
 
 // workspaceForPane asks herdr which workspace holds a pane, so the executor's
 // re-check has something to check. A pane herdr does not know is fatal rather

@@ -10,6 +10,7 @@ version  0.5.0 @f074c65  warn  origin/main is at @a1b2c3d; run `worktender updat
 herdr    0.7.5          ok
 gh       authenticated  ok
 events   unset          off
+roles    none           off    no /home/you/.config/worktender/config.json
 
 repos
   worktender    3 worktrees  1 working
@@ -36,6 +37,10 @@ right question first:
   `git ls-remote`, bounded at ten seconds, writing nothing into the checkout —
   and an origin that cannot be reached leaves drift reported as unknown rather
   than as fine.
+
+It also reports the role configuration `start` and `dispatch --role` read: the
+file, whether it parses, and any agent or directory a role names that does not
+exist. See [Starting a worker as a role](dispatch.md#starting-a-worker-as-a-role).
 
 It is read-only, takes no lock, and works from outside a repository: someone who
 cannot tell what is wrong often cannot tell where they are either. The
