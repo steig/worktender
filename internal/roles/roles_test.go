@@ -2,6 +2,7 @@ package roles
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -294,5 +295,78 @@ func TestCheckAgentMatchesTheFrontmatterNameNotTheFileName(t *testing.T) {
 	l = &Launch{Role: "ux", Agent: "ux"}
 	if err := l.CheckAgent(repo); err != nil || l.AgentFile != shadow || l.AgentSource != "repo" {
 		t.Errorf("file %s (%s), err %v; want the nested repository file that declares the name", l.AgentFile, l.AgentSource, err)
+	}
+}
+
+func TestFrontmatterNameForms(t *testing.T) {
+	dir := t.TempDir()
+	for name, tc := range map[string]struct {
+		body, want string
+		ok         bool
+	}{
+		"plain":           {"---\nname: ux\n---\n", "ux", true},
+		"crlf and bom":    {"\ufeff---\r\nname: ux\r\n---\r\n", "ux", true},
+		"double quoted":   {"---\nname: \"ux\" # c\n---\n", "ux", true},
+		"single quoted":   {"---\nname: 'ux'\n---\n", "ux", true},
+		"comment":         {"---\nname: ux # the designer\n---\n", "ux", true},
+		"fence spaces":    {"---  \nname: ux\n---\n", "ux", true},
+		"indented is not": {"---\nmeta:\n  name: other\n---\n", "", false},
+		"after the fence": {"---\ndescription: x\n---\nname: ux\n", "", false},
+		"no frontmatter":  {"name: ux\n", "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".md")
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := frontmatterName(path)
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("frontmatterName = %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// A repository decides what is in its agent directory, so the lookup stops
+// after a bounded number of files rather than reading whatever is there.
+func TestFindAgentStopsAtTheScanLimit(t *testing.T) {
+	dir := t.TempDir()
+	for i := range agentScanLimit + 5 {
+		path := filepath.Join(dir, fmt.Sprintf("a%04d.md", i))
+		if err := os.WriteFile(path, []byte("---\nname: filler\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "z.md"), []byte("---\nname: late\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, complete := FindAgent(dir, "late"); got != "" || complete {
+		t.Errorf("found %q, complete %v past the scan limit; want nothing, incomplete", got, complete)
+	}
+	if got, _ := FindAgent(dir, "filler"); got == "" {
+		t.Error("an agent inside the limit was not found")
+	}
+
+	// A repository that buries its definition past the limit cannot make the
+	// user's file of the same name look like the one in use.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	user := filepath.Join(home, ".claude", "agents", "late.md")
+	if err := os.MkdirAll(filepath.Dir(user), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(user, []byte("---\nname: late\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dir, filepath.Join(repo, ".claude", "agents")); err != nil {
+		t.Fatal(err)
+	}
+	l := &Launch{Role: "x", Agent: "late"}
+	if err := l.CheckAgent(repo); err == nil {
+		t.Errorf("a truncated repository scan fell through to %s", l.AgentFile)
 	}
 }

@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -342,7 +343,8 @@ func AgentDirs(repoRoot string) []string {
 }
 
 // FindAgent is the definition under dir that claude loads for `--agent name`,
-// or "" when there is none.
+// or "" when there is none. complete is false when the scan stopped at its
+// limit, so "" means only "not among the files read".
 //
 // An agent is known by the `name:` in its frontmatter, not by its file name,
 // and claude reads subdirectories too — both measured against Claude Code
@@ -352,15 +354,23 @@ func AgentDirs(repoRoot string) []string {
 // the repository was the one that loaded. A file with no name in its
 // frontmatter is matched by its stem. Two files declaring one name resolve to
 // the first in lexical order; which one claude picks is not known.
-func FindAgent(dir, name string) string {
-	found := ""
+func FindAgent(dir, name string) (path string, complete bool) {
+	found, seen, complete := "", 0, true
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || found != "" {
+		if err != nil {
 			return nil
+		}
+		if found != "" {
+			return filepath.SkipAll
 		}
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
+		if seen >= agentScanLimit {
+			complete = false
+			return filepath.SkipAll
+		}
+		seen++
 		declared, ok := frontmatterName(path)
 		if !ok {
 			declared = strings.TrimSuffix(d.Name(), ".md")
@@ -370,27 +380,61 @@ func FindAgent(dir, name string) string {
 		}
 		return nil
 	})
-	return found
+	return found, complete
 }
 
-// frontmatterName reads `name:` from a leading `---` block.
+// agentScanLimit and frontmatterLimit bound what FindAgent reads. The
+// repository's agent directory is the repository's to fill, and a lookup that
+// runs before every start should not be something a checkout can make slow.
+// A scan cut short refuses the launch: past the limit the repository's file
+// may be the one claude loads, and falling through to the user's would report
+// the wrong one.
+const (
+	agentScanLimit   = 500
+	frontmatterLimit = 4096
+)
+
+// frontmatterName reads the top-level `name:` from a leading `---` block.
+//
+// It is not a YAML parser, and a definition written in a form claude accepts
+// and this does not — a block scalar, say — will be matched by its file stem
+// or not at all. The forms an agent file is actually written in are covered:
+// a byte order mark, CRLF line ends, quoting, a trailing comment, and fences
+// with trailing spaces. Only an unindented key counts; an indented one belongs
+// to some other mapping.
 func frontmatterName(path string) (string, bool) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", false
 	}
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	rest, ok := strings.CutPrefix(text, "---\n")
-	if !ok {
+	defer f.Close()
+	buf := make([]byte, frontmatterLimit)
+	n, _ := io.ReadFull(f, buf)
+
+	text := strings.TrimPrefix(string(buf[:n]), "\ufeff")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return "", false
 	}
-	for line := range strings.SplitSeq(rest, "\n") {
+	for _, line := range lines[1:] {
 		if strings.TrimSpace(line) == "---" {
 			break
 		}
-		if value, ok := strings.CutPrefix(line, "name:"); ok {
-			return strings.Trim(strings.TrimSpace(value), `"'`), true
+		value, ok := strings.CutPrefix(line, "name:")
+		if !ok {
+			continue
 		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') {
+			if end := strings.IndexByte(value[1:], value[0]); end >= 0 {
+				return value[1 : end+1], true
+			}
+		}
+		if i := strings.Index(value, " #"); i >= 0 {
+			value = strings.TrimSpace(value[:i])
+		}
+		return value, true
 	}
 	return "", false
 }
@@ -409,7 +453,12 @@ func (l *Launch) CheckAgent(repoRoot string) error {
 	}
 	dirs := AgentDirs(repoRoot)
 	for i, dir := range dirs {
-		if path := FindAgent(dir, l.Agent); path != "" {
+		path, complete := FindAgent(dir, l.Agent)
+		if !complete {
+			return fmt.Errorf("role %s: %s holds more than %d agent files, too many to tell which definition of %q claude will load",
+				l.Role, dir, agentScanLimit, l.Agent)
+		}
+		if path != "" {
 			l.AgentFile, l.AgentSource = path, "user"
 			if repoRoot != "" && i == 0 {
 				l.AgentSource = "repo"

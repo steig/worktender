@@ -394,7 +394,8 @@ func rolesCheck() check {
 		if role.Agent != "" {
 			found := false
 			for _, dir := range roles.AgentDirs("") {
-				found = found || roles.FindAgent(dir, role.Agent) != ""
+				path, _ := roles.FindAgent(dir, role.Agent)
+				found = found || path != ""
 			}
 			if !found {
 				problems = append(problems, fmt.Sprintf("%s: agent %s not in ~/.claude/agents (fine if a repository defines it)", name, role.Agent))
