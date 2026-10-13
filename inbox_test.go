@@ -216,13 +216,21 @@ func TestInboxSearchFindsAcrossThreadsByNoteOrAuthor(t *testing.T) {
 		t.Fatalf("search: %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "169") {
+	// Each line opens with its thread, then a timestamp. Matching the thread
+	// anywhere in the line read the timestamp too: a post at 04:43 "matched"
+	// thread 43, and failed CI whenever a run landed on that minute.
+	threads := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSpace(got), "\n") {
+		thread, _, _ := strings.Cut(line, ":")
+		threads[strings.TrimSpace(thread)] = true
+	}
+	if !threads["169"] {
 		t.Errorf("search %q should find the note match in thread 169, got:\n%s", "inbox", got)
 	}
-	if !strings.Contains(got, "42") {
+	if !threads["42"] {
 		t.Errorf("search %q should find the author match in thread 42, got:\n%s", "inbox", got)
 	}
-	if strings.Contains(got, "43") {
+	if threads["43"] {
 		t.Errorf("search %q should not match thread 43, got:\n%s", "inbox", got)
 	}
 
