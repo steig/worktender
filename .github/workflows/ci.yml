@@ -49,3 +49,26 @@ jobs:
         # -count=1 defeats the test cache, so a green run means the tests
         # actually executed.
         run: go test -count=1 ./...
+
+  mod:
+    # mods/worktender-watch is a Claude Code mod: TypeScript the engine loads
+    # itself, so it is checked by the engine rather than by a toolchain of its
+    # own. Neither command needs a login. The version is pinned because the
+    # mod API is early access and may change between releases; move it on
+    # deliberately, with the tests.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: claude code
+        run: npm install -g @anthropic-ai/claude-code@2.1.296
+
+      - name: validate
+        run: claude plugin validate . && claude plugin validate mods/worktender-watch
+
+      - name: test
+        run: claude plugin test mods/worktender-watch

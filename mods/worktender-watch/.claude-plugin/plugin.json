@@ -1,0 +1,36 @@
+{
+  "name": "worktender-watch",
+  "version": "0.1.0",
+  "description": "Watches the worktender fleet: a status line count, a band when a worker reports done or blocked, and a toast (or, opted in, a turn) when one does.",
+  "author": {
+    "name": "Tom Steigerwald"
+  },
+  "homepage": "https://steig.github.io/worktender/watch.html",
+  "repository": "https://github.com/steig/worktender",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "wake": {
+      "type": "string",
+      "title": "On a new report",
+      "description": "toast shows a toast and the band; turn also starts a turn so Claude verifies it (spends tokens without you asking).",
+      "default": "toast",
+      "options": [
+        "toast",
+        "turn"
+      ]
+    },
+    "intervalSeconds": {
+      "type": "number",
+      "title": "Poll interval (seconds)",
+      "description": "How often to run `worktender ls --all-repos --reports --json`. It takes about 20 ms.",
+      "default": 30
+    },
+    "worktender": {
+      "type": "string",
+      "title": "worktender binary",
+      "description": "Path to worktender, or the name to find on PATH.",
+      "default": "worktender"
+    }
+  }
+}

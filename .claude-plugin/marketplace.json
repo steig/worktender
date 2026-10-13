@@ -1,0 +1,14 @@
+{
+  "name": "worktender",
+  "description": "Claude Code mods for worktender's fleet of coding agents.",
+  "owner": {
+    "name": "Tom Steigerwald"
+  },
+  "plugins": [
+    {
+      "name": "worktender-watch",
+      "source": "./mods/worktender-watch",
+      "description": "Watches the worktender fleet from inside Claude Code: a status line count, a band and a toast when a worker reports."
+    }
+  ]
+}
