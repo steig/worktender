@@ -62,6 +62,22 @@ hands whoever filed the issue your worker's instructions.
 exists. Sleep-polling for readiness has failed with `agent_not_ready` every time
 it has been tried in this repository, including by coordinators that knew better.
 
+## Waiting: the watch mod, or `gate`
+
+If the session has the `worktender-watch` mod (a `wt:` entry in the status
+line, or `/wt` answers), **do not sit in `gate`**. Start the workers, report back
+to the human, and stop. The mod raises a band and a toast when a worker reports
+`done` or `blocked`, or stops at a prompt; when it, or the human pressing **Ask
+Claude to check**, brings one to you, verify it exactly as below. `/wt` shows
+the fleet at any time.
+
+Use `gate` when nothing can wake you: `claude -p`, a script, CI. Its exit codes
+are the contract there.
+
+The mod's prompt names the repository, branch, status and pull request only.
+It never carries a worker's note, and you should not go fetch the note to act on
+it — the same rule as for `gate`.
+
 ## When to dispatch, and when not to
 
 **Dispatch:** bounded authoring work with a mechanical done condition, in an

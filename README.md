@@ -636,6 +636,7 @@ thread, with five worked examples — which has no markdown source here.
 | --- | --- |
 | [Dispatching a worker](docs/dispatch.md) | `dispatch`, `report` and `gate` — handing a slice to another agent and waiting for it, and why the report has fixed slots. |
 | [Roles](docs/roles.md) | Starting a worker as a Claude Code agent with a brief style — design, analysis or code — chosen by flag or issue label. |
+| [Watching the fleet](docs/watch.md) | A Claude Code mod: a status line count, a band and a toast when a worker reports done or blocked. |
 | [How removal is decided](docs/pruning.md) | What authorises a removal, why git topology never does it alone, and the guards. |
 | [Events and startup](docs/events.md) | The hooks that adopt and staff automatically, and the one-shot pass that covers what they cannot. |
 | [Reference](docs/reference.md) | Exit codes, the errors you are likely to meet, keybindings, and the smaller behaviours. |
@@ -684,6 +685,16 @@ claude plugin install worktender@steig
 
 Or vendor `skills/worktrees/SKILL.md` and `skills/coordinator/SKILL.md` into your
 own agent configuration, which pins them rather than tracking this repository.
+
+A Claude Code mod watches the fleet for the session that coordinates it — a
+status line count, and a band and a toast when a worker reports done or blocked
+— so that session does not have to sit in `gate`:
+
+```
+/plugin install worktender-watch --marketplace steig/worktender
+```
+
+See [Watching the fleet](docs/watch.md).
 
 Nothing here writes to your agent's configuration during install, and nothing
 should. Running unsandboxed as it does, a plugin that quietly edits how your
