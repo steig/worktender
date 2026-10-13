@@ -310,3 +310,44 @@ func TestLsJSONWritesOneDocumentInsteadOfTheTable(t *testing.T) {
 		t.Errorf("the table was printed alongside the document:\n%s", buf.String())
 	}
 }
+
+// --reports is accepted beside --all-repos, so it has to be honoured there too.
+// It was silently dropped: every row came back with a null report, which reads
+// as "nobody asked" to a consumer that did ask — worktender-watch among them,
+// which therefore never saw a worker report done or blocked.
+func TestLsAllJSONCarriesReportsWhenAsked(t *testing.T) {
+	server, repo, _ := fleet(t)
+
+	asked := map[string]bool{}
+	lookup := func(pane string) (wt.Report, error) {
+		asked[pane] = true
+		return wt.Report{Found: true, Status: "done"}, nil
+	}
+
+	var buf bytes.Buffer
+	client := herdrapi.NewWithSocket(server.SocketPath)
+	if err := wt.LsAll(client, []string{repo.RealRoot}, wt.Options{JSON: true, LookupReport: lookup}, &buf); err != nil {
+		t.Fatalf("LsAll: %v", err)
+	}
+	var document wt.ListJSON
+	if err := json.Unmarshal(buf.Bytes(), &document); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, buf.String())
+	}
+
+	staffed := 0
+	for _, row := range document.Repositories[0].Worktrees {
+		if row.PaneID == nil {
+			if row.Report != nil {
+				t.Errorf("%v has no pane to ask, yet carries a report", row.Branch)
+			}
+			continue
+		}
+		staffed++
+		if row.Report == nil || !row.Report.Found || !asked[*row.PaneID] {
+			t.Errorf("pane %s was not asked for its report: %+v", *row.PaneID, row.Report)
+		}
+	}
+	if staffed == 0 {
+		t.Fatal("the fixture has no staffed row, so this test proves nothing")
+	}
+}

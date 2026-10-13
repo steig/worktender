@@ -1017,6 +1017,11 @@ func LsAll(client *herdrapi.Client, roots []string, opts Options, out io.Writer)
 			repos[i].Rows = OnlyBlocked(repos[i].Rows)
 		}
 		WithPanes(client, repos[i].Rows)
+		// After the panes, which are what a report is asked of. Ls does the same;
+		// leaving it out here dropped --reports silently.
+		if opts.LookupReport != nil {
+			WithReports(repos[i].Rows, opts.LookupReport)
+		}
 		listings = append(listings, repos[i].Rows)
 	}
 	WithAgentSeqs(client, listings...)
