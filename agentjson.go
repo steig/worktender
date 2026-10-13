@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/jsonout"
+	"github.com/steig/worktender/internal/roles"
 )
 
 // startJSON is `start --json`: everything the text output prints for a human to
@@ -43,6 +44,9 @@ type startJSON struct {
 	// answers to one question is how a document and the prose beside it come to
 	// disagree.
 	Stacked bool `json:"stacked"`
+	// Launch is the role the agent was started as and why, null when no role
+	// applied — no configuration, or nothing in it that matched.
+	Launch *roles.LaunchJSON `json:"launch"`
 	// Briefed records that the agent took the brief up, which is a separate
 	// fact from the agent having started: herdr answering ok means keystrokes
 	// were delivered, not that anything received them.
@@ -76,6 +80,7 @@ type dispatchJSON struct {
 	PaneID      string               `json:"pane_id"`
 	WorkspaceID *string              `json:"workspace_id"`
 	AgentName   string               `json:"agent_name"`
+	Launch      *roles.LaunchJSON    `json:"launch"`
 	Staffing    []execute.ResultJSON `json:"staffing"`
 	GateCommand *string              `json:"gate_command"`
 	Error       *string              `json:"error"`

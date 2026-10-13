@@ -17,6 +17,7 @@ import (
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/jsonout"
 	"github.com/steig/worktender/internal/reconcile"
+	"github.com/steig/worktender/internal/roles"
 )
 
 // start is the front door: an issue number in, an agent working on it out.
@@ -36,6 +37,7 @@ func startCommand(args []string, out io.Writer) error {
 
 	model := fs.String("model", "", "model to pass to the agent")
 	permissionMode := fs.String("permission-mode", "", "agent permission mode")
+	role := fs.String("role", "", "role to start the agent as, from the user's config")
 	base := fs.String("base", "", "ref to fork from; defaults to the repository's origin/HEAD")
 	repo := fs.String("repo", "", "repository to act on, instead of the one herdr is currently in")
 	focus := fs.Bool("focus", false, "switch to the new workspace")
@@ -51,6 +53,13 @@ func startCommand(args []string, out io.Writer) error {
 	number, err := strconv.Atoi(strings.TrimPrefix(issues[0], "#"))
 	if err != nil || number <= 0 {
 		return usagef("%q is not an issue number; want a positive integer like 42", issues[0])
+	}
+
+	// Read before anything else happens, so a configuration that does not parse
+	// costs nothing but the message.
+	config, err := roles.Load()
+	if err != nil {
+		return withCode(exitUsage, err)
 	}
 
 	// Creates a checkout and starts an agent, so it must be told where — by
@@ -96,6 +105,24 @@ func startCommand(args []string, out io.Writer) error {
 		return err
 	}
 
+	// The role is settled before the worktree exists: an agent nobody defined
+	// would otherwise fail inside the pane, leaving a checkout behind it.
+	launch, err := config.Resolve(*role, issue.labelNames(), s.root)
+	if err == nil {
+		err = launch.CheckAgent(s.root)
+	}
+	if err != nil {
+		err = withCode(exitUsage, err)
+		if wErr := emit(doc.finish(err)); wErr != nil {
+			return wErr
+		}
+		return err
+	}
+	doc.Launch = launch.JSON()
+	if line := launch.Line(); line != "" {
+		fmt.Fprintln(notes, line)
+	}
+
 	branch := issueBranch(issue)
 	baseRef := gitx.BaseRef(s.root)
 	forkFrom := *base
@@ -134,7 +161,7 @@ func startCommand(args []string, out io.Writer) error {
 		WorkspaceID: workspace,
 		PaneID:      pane,
 		AgentName:   agent,
-		AgentArgs:   agentArgsFor(*model, *permissionMode, os.Stderr),
+		AgentArgs:   append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...),
 	}})
 	fmt.Fprint(notes, execute.Render(results))
 	doc.Staffing = execute.JSON(results)
@@ -194,7 +221,7 @@ func printForkPoint(out io.Writer, forkFrom, forkPoint, baseRef, basePoint strin
 	fmt.Fprintf(out, "           once it merges. Before that, --onto %s, having rebased that first.\n", forkFrom)
 }
 
-const startUsage = "usage: worktender start <issue> [--model <model>] " +
+const startUsage = "usage: worktender start <issue> [--role <role>] [--model <model>] " +
 	"[--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus] [--json]"
 
 // parseAround parses flags written on either side of the positional arguments,
@@ -356,10 +383,26 @@ func times(n int) string {
 }
 
 // issue is the part of a GitHub issue this command needs, which since the brief
-// stopped carrying the body is only what names the branch.
+// stopped carrying the body is what names the branch and what picks a role.
+//
+// Labels are read because a role can be chosen by one. They select among roles
+// the user's configuration defines and reach nothing else — not the brief, not
+// an argument — so a label set by whoever can edit the issue chooses between
+// the user's own options and cannot add one.
 type issue struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+func (i issue) labelNames() []string {
+	names := make([]string, len(i.Labels))
+	for n, l := range i.Labels {
+		names[n] = l.Name
+	}
+	return names
 }
 
 // issueFor reads an issue through gh.
@@ -369,7 +412,7 @@ type issue struct {
 // a worktree; an issue nobody can read here means gh is not working for the
 // worker either, and it is about to be sent to run the same command.
 func issueFor(root string, number int) (issue, error) {
-	args := []string{"issue", "view", strconv.Itoa(number), "--json", "number,title"}
+	args := []string{"issue", "view", strconv.Itoa(number), "--json", "number,title,labels"}
 	if origin := gitx.RemoteURL(root); origin != "" {
 		args = append(args, "--repo", origin)
 	}

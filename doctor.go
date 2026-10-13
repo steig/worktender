@@ -15,6 +15,7 @@ import (
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/jsonout"
+	"github.com/steig/worktender/internal/roles"
 	"github.com/steig/worktender/internal/safetext"
 	"github.com/steig/worktender/internal/wt"
 )
@@ -50,7 +51,7 @@ func doctorCommand(args []string, out io.Writer) error {
 		herdr.note = clientErr.Error()
 	}
 
-	checks := []check{versionCheck(client), herdr, ghCheck(), eventsCheck()}
+	checks := []check{versionCheck(client), herdr, ghCheck(), eventsCheck(), rolesCheck()}
 
 	// Nothing below the checks is answerable without herdr, and saying so once
 	// is better than four repetitions of the same cause.
@@ -363,6 +364,62 @@ func eventsCheck() check {
 	default:
 		return check{name: "events", value: raw, state: stateOff}
 	}
+}
+
+// rolesCheck reports the role configuration `start` and `dispatch` will read,
+// and what in it would fail at launch.
+//
+// It can only see the user's own agents. An agent defined in one repository's
+// .claude/agents is found by `start` there and nowhere else, and doctor stands
+// in no repository — so a role whose agent is missing from the home directory
+// is a warning that names the case, not a failure.
+func rolesCheck() check {
+	config, err := roles.Load()
+	if err != nil {
+		return check{name: "roles", value: "invalid", state: stateFail, note: err.Error()}
+	}
+	if config == nil {
+		return check{name: "roles", value: "none", state: stateOff, note: "no " + roles.Path()}
+	}
+
+	names := make([]string, 0, len(config.Roles))
+	for name := range config.Roles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var problems []string
+	for _, name := range names {
+		role := config.Roles[name]
+		if role.Agent != "" {
+			found := false
+			for _, p := range roles.AgentFiles(role.Agent, "") {
+				if _, err := os.Stat(p); err == nil {
+					found = true
+				}
+			}
+			if !found {
+				problems = append(problems, fmt.Sprintf("%s: agent %s not in ~/.claude/agents (fine if a repository defines it)", name, role.Agent))
+			}
+		}
+		for _, d := range role.AddDirs {
+			// A relative directory belongs to whichever repository the role is
+			// started in, so there is nothing to check it against from here.
+			abs, err := roles.ExpandDir(d, "")
+			if err != nil {
+				continue
+			}
+			if _, err := os.Stat(abs); err != nil {
+				problems = append(problems, fmt.Sprintf("%s: no directory %s", name, abs))
+			}
+		}
+	}
+
+	value := fmt.Sprintf("%s in %s", plural(len(names), "role"), config.Path)
+	if len(problems) > 0 {
+		return check{name: "roles", value: value, state: stateWarn, note: strings.Join(problems, "; ")}
+	}
+	return check{name: "roles", value: value, state: stateOK, note: strings.Join(names, ", ")}
 }
 
 // repositories reads what herdr currently holds. The scope is herdr's open
