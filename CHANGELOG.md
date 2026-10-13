@@ -6,6 +6,48 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.13.0] — 2026-10-13
+
+### Added
+
+- **Roles: `start --role` and `dispatch --role`.** (#188, #189) A role is a
+  Claude Code agent, a brief style and directories the worker may read, defined
+  in your own `~/.config/worktender/config.json`. `start` also picks one from
+  the issue's labels, then `default_role`. The role becomes `--agent` and
+  `--add-dir` on `claude`, is printed as a `role:` line and carried as `launch`
+  in `--json`, and a role naming an agent that is defined nowhere is refused
+  before the worktree is created. The model belongs to the agent file;
+  `--model` still overrides it, and nothing configures autonomy. Brief styles
+  are `code` (unchanged), `design` and `analysis`, each still ending in a pull
+  request. A label chooses among your roles and nothing else, and there is no
+  per-repository configuration — though a repository's `.claude/agents` can
+  still redefine an agent, which the `role:` line reports as `(repo)`. With no
+  configuration nothing changes. `doctor` reports the file and anything it
+  names that is missing. `examples/roles` ships ux, cro, supply-chain and
+  warehousing roles to start from. See [Roles](docs/roles.md).
+- **`worktender-watch`, a Claude Code mod for the coordinating session.**
+  (#190) A `wt:` status line count, and a band and a toast when a worker
+  reports done or blocked or stops at a prompt, so the session that dispatched
+  the work does not have to sit in `gate`. `/wt` looks immediately. Toasts by
+  default; `wake: turn` opts into starting a verify turn. A report's note is
+  never read. This repository is now a plugin marketplace for it:
+
+  ```
+  /plugin install worktender-watch --marketplace steig/worktender
+  ```
+
+  See [Watching the fleet](docs/watch.md).
+
+### Fixed
+
+- **`ls --all-repos --reports` showed no reports.** (#192) The flag was
+  accepted and then dropped, so every row's report read `null` — "not asked" —
+  to a caller that asked. The coordinator skill's advice for checking on the
+  fleet was blind to every report, and so was `worktender-watch`.
+- **A flaky `inbox search` test.** (#191) It looked for a thread number
+  anywhere in the line, timestamps included, and failed any run that landed in
+  minute 43.
+
 ## [0.12.0] — 2026-09-16
 
 ### Added
