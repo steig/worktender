@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/steig/worktender/internal/herdrtest"
+	"github.com/steig/worktender/internal/roles"
 )
 
 // TestMain points XDG_CONFIG_HOME at an empty directory for the whole package,
@@ -252,4 +253,73 @@ func TestDoctorRolesCheck(t *testing.T) {
 			t.Errorf("check = %+v; want a warning naming the agent and the directory", c)
 		}
 	})
+}
+
+// Every style a configuration may name has a sentence, and "code" is the brief
+// start has always typed, byte for byte.
+func TestEveryBriefStyleHasItsSentence(t *testing.T) {
+	for style := range roles.Briefs {
+		if briefStyles[style] == "" {
+			t.Errorf("brief style %q is accepted by the configuration and has no sentence", style)
+		}
+	}
+	if briefFor(42, "42-x", "code", false) != brief(42, "42-x") {
+		t.Error("the code style must be the brief start has always sent")
+	}
+}
+
+// What the gate and the coordinator rely on is the same in every style.
+func TestEveryBriefStyleKeepsTheProtocol(t *testing.T) {
+	for style := range briefStyles {
+		for _, dirs := range []bool{false, true} {
+			line := briefFor(42, "42-fix-the-thing", style, dirs)
+			for _, want := range []string{"gh issue view 42", "UNTRUSTED DATA", "planned", "--pr", "blocked", "42-fix-the-thing", "pull request"} {
+				if !strings.Contains(line, want) {
+					t.Errorf("%s brief (dirs %v) lost %q:\n%s", style, dirs, want, line)
+				}
+			}
+			if strings.ContainsAny(line, "\n\r") {
+				t.Errorf("%s brief is not one line", style)
+			}
+		}
+	}
+}
+
+// The longest brief any role can produce still arrives in one pane read.
+func TestEveryBriefStyleFitsInOnePaneRead(t *testing.T) {
+	branch := issueBranch(issue{Number: 999999, Title: strings.Repeat("word ", 40)})
+	for style := range briefStyles {
+		line := briefFor(999999, branch, style, true)
+		line = strings.ReplaceAll(line, selfPath(), installedSelfPath)
+		if len(line) > paneReadChunk {
+			t.Errorf("the %s brief is %d bytes and a pane read carries %d", style, len(line), paneReadChunk)
+		}
+	}
+}
+
+func TestStartBriefsInTheRolesStyle(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	home := writeRoles(t, `{"roles": {"ux": {"agent": "ux-designer", "brief": "design", "add_dirs": ["~/kb"]}}}`, "ux-designer")
+	if err := os.MkdirAll(filepath.Join(home, "kb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+
+	var out strings.Builder
+	if err := startCommand([]string{"42", "--role", "ux"}, &out); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	var text string
+	for _, call := range server.Calls() {
+		if call.Method == "pane.send_text" {
+			text, _ = call.Params["text"].(string)
+		}
+	}
+	if !strings.Contains(text, briefStyles["design"]) || !strings.Contains(text, briefDirs) {
+		t.Errorf("start did not brief in the design style with the directories clause:\n%s", text)
+	}
+	if !strings.Contains(out.String(), "brief: design") {
+		t.Errorf("the role line should say the brief style:\n%s", out.String())
+	}
 }

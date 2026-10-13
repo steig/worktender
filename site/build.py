@@ -28,6 +28,7 @@ PAGES = [
     ("patterns", "Patterns", None, "Handing work to another agent and knowing whether it actually happened: verify don't relay, fixed-slot reports, and what stays in your own head."),
     ("examples", "Examples", None, "Five fan-outs end to end — a Sentry backlog, an issue burn-down, a wide mechanical change, a flaky test, and the case for not fanning out at all."),
     ("dispatch", "Dispatch", "dispatch.md", "Handing a slice of work to another agent and knowing when it is done."),
+    ("roles", "Roles", "roles.md", "Starting a worker as a Claude Code agent with a brief style: the configuration, label routing, and what a label can reach."),
     ("json", "JSON", "json.md", "The --json output every command takes, what each null means, and why absence and unanswered are different fields."),
     ("pruning", "Pruning", "pruning.md", "What authorises a removal, why git topology never does it alone, and the guards."),
     ("events", "Events", "events.md", "The hooks that adopt and staff automatically, and why they are off until you ask."),

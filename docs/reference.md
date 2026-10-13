@@ -40,7 +40,7 @@ right question first:
 
 It also reports the role configuration `start` and `dispatch --role` read: the
 file, whether it parses, and any agent or directory a role names that does not
-exist. See [Starting a worker as a role](dispatch.md#starting-a-worker-as-a-role).
+exist. See [Roles](roles.md).
 
 It is read-only, takes no lock, and works from outside a repository: someone who
 cannot tell what is wrong often cannot tell where they are either. The

@@ -120,10 +120,16 @@ herdr's agent namespace spans every repository, so the name carries a repository
 digest you cannot derive by eye.
 
 ```bash
-"$worktender" start 42 [--model sonnet] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
+"$worktender" start 42 [--role <role>] [--model sonnet] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
 ```
 
 Flags may come on either side of the issue number.
+
+**`--role` picks which agent and brief the worker gets** from the user's
+`~/.config/worktender/config.json`; without the flag an issue label or the
+configured default may pick one. The role is printed on a `role:` line — read
+it. `--model` overrides the model the role's agent file sets. No configuration
+means no role, exactly as before. Details: `docs/roles.md`.
 
 **`start` creates a checkout, so it will not guess a repository, and it is not a herdr
 action** — an action is a fixed command array and `start` is nothing without its issue

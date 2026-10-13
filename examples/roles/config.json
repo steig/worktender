@@ -1,0 +1,33 @@
+{
+  "default_role": "engineer",
+  "labels": [
+    { "match": "role:ux", "role": "ux" },
+    { "match": "role:cro", "role": "cro" },
+    { "match": "role:supply-chain", "role": "supply-chain" },
+    { "match": "role:warehousing", "role": "warehousing" },
+    { "match": "area:checkout*", "role": "cro" }
+  ],
+  "roles": {
+    "engineer": { "brief": "code" },
+    "ux": {
+      "agent": "ux-designer",
+      "brief": "design",
+      "add_dirs": ["~/kb/design-system"]
+    },
+    "cro": {
+      "agent": "cro-analyst",
+      "brief": "analysis",
+      "add_dirs": ["~/kb/experiments"]
+    },
+    "supply-chain": {
+      "agent": "supply-chain-analyst",
+      "brief": "analysis",
+      "add_dirs": ["~/kb/supply-chain"]
+    },
+    "warehousing": {
+      "agent": "warehousing-analyst",
+      "brief": "analysis",
+      "add_dirs": ["~/kb/warehousing"]
+    }
+  }
+}
