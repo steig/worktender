@@ -89,7 +89,7 @@ worktree:
 
 ```sh
 $ worktender start 42 --repo .
-role: ux (label role:ux) · agent: ux-designer · dirs: /home/you/kb/design-system
+role: ux (label role:ux) · agent: ux-designer (user) · dirs: /home/you/kb/design-system
 ```
 
 The role is the flag if you gave one, else the first `labels` rule matching one
@@ -106,6 +106,13 @@ issue can pick which of the roles you defined it runs as. No label can name an
 agent, a directory or a model of its own. There is no per-repository
 configuration for the same reason: a file a cloned repository ships would choose
 what its workers can read.
+
+**A repository can still redefine an agent.** Claude Code prefers a
+repository's `.claude/agents/<name>.md` over yours of the same name — its
+prompt, model and tools — in every session started there, worktender or not.
+That is not refused; it is reported. The line ends `agent: ux-designer (repo)`
+when the repository's file is the one that will load, and `--json` carries
+`agent_file` and `agent_source`.
 
 An agent that does not exist in the repository's `.claude/agents` or in
 `~/.claude/agents` is refused before the worktree is created. With no

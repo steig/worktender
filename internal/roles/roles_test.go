@@ -212,6 +212,12 @@ func TestCheckAgentLooksInTheRepositoryThenHome(t *testing.T) {
 			if err := l.CheckAgent(repo); err != nil {
 				t.Errorf("agent at %s not found: %v", path, err)
 			}
+			if l.AgentFile != path {
+				t.Errorf("AgentFile = %s; want %s", l.AgentFile, path)
+			}
+			if want := map[bool]string{true: "repo", false: "user"}[dir == repo]; l.AgentSource != want {
+				t.Errorf("AgentSource = %s; want %s", l.AgentSource, want)
+			}
 		})
 	}
 }
@@ -224,5 +230,37 @@ func TestLineSaysWhatWasChosenAndWhy(t *testing.T) {
 	var none *Launch
 	if none.Line() != "" || none.JSON() != nil {
 		t.Error("no role should print nothing and serialise to null")
+	}
+}
+
+// A repository's agent file wins over the user's, as it does in claude itself.
+// That is reported rather than refused, so the line has to say it.
+func TestCheckAgentPrefersAndReportsTheRepository(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	for _, dir := range []string{repo, home} {
+		path := filepath.Join(dir, ".claude", "agents", "ux.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := &Launch{Role: "ux", Reason: "flag", Agent: "ux", Brief: DefaultBrief}
+	if err := l.CheckAgent(repo); err != nil {
+		t.Fatal(err)
+	}
+	if l.AgentSource != "repo" || !strings.Contains(l.Line(), "agent: ux (repo)") {
+		t.Errorf("source %s, line %q; want the repository's file, said so", l.AgentSource, l.Line())
+	}
+}
+
+// A label is text whoever can edit the issue wrote, and the reason carries it
+// to the terminal.
+func TestLineEscapesALabel(t *testing.T) {
+	l := &Launch{Role: "ux", Reason: "label x\x1b[2Jy\u202e", Brief: DefaultBrief}
+	if line := l.Line(); strings.ContainsRune(line, 0x1b) || strings.ContainsRune(line, 0x202e) {
+		t.Errorf("unsafe runes reached the line: %q", line)
 	}
 }

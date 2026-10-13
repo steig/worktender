@@ -13,6 +13,14 @@
 // from the user's own choice. Labels are the one input from outside, and they
 // only ever select a role the user already defined.
 //
+// One input the user does not control survives, and it is Claude Code's rather
+// than this package's: claude prefers a repository's .claude/agents/<name>.md
+// over the user's file of the same name, so a repository can redefine the agent
+// a role names — its prompt, its model, its tools. That is true of every claude
+// session started in that repository, with or without worktender, so it is not
+// refused here; it is reported. CheckAgent records which file will be used, and
+// the printed line and the JSON both say whether it was the repository's.
+//
 // Neither the model nor the permission mode is configurable here. The model
 // belongs to the agent file, and `--model` on the command line overrides it —
 // verified against Claude Code 2.1.296, see #185. Autonomy stays a flag for the
@@ -30,6 +38,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/steig/worktender/internal/safetext"
 )
 
 // Briefs are the brief styles a role may name. "code" is the brief `start`
@@ -171,6 +181,10 @@ type Launch struct {
 	// Reason is how the role was chosen: "flag", "label <name>" or "default".
 	Reason string
 	Agent  string
+	// AgentFile is the definition claude will load for Agent, set by
+	// CheckAgent; AgentSource is "repo" or "user" accordingly.
+	AgentFile   string
+	AgentSource string
 	// AddDirs are resolved to absolute paths.
 	AddDirs []string
 	Brief   string
@@ -290,6 +304,9 @@ func (l *Launch) Args() []string {
 
 // Line is the one line `start` and `dispatch` print about the choice, so the
 // coordinator can check it rather than trust it.
+//
+// Escaped, because the reason can carry an issue label, and a label is text
+// whoever can edit the issue wrote.
 func (l *Launch) Line() string {
 	if l == nil {
 		return ""
@@ -298,6 +315,9 @@ func (l *Launch) Line() string {
 	fmt.Fprintf(&b, "role: %s (%s)", l.Role, l.Reason)
 	if l.Agent != "" {
 		fmt.Fprintf(&b, " · agent: %s", l.Agent)
+		if l.AgentSource != "" {
+			fmt.Fprintf(&b, " (%s)", l.AgentSource)
+		}
 	}
 	if l.Brief != DefaultBrief {
 		fmt.Fprintf(&b, " · brief: %s", l.Brief)
@@ -305,7 +325,7 @@ func (l *Launch) Line() string {
 	if len(l.AddDirs) > 0 {
 		fmt.Fprintf(&b, " · dirs: %s", strings.Join(l.AddDirs, ", "))
 	}
-	return b.String()
+	return safetext.Escape(b.String())
 }
 
 // AgentFiles are the places Claude Code looks for an agent definition, in the
@@ -322,8 +342,9 @@ func AgentFiles(agent, repoRoot string) []string {
 }
 
 // CheckAgent refuses a launch whose agent has no definition anywhere claude
-// will look. Run before anything is created: `claude --agent` with a name it
-// cannot find fails inside the pane, after the worktree already exists.
+// will look, and records which definition claude will use. Run before anything
+// is created: `claude --agent` with a name it cannot find fails inside the
+// pane, after the worktree already exists.
 func (l *Launch) CheckAgent(repoRoot string) error {
 	if l == nil || l.Agent == "" {
 		return nil
@@ -331,6 +352,10 @@ func (l *Launch) CheckAgent(repoRoot string) error {
 	paths := AgentFiles(l.Agent, repoRoot)
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
+			l.AgentFile, l.AgentSource = p, "user"
+			if repoRoot != "" && p == paths[0] {
+				l.AgentSource = "repo"
+			}
 			return nil
 		}
 	}
@@ -340,11 +365,16 @@ func (l *Launch) CheckAgent(repoRoot string) error {
 
 // LaunchJSON is the launch as `start --json` and `dispatch --json` carry it.
 type LaunchJSON struct {
-	Role    string   `json:"role"`
-	Reason  string   `json:"reason"`
-	Agent   *string  `json:"agent"`
-	AddDirs []string `json:"add_dirs"`
-	Brief   string   `json:"brief"`
+	Role   string  `json:"role"`
+	Reason string  `json:"reason"`
+	Agent  *string `json:"agent"`
+	// AgentFile is the definition claude will load, and AgentSource whether it
+	// is the repository's ("repo") or the user's ("user"). A repository's file
+	// takes precedence over the user's of the same name.
+	AgentFile   *string  `json:"agent_file"`
+	AgentSource *string  `json:"agent_source"`
+	AddDirs     []string `json:"add_dirs"`
+	Brief       string   `json:"brief"`
 }
 
 // JSON is nil for no role, so the field is null rather than an empty object
@@ -360,6 +390,10 @@ func (l *Launch) JSON() *LaunchJSON {
 	if l.Agent != "" {
 		agent := l.Agent
 		out.Agent = &agent
+	}
+	if l.AgentFile != "" {
+		file, source := l.AgentFile, l.AgentSource
+		out.AgentFile, out.AgentSource = &file, &source
 	}
 	return out
 }
