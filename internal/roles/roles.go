@@ -328,39 +328,97 @@ func (l *Launch) Line() string {
 	return safetext.Escape(b.String())
 }
 
-// AgentFiles are the places Claude Code looks for an agent definition, in the
-// order it prefers them: the repository's own, then the user's.
-func AgentFiles(agent, repoRoot string) []string {
-	var paths []string
+// AgentDirs are the directories Claude Code reads agent definitions from, in
+// the order it prefers them: the repository's own, then the user's.
+func AgentDirs(repoRoot string) []string {
+	var dirs []string
 	if repoRoot != "" {
-		paths = append(paths, filepath.Join(repoRoot, ".claude", "agents", agent+".md"))
+		dirs = append(dirs, filepath.Join(repoRoot, ".claude", "agents"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths, filepath.Join(home, ".claude", "agents", agent+".md"))
+		dirs = append(dirs, filepath.Join(home, ".claude", "agents"))
 	}
-	return paths
+	return dirs
+}
+
+// FindAgent is the definition under dir that claude loads for `--agent name`,
+// or "" when there is none.
+//
+// An agent is known by the `name:` in its frontmatter, not by its file name,
+// and claude reads subdirectories too — both measured against Claude Code
+// 2.1.296, where agents/sub/whatever.md declaring `name: probe2` answered to
+// `--agent probe2`. A check by file name would refuse that agent, and worse,
+// report the user's file as the one in use while a differently named file in
+// the repository was the one that loaded. A file with no name in its
+// frontmatter is matched by its stem. Two files declaring one name resolve to
+// the first in lexical order; which one claude picks is not known.
+func FindAgent(dir, name string) string {
+	found := ""
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || found != "" {
+			return nil
+		}
+		if d.IsDir() || filepath.Ext(path) != ".md" {
+			return nil
+		}
+		declared, ok := frontmatterName(path)
+		if !ok {
+			declared = strings.TrimSuffix(d.Name(), ".md")
+		}
+		if declared == name {
+			found = path
+		}
+		return nil
+	})
+	return found
+}
+
+// frontmatterName reads `name:` from a leading `---` block.
+func frontmatterName(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	rest, ok := strings.CutPrefix(text, "---\n")
+	if !ok {
+		return "", false
+	}
+	for line := range strings.SplitSeq(rest, "\n") {
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		if value, ok := strings.CutPrefix(line, "name:"); ok {
+			return strings.Trim(strings.TrimSpace(value), `"'`), true
+		}
+	}
+	return "", false
 }
 
 // CheckAgent refuses a launch whose agent has no definition anywhere claude
 // will look, and records which definition claude will use. Run before anything
 // is created: `claude --agent` with a name it cannot find fails inside the
 // pane, after the worktree already exists.
+//
+// Only the repository's and the user's agent directories are searched. An
+// agent a Claude Code plugin provides is real to claude and invisible here, so
+// it is refused; define it in one of those directories to use it in a role.
 func (l *Launch) CheckAgent(repoRoot string) error {
 	if l == nil || l.Agent == "" {
 		return nil
 	}
-	paths := AgentFiles(l.Agent, repoRoot)
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			l.AgentFile, l.AgentSource = p, "user"
-			if repoRoot != "" && p == paths[0] {
+	dirs := AgentDirs(repoRoot)
+	for i, dir := range dirs {
+		if path := FindAgent(dir, l.Agent); path != "" {
+			l.AgentFile, l.AgentSource = path, "user"
+			if repoRoot != "" && i == 0 {
 				l.AgentSource = "repo"
 			}
 			return nil
 		}
 	}
-	return fmt.Errorf("role %s names agent %q, and no definition for it exists at %s",
-		l.Role, l.Agent, strings.Join(paths, " or "))
+	return fmt.Errorf("role %s names agent %q, and no agent of that name is defined under %s",
+		l.Role, l.Agent, strings.Join(dirs, " or "))
 }
 
 // LaunchJSON is the launch as `start --json` and `dispatch --json` carry it.

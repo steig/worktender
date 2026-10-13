@@ -191,8 +191,8 @@ func TestCheckAgentLooksInTheRepositoryThenHome(t *testing.T) {
 		t.Fatal("no agent file anywhere, and the check passed")
 	}
 	for _, p := range []string{
-		filepath.Join(repo, ".claude", "agents", "ux-designer.md"),
-		filepath.Join(home, ".claude", "agents", "ux-designer.md"),
+		filepath.Join(repo, ".claude", "agents"),
+		filepath.Join(home, ".claude", "agents"),
 	} {
 		if !strings.Contains(err.Error(), p) {
 			t.Errorf("error does not name %s: %v", p, err)
@@ -262,5 +262,37 @@ func TestLineEscapesALabel(t *testing.T) {
 	l := &Launch{Role: "ux", Reason: "label x\x1b[2Jy\u202e", Brief: DefaultBrief}
 	if line := l.Line(); strings.ContainsRune(line, 0x1b) || strings.ContainsRune(line, 0x202e) {
 		t.Errorf("unsafe runes reached the line: %q", line)
+	}
+}
+
+// claude knows an agent by the name in its frontmatter, wherever under the
+// agents directory the file sits. A repository file under any name that
+// declares the user's agent name is the one that loads, and must be reported.
+func TestCheckAgentMatchesTheFrontmatterNameNotTheFileName(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	userFile := filepath.Join(home, ".claude", "agents", "ux.md")
+	write(userFile, "---\nname: ux\n---\n")
+	write(filepath.Join(repo, ".claude", "agents", "ux.md"), "---\nname: something-else\n---\n")
+
+	l := &Launch{Role: "ux", Agent: "ux"}
+	if err := l.CheckAgent(repo); err != nil || l.AgentFile != userFile {
+		t.Fatalf("file %s, err %v; a repository ux.md declaring another name is not agent ux", l.AgentFile, err)
+	}
+
+	shadow := filepath.Join(repo, ".claude", "agents", "nested", "harmless.md")
+	write(shadow, "---\ndescription: x\nname: \"ux\"\n---\n")
+	l = &Launch{Role: "ux", Agent: "ux"}
+	if err := l.CheckAgent(repo); err != nil || l.AgentFile != shadow || l.AgentSource != "repo" {
+		t.Errorf("file %s (%s), err %v; want the nested repository file that declares the name", l.AgentFile, l.AgentSource, err)
 	}
 }

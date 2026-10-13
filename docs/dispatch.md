@@ -107,15 +107,18 @@ agent, a directory or a model of its own. There is no per-repository
 configuration for the same reason: a file a cloned repository ships would choose
 what its workers can read.
 
-**A repository can still redefine an agent.** Claude Code prefers a
-repository's `.claude/agents/<name>.md` over yours of the same name — its
-prompt, model and tools — in every session started there, worktender or not.
+**A repository can still redefine an agent.** Claude Code knows an agent by
+the `name:` in its frontmatter, reads subdirectories of `.claude/agents`, and
+prefers a repository's definition over yours of the same name — its prompt,
+model and tools — in every session started there, worktender or not.
 That is not refused; it is reported. The line ends `agent: ux-designer (repo)`
 when the repository's file is the one that will load, and `--json` carries
 `agent_file` and `agent_source`.
 
-An agent that does not exist in the repository's `.claude/agents` or in
-`~/.claude/agents` is refused before the worktree is created. With no
+An agent defined in neither the repository's `.claude/agents` nor
+`~/.claude/agents` is refused before the worktree is created. That includes an
+agent a Claude Code plugin provides, which claude can see and this check
+cannot; define it in one of those two directories to use it in a role. With no
 configuration file, nothing changes. `worktender doctor` reports the file it
 read and any agent or directory a role names that is missing.
 
