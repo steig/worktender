@@ -81,14 +81,14 @@ func TestPathFallsBackToDotConfig(t *testing.T) {
 
 func TestParseRefuses(t *testing.T) {
 	for name, tc := range map[string]struct{ data, want string }{
-		"an unknown key": {`{"roles":{"a":{"add_dir":["x"]}}}`, `unknown field "add_dir"`},
-		"an unknown brief": {`{"roles":{"a":{"brief":"poetry"}}}`, `roles.a.brief: "poetry" is not a brief style`},
+		"an unknown key":               {`{"roles":{"a":{"add_dir":["x"]}}}`, `unknown field "add_dir"`},
+		"an unknown brief":             {`{"roles":{"a":{"brief":"poetry"}}}`, `roles.a.brief: "poetry" is not a brief style`},
 		"a default that is not a role": {`{"default_role":"nope","roles":{}}`, `default_role: "nope"`},
-		"a label pointing nowhere": {`{"labels":[{"match":"x","role":"nope"}],"roles":{}}`, `labels[0].role: "nope"`},
-		"a label matching everything": {`{"labels":[{"match":"*","role":"a"}],"roles":{"a":{}}}`, `matches every label`},
-		"a glob that is not a suffix": {`{"labels":[{"match":"a*b","role":"a"}],"roles":{"a":{}}}`, `single trailing *`},
+		"a label pointing nowhere":     {`{"labels":[{"match":"x","role":"nope"}],"roles":{}}`, `labels[0].role: "nope"`},
+		"a label matching everything":  {`{"labels":[{"match":"*","role":"a"}],"roles":{"a":{}}}`, `matches every label`},
+		"a glob that is not a suffix":  {`{"labels":[{"match":"a*b","role":"a"}],"roles":{"a":{}}}`, `single trailing *`},
 		"an agent name that is a path": {`{"roles":{"a":{"agent":"../../etc/x"}}}`, `is not an agent name`},
-		"an empty add_dir": {`{"roles":{"a":{"add_dirs":[" "]}}}`, `add_dirs[0] is empty`},
+		"an empty add_dir":             {`{"roles":{"a":{"add_dirs":[" "]}}}`, `add_dirs[0] is empty`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse("config.json", []byte(tc.data))
