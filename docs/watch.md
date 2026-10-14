@@ -11,8 +11,12 @@ Answer `y` to add the marketplace, then pick a scope. It is active at once.
 
 ## What it shows
 
-Every 30 seconds it runs `worktender ls --all-repos --reports --json` — about
-20 ms — and from that draws three things:
+It only speaks in a coordinator's session. A session whose herdr pane sits in a
+linked worktree is a worker, so the watch stays quiet there: no status line,
+band, toast, or turn about the worker's siblings.
+
+Every 30 seconds it runs `worktender ls --reports --json` in the repository the
+session started in — about 20 ms — and from that draws three things:
 
 - **A status line entry**, `wt: 2 working · 1 blocked · 1 done`. Nothing when no
   agents are running or herdr cannot be reached.
@@ -37,6 +41,7 @@ In `/config`, under `worktender-watch`:
 | Setting | Default | |
 | --- | --- | --- |
 | `wake` | `toast` | `turn` also starts a turn asking Claude to verify what was reported. That spends tokens without you asking, so it is opt-in. |
+| `scope` | `repo` | `repo` watches only the repository the session started in. `all` adds `--all-repos`, for one coordinator over every repository. |
 | `intervalSeconds` | `30` | How often to look. |
 | `worktender` | `worktender` | The binary, if it is not on `PATH`. |
 

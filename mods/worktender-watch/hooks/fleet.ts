@@ -1,4 +1,5 @@
-// Reading `worktender ls --all-repos --reports --json`: what the fleet looks
+// Reading `worktender ls --reports --json` (one repository, or with
+// --all-repos every one): what the fleet looks
 // like now, and what in it needs someone. Pure, so it is tested without an
 // engine.
 //
@@ -16,6 +17,7 @@ type Report = {
 } | null
 
 type Row = {
+  main?: boolean
   branch?: string | null
   pane_id?: string | null
   agent_status?: string | null
@@ -42,6 +44,14 @@ function rows(doc: LsDoc): { repo: string; row: Row }[] {
   }
   for (const row of doc.worktrees ?? []) out.push({ repo: '.', row })
   return out
+}
+
+// Whether this session is itself one of the workers: its pane sits in a
+// linked worktree. A worker is not the coordinator, and news of its siblings
+// (let alone a turn spent verifying them) is not its business.
+export function isWorker(doc: LsDoc, self?: string): boolean {
+  if (!self) return false
+  return rows(doc).some(({ row }) => row.pane_id === self && row.main === false)
 }
 
 // A branch is shown and, opted in, submitted; keep it to the characters a
@@ -99,7 +109,8 @@ export function statusLine(s: Summary | null): string | undefined {
 }
 
 export function describe(sig: Signal): string {
-  const where = `${sig.repo}/${sig.branch}`
+  // One repository's listing has no names: '.' is the one you are in.
+  const where = sig.repo === '.' ? sig.branch : `${sig.repo}/${sig.branch}`
   switch (sig.kind) {
     case 'done':
       return sig.pr ? `${where} reported done — PR #${sig.pr}` : `${where} reported done, with no PR`

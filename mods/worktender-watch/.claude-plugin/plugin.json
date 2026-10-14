@@ -1,6 +1,6 @@
 {
   "name": "worktender-watch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Watches the worktender fleet: a status line count, a band when a worker reports done or blocked, and a toast (or, opted in, a turn) when one does.",
   "author": {
     "name": "Tom Steigerwald"
@@ -20,10 +20,20 @@
         "turn"
       ]
     },
+    "scope": {
+      "type": "string",
+      "title": "Which workers",
+      "description": "repo watches the repository the session started in; all watches every repository herdr has workers in.",
+      "default": "repo",
+      "options": [
+        "repo",
+        "all"
+      ]
+    },
     "intervalSeconds": {
       "type": "number",
       "title": "Poll interval (seconds)",
-      "description": "How often to run `worktender ls --all-repos --reports --json`. It takes about 20 ms.",
+      "description": "How often to run `worktender ls --reports --json`. It takes about 20 ms.",
       "default": 30
     },
     "worktender": {
