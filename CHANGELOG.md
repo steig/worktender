@@ -6,6 +6,17 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.13.1] — 2026-10-13
+
+### Fixed
+
+- **The watch mod watches this repository, and is quiet in workers.** (#194)
+  Every interactive session ran it, workers included, and each watched every
+  repository: a worker got toasts about its siblings and, with `wake: turn`, a
+  turn spent verifying them. The new `scope` setting defaults to `repo`, the
+  repository the session started in; `all` restores `--all-repos`. A session
+  whose herdr pane is in a linked worktree shows nothing. The mod is 0.2.0.
+
 ## [0.13.0] — 2026-10-13
 
 ### Added
