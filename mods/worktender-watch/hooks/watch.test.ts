@@ -149,6 +149,28 @@ test('scope=all watches every repository', { options: { scope: 'all' } }, async 
   expect(seen.runs[0].argv).toContain('--all-repos')
 })
 
+test('PR feedback is off by default', async ($, on) => {
+  const { seen, clock } = engine(on, [quiet])
+  await start($)
+  await clock.advance(30_000)
+  expect(seen.runs.some(r => r.argv.includes('pr-feedback'))).toBe(false)
+})
+
+test('prFeedback runs one pr-feedback pass per look, in the session repository', { options: { prFeedback: true } }, async ($, on) => {
+  const { seen, clock } = engine(on, [quiet])
+  await start($)
+  await clock.advance(0)
+  expect(seen.runs.map(r => r.argv.at(-1))).toEqual(['--json', 'pr-feedback'])
+  expect(seen.runs[1].cwd).toBe('/r/wt')
+})
+
+test('a worker session never runs pr-feedback', { options: { prFeedback: true } }, async ($, on) => {
+  const { seen, clock } = engine(on, [quiet], 0, '186-roles:p1')
+  await start($)
+  await clock.advance(30_000)
+  expect(seen.runs.some(r => r.argv.includes('pr-feedback'))).toBe(false)
+})
+
 test('a worker session stays quiet about its siblings', { options: { wake: 'turn' } }, async ($, on) => {
   const { seen, clock } = engine(on, [quiet, landed], 0, '186-roles:p1')
   await start($)

@@ -34,6 +34,35 @@ The session's own pane is not a worker. It is left out of the counts and of
 "waiting at a prompt", since it waits at one every time you are asked to
 approve something.
 
+## Routing PR feedback to workers
+
+With `prFeedback` on, each look also runs `worktender pr-feedback` in the
+session's repository. For every worktree whose branch has an open pull request,
+it asks `gh` for reviews, comments and checks, and when something is new since
+it last said anything, types one line into the pane of the worker on that
+branch:
+
+```
+worktender: PR #42: 2 new review(s) or comment(s): 2 from @alice; failing check(s) `test`. Read them with `gh pr view 42 --comments` and `gh pr checks 42`. ...
+```
+
+- **Counts, logins and check names only.** No review or comment text is ever
+  typed: a reviewer, or a bot, could write instructions there. The worker reads
+  the text itself with `gh pr view`, as tool output. A check name is chosen by
+  whoever wrote the workflow or the app, so it is cut to a short alphabet with no
+  backticks or line breaks, 40 characters, and three names a notice.
+- **Only into an idle agent.** A working agent is mid-turn and a blocked one is
+  at a permission prompt; the notice waits for the next look rather than being
+  dropped.
+- **Said once.** What was already counted is kept in the plugin's state
+  directory (`pr-feedback.json`), so the next look says only what is new. A
+  check that recovers and fails again is new again. The worker's own comments
+  on its PR are not counted.
+
+It is one `gh` call per branch each look, so it is off by default. It covers the
+session's repository even with `scope` set to `all`. `worktender pr-feedback`
+runs the same pass by hand, or from anything else on a timer.
+
 ## Settings
 
 In `/config`, under `worktender-watch`:
@@ -42,6 +71,7 @@ In `/config`, under `worktender-watch`:
 | --- | --- | --- |
 | `wake` | `toast` | `turn` also starts a turn asking Claude to verify what was reported. That spends tokens without you asking, so it is opt-in. |
 | `scope` | `repo` | `repo` watches only the repository the session started in. `all` adds `--all-repos`, for one coordinator over every repository. |
+| `prFeedback` | `false` | Run `worktender pr-feedback` each look, routing new reviews and failing checks to the worker on the branch. Types into worker panes, so it is opt-in. |
 | `intervalSeconds` | `30` | How often to look. |
 | `worktender` | `worktender` | The binary, if it is not on `PATH`. |
 
@@ -52,8 +82,9 @@ usually came from an issue anyone could write. The band, the toast and every
 prompt the mod submits are built from status, pull request number, repository
 and branch alone.
 
-It starts no worker, merges nothing and closes nothing. The only thing it can do
-on its own is queue a prompt, and only with `wake` set to `turn`.
+It starts no worker, merges nothing and closes nothing. The only things it can do
+on its own are queue a prompt, with `wake` set to `turn`, and type a PR notice
+into an idle worker, with `prFeedback` on.
 
 ## The mod or `gate`
 
