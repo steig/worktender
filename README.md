@@ -648,7 +648,7 @@ thread, with five worked examples — which has no markdown source here.
 | --- | --- |
 | [Dispatching a worker](docs/dispatch.md) | `dispatch`, `report` and `gate` — handing a slice to another agent and waiting for it, and why the report has fixed slots. |
 | [Roles](docs/roles.md) | Starting a worker as a Claude Code agent with a brief style — design, analysis or code — chosen by flag or issue label. |
-| [Watching the fleet](docs/watch.md) | A Claude Code mod: a status line count, a band and a toast when a worker reports done or blocked. |
+| [Watching the fleet](docs/watch.md) | A Claude Code mod: a status line count, a band and a toast when a worker reports done or blocked; `pr-feedback` routing a PR's new reviews and failing checks to its worker; `refocus` re-delivering a worker's goal chain after compaction. |
 | [How removal is decided](docs/pruning.md) | What authorises a removal, why git topology never does it alone, and the guards. |
 | [Events and startup](docs/events.md) | The hooks that adopt and staff automatically, and the one-shot pass that covers what they cannot. |
 | [Reference](docs/reference.md) | Exit codes, the errors you are likely to meet, keybindings, and the smaller behaviours. |
@@ -706,6 +706,9 @@ status line count, and a band and a toast when a worker reports done or blocked
 /plugin install worktender-watch --marketplace steig/worktender
 ```
 
+It can also tell a worker when its pull request gets new reviews or failing
+checks (`worktender pr-feedback`, opt-in), and hand a worker its goal chain back
+after Claude Code compacts its session (`worktender refocus`, on by default).
 See [Watching the fleet](docs/watch.md).
 
 Nothing here writes to your agent's configuration during install, and nothing

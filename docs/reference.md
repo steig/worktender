@@ -222,6 +222,11 @@ Errors you are most likely to meet:
   create reports that failure better than this line could. See
   [Stacking on a branch that is still in review](dispatch.md#stacking-on-a-branch-that-is-still-in-review).
 - **`list` is an alias for `ls`.**
+- **`pr-feedback` and `refocus` are the watch mod's.** It runs them for you, and
+  either runs by hand: `pr-feedback` in a repository, `refocus` inside a
+  worker's worktree. See
+  [Routing PR feedback to workers](watch.md#routing-pr-feedback-to-workers) and
+  [Refocusing a worker after compaction](watch.md#refocusing-a-worker-after-compaction).
 - **Agent names** come from the checkout's directory basename, lowercased to
   `[a-z0-9-]`, prefixed `wt-` if the result does not start with a letter, and
   suffixed with a six-character digest of the repository root and the full
