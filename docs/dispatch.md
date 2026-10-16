@@ -150,16 +150,21 @@ repository's test, build and lint entry points.
 
 **Its answer is untrusted too.** Every line it proposes is parsed with the
 grammar above, and a line that does not parse is dropped. So is any command
-outside the allow-list:
+outside the allow-list. The list is of exact argument shapes, not command
+names, because a runner's own flags can run anything (`go test -exec`,
+`make SHELL=`, `npm exec`, `grep -f /etc/...`):
 
-- the repository's own runners, detected from its files: `go test`, `go vet`
-  and `go build` (from `go.mod`, with only `-run`, `-count`, `-timeout`,
-  `-tags`, `-race`, `-v`, `-short` and `./` package patterns), `npm test` and
+- the repository's own runners, detected from its files. `go test`, `go vet`
+  and `go build` (from `go.mod`) take only `./` package patterns and the
+  flags `-run <name pattern>`, `-count=N`, `-race`, `-v` and `-short`. The
+  others take no argument beyond their name: `npm test` and
   `npm run <script>` for each script in `package.json` (`pnpm` or `yarn` when
-  their lockfile is there), `make` and `make <target>` for each Makefile
-  target, `just <recipe>`, and `cargo test`, `cargo build`, `cargo clippy`;
-- `test` and `grep`, with no absolute path and no `..`;
-- `worktender version`, `doctor`, `ls` and `stats`.
+  their lockfile is there), `make <target>` for each Makefile target,
+  `just <recipe>` for each justfile recipe, and `cargo test`, `cargo build`
+  and `cargo clippy`;
+- `test -f|-d|-e <path>` and `grep [-q|-qE|-qF] <pattern> <path>`, where the
+  path is relative to the repository root and has no `..`;
+- `worktender doctor` and `worktender ls`, with no argument.
 
 A command is one simple command. Any shell character, wherever it is (a pipe,
 `;`, `&&`, `$(`, a backtick, a redirect, a glob, `~`), drops it, so nothing

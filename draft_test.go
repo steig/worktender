@@ -17,6 +17,7 @@ func draftRepo(t *testing.T) *herdrtest.Repo {
 	repo := herdrtest.NewRepo(t)
 	repo.Write("go.mod", "module example.com/x\n\ngo 1.22\n")
 	repo.Write("Makefile", "VERSION := 1\n.PHONY: lint\nlint:\n\tgolangci-lint run\nbuild: lint\n\tgo build ./...\n")
+	repo.Write("justfile", "set shell := [\"bash\", \"-c\"]\ncheck:\n\tgo vet ./...\n")
 	repo.Write("package.json", `{"scripts":{"test":"vitest","lint":"eslint ."}}`)
 	return repo
 }
@@ -60,6 +61,39 @@ func TestDraftAllowListRejects(t *testing.T) {
 		"go test \"./...",
 		"ls *",
 		"cargo test",
+		// Escapes through an allowed runner's own flags, from the security
+		// review of the first cut: each runs something the name does not say.
+		"go test -exec 'sh -c true' ./...",
+		"go test -exec=sh ./...",
+		"go generate ./...",
+		"go test -timeout 1s ./...",
+		"go test -tags=x ./...",
+		"go test -run=-x ./...",
+		"go test -count=abc ./...",
+		"go test -race=1 ./...",
+		"make",
+		"make -f /dev/stdin",
+		"make --eval=x lint",
+		"make lint SHELL=sh",
+		"npm exec evil",
+		"npx evil",
+		"npm test -- --evil",
+		"just --shell sh check",
+		"just nosuch",
+		"just check extra",
+		"grep -f /etc/passwd x",
+		"grep -f patterns docs/x.md",
+		"grep -r x docs",
+		"grep -q x",
+		"grep -q x docs/a.md docs/b.md",
+		"grep -q -e x docs/a.md",
+		"test x = y",
+		"test -f /etc/passwd",
+		"test -f",
+		"worktender start 1",
+		"worktender factory",
+		"worktender version",
+		"worktender doctor --repo /",
 	} {
 		if why := vetDraftedCommand(cmd, runners); why == "" {
 			t.Errorf("%q passed the allow-list", cmd)
@@ -76,11 +110,14 @@ func TestDraftAllowListAccepts(t *testing.T) {
 		"go test -run TestDraft -count=1 -race ./...",
 		`grep -q "worktender draft" docs/dispatch.md`,
 		"test -f docs/acceptance.md",
-		"make",
 		"make lint",
+		"just check",
+		"go test -run=TestX/sub -count=1 ./internal/...",
+		"test -d docs",
+		`grep -qE "draft or approve" docs/dispatch.md`,
 		"npm test",
 		"npm run lint",
-		"worktender version",
+		"worktender doctor",
 	} {
 		if why := vetDraftedCommand(cmd, runners); why != "" {
 			t.Errorf("%q refused: %s", cmd, why)
@@ -116,7 +153,7 @@ func TestDraftDropsWhatDoesNotParse(t *testing.T) {
 	for _, c := range []string{"vet", "build"} {
 		many += "- [ ] `go " + c + " ./...` exits 0\n"
 	}
-	many += "- [ ] `make` exits 0\n- [ ] `make lint` exits 0\n- [ ] `npm test` exits 0\n- [ ] `npm run lint` exits 0\n"
+	many += "- [ ] `just check` exits 0\n- [ ] `make lint` exits 0\n- [ ] `npm test` exits 0\n- [ ] `npm run lint` exits 0\n"
 	kept, dropped = vetDraft(many, runners)
 	if len(kept) != draftMaxChecks || len(dropped) != 1 || !strings.Contains(dropped[0].Reason, "past the 6") {
 		t.Errorf("seven checks: kept %d, dropped %+v; want six and one dropped", len(kept), dropped)
