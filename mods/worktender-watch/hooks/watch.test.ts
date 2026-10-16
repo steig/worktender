@@ -323,3 +323,77 @@ test('refocus=false turns it off', { options: { refocus: false } }, async ($, on
   expect((await $.classic.SessionStart({ source: 'compact' })).additionalContext).toBeUndefined()
   expect(runs).toHaveLength(0)
 })
+
+// Refocus on an interval: every prompt a worker is sent asks `refocus
+// --if-due`, and whatever it prints rides along as context. `due` is what each
+// ask answers, in order; the prompts that reach the engine are recorded with
+// their context.
+function intervalEngine(on: On, pane: string | undefined, due: string[], refocusExit = 0) {
+  const runs: string[][] = []
+  const entered: { text: string; context?: readonly string[] }[] = []
+  mock.clock(on)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('process.run', ($, e) => {
+    runs.push([...e.argv])
+    const isRefocus = e.argv[1] === 'refocus'
+    return {
+      value: {
+        exitCode: isRefocus ? refocusExit : 0, stdout: isRefocus ? (due.shift() ?? '') : fleet, stderr: '',
+        isStdoutTruncated: false, isStderrTruncated: false,
+      },
+    }
+  })
+  on('env.get', () => ({ value: pane }))
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('prompt.submit', ($, e) => {
+    entered.push({ text: e.text, context: e.context })
+    return { text: e.text, context: e.context }
+  })
+  const refocusRuns = () => runs.filter(r => r[1] === 'refocus').map(r => r.slice(1))
+  const lsRuns = () => runs.filter(r => r[1] === 'ls' && !r.includes('--reports'))
+  return { entered, refocusRuns, lsRuns }
+}
+
+test('a worker prompt carries the chain when refocus says one is due', async ($, on) => {
+  const { entered, refocusRuns, lsRuns } = intervalEngine(on, '186-roles:p1', ['', CHAIN, ''])
+  await $.session.start({ cwd: '/r/wt/186-roles', surface: 'terminal', isInteractive: true })
+  for (const text of ['the brief', 'a PR review came in', 'carry on']) await $.prompt.submit({ text })
+
+  expect(entered.map(p => p.context)).toEqual([undefined, [CHAIN], undefined])
+  expect(entered.map(p => p.text)).toEqual(['the brief', 'a PR review came in', 'carry on'])
+  expect(refocusRuns()).toEqual([['refocus', '--if-due'], ['refocus', '--if-due'], ['refocus', '--if-due']])
+  expect(lsRuns()).toHaveLength(1) // whether it is a worker is asked once
+})
+
+test('a coordinator prompt never runs refocus', async ($, on) => {
+  const { entered, refocusRuns } = intervalEngine(on, 'main:p1', [CHAIN])
+  await $.session.start({ cwd: '/r/wt', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit({ text: 'what is the fleet doing?' })
+  expect(entered[0].context).toBeUndefined()
+  expect(refocusRuns()).toHaveLength(0)
+})
+
+test('a slash command is not a prompt to the worker', async ($, on) => {
+  const { refocusRuns } = intervalEngine(on, '186-roles:p1', [CHAIN])
+  await $.session.start({ cwd: '/r/wt/186-roles', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit({ text: '/wt', command: { name: 'wt', args: '' } })
+  expect(refocusRuns()).toHaveLength(0)
+})
+
+test('a failing refocus --if-due lets the prompt through bare', async ($, on) => {
+  const { entered } = intervalEngine(on, '186-roles:p1', [CHAIN], 2)
+  await $.session.start({ cwd: '/r/wt/186-roles', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit({ text: 'carry on' })
+  expect(entered.map(p => [p.text, p.context])).toEqual([['carry on', undefined]])
+})
+
+test('refocus=false turns the interval off too', { options: { refocus: false } }, async ($, on) => {
+  const { entered, refocusRuns } = intervalEngine(on, '186-roles:p1', [CHAIN])
+  await $.session.start({ cwd: '/r/wt/186-roles', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit({ text: 'carry on' })
+  expect(entered[0].context).toBeUndefined()
+  expect(refocusRuns()).toHaveLength(0)
+})

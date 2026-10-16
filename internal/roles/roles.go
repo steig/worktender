@@ -79,6 +79,40 @@ type Role struct {
 	// expands to the home directory; a relative path is relative to the
 	// repository.
 	AddDirs []string `json:"add_dirs"`
+	// Refocus is how often a worker in this role is handed its goal chain
+	// again, mid-session. Nil, the default, is never: see Refocus.
+	Refocus *Refocus `json:"refocus"`
+}
+
+// Refocus is an interval for re-delivering a worker's goal chain, in turns, in
+// minutes, or both, whichever comes first. Zero in either field means that
+// field never makes a delivery due.
+//
+// It is per role because drift is: an analyst reading for an hour wanders in
+// a different way, and at a different rate, than an engineer fixing one test.
+// It is off unless a role asks for it, because every delivery is two gh calls
+// and a few lines of the worker's context, and the compaction hook already
+// covers the moment the brief is most surely lost.
+type Refocus struct {
+	Turns   int `json:"turns"`
+	Minutes int `json:"minutes"`
+}
+
+// On is whether the interval can ever come due.
+func (r *Refocus) On() bool { return r != nil && (r.Turns > 0 || r.Minutes > 0) }
+
+// AnyRefocus is whether any role sets an interval. When none does, the
+// interval check stops there, before a gh call or a state file.
+func (c *Config) AnyRefocus() bool {
+	if c == nil {
+		return false
+	}
+	for _, r := range c.Roles {
+		if r.Refocus.On() {
+			return true
+		}
+	}
+	return false
 }
 
 // agentName is what a Claude Code agent file may be called. It is checked
@@ -142,6 +176,9 @@ func (c *Config) validate() error {
 		}
 		if r.Brief != "" && !Briefs[r.Brief] {
 			return fmt.Errorf("roles.%s.brief: %q is not a brief style; want one of %s", name, r.Brief, briefList())
+		}
+		if f := r.Refocus; f != nil && (f.Turns < 0 || f.Minutes < 0) {
+			return fmt.Errorf("roles.%s.refocus: turns and minutes count up from 0, which is never", name)
 		}
 		for i, d := range r.AddDirs {
 			if strings.TrimSpace(d) == "" {

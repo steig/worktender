@@ -11,7 +11,9 @@ const summary = atom({ plugin: 'worktender-watch', key: 'summary' } as const, nu
 
 const BAND_LINES = 3
 
-type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; prFeedback: boolean; refocus: boolean; cwd?: string }
+// worker is this session's answer to "am I a worker?", kept once known: a
+// pane does not move between worktrees, and the interval asks on every prompt.
+type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; prFeedback: boolean; refocus: boolean; cwd?: string; worker?: boolean }
 
 type Look = { counts: Summary; now: Signal[] } | 'worker' | null
 
@@ -85,19 +87,32 @@ async function poll($: EngineInterface, cfg: Config): Promise<Look> {
 // pane in a linked worktree), so a coordinator never pays for the gh calls and
 // never has a chain for someone else's issue put in its context. refocus is
 // silent outside an issue worktree by itself; this is the other half.
-async function refocus($: EngineInterface, cfg: Config, cwd: string): Promise<string | null> {
-  const self = await $.env.get('HERDR_PANE_ID')
-  if (!self) return null
-  const ls = await $.process.run([cfg.bin, 'ls', '--json'], { cwd, timeoutMs: 20_000 })
-  const doc = ls.exitCode === 0 ? parse(ls.stdout) : null
-  if (!doc || !isWorker(doc, self)) return null
-  const run = await $.process.run([cfg.bin, 'refocus'], { cwd, timeoutMs: 30_000 })
+//
+// ifDue is the interval: `refocus --if-due`, which prints only when the
+// worker's role says a delivery is due, and counts the prompt either way.
+async function refocus($: EngineInterface, cfg: Config, cwd: string | undefined, ifDue = false): Promise<string | null> {
+  if (!(await worker($, cfg, cwd))) return null
+  const run = await $.process.run([cfg.bin, 'refocus', ...(ifDue ? ['--if-due'] : [])], { cwd, timeoutMs: 30_000 })
   if (run.exitCode !== 0) {
     $.ui.log(`worktender-watch: refocus exited ${run.exitCode}`, { to: 'debug' })
     return null
   }
   const text = run.stdout.trim()
   return text === '' ? null : text
+}
+
+// Whether this session is a worker, asked of `worktender ls` once and then
+// remembered. Only an answer is remembered: a look that failed (herdr not up
+// yet) is asked again next time rather than taken for "not a worker".
+async function worker($: EngineInterface, cfg: Config, cwd: string | undefined): Promise<boolean> {
+  if (cfg.worker !== undefined) return cfg.worker
+  const self = await $.env.get('HERDR_PANE_ID')
+  if (!self) return false
+  const ls = await $.process.run([cfg.bin, 'ls', '--json'], { cwd, timeoutMs: 20_000 })
+  const doc = ls.exitCode === 0 ? parse(ls.stdout) : null
+  if (!doc) return false
+  cfg.worker = isWorker(doc, self)
+  return cfg.worker
 }
 
 export const register: Register = (on, options) => {
@@ -144,6 +159,32 @@ export const register: Register = (on, options) => {
       $.ui.log(`worktender-watch: refocus: ${String(err)}`, { to: 'debug' })
       return started
     }
+  })
+
+  // Refocus on an interval (#214): the chain again every N prompts or minutes,
+  // as the worker's role sets it, for the drift that sets in long before a
+  // compaction. worktender keeps the count and decides, because the interval
+  // is a role's and roles are its configuration; this hook only asks, on every
+  // prompt a worker is sent, and attaches whatever comes back.
+  //
+  // prompt.submit's context is read by the model beside the prompt and never
+  // shown, and attaching it starts no turn: the prompt was starting one
+  // anyway. It is attached on the way down, before next, because context put
+  // on the result after the prompt entered is not attached. A slash command is
+  // not a prompt to the worker and is neither counted nor carries the chain.
+  //
+  // Off unless a role sets an interval, and that is worktender's to say: with
+  // none, `refocus --if-due` reads its configuration and prints nothing,
+  // without a gh call. The same `refocus` setting turns this half off too.
+  on('prompt.submit', async ($, e, next) => {
+    if (!cfg.refocus || e.command || !cfg.cwd) return next(e)
+    try {
+      const chain = await refocus($, cfg, cfg.cwd, true)
+      if (chain) return next({ ...e, context: [...(e.context ?? []), chain] })
+    } catch (err) {
+      $.ui.log(`worktender-watch: refocus --if-due: ${String(err)}`, { to: 'debug' })
+    }
+    return next(e)
   })
 
   on('command.run', { command: 'wt' }, async ($, e) => {

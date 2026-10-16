@@ -94,7 +94,8 @@ func run(args []string, out io.Writer) error {
 		return prFeedbackCommand(args[1:], out)
 	case "refocus":
 		// A worker's goal chain, read live from GitHub, for a hook to hand back
-		// to it after compaction. Silent outside a worktender worktree.
+		// to it after compaction, or with --if-due on its role's interval.
+		// Silent outside a worktender worktree.
 		return refocusCommand(args[1:], out)
 	case "inbox":
 		// A durable, threaded log for agent-to-agent messages, global across

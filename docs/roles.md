@@ -43,6 +43,7 @@ changes: no role, the brief `start` has always typed, and `launch: null` in
 | `roles.<name>.agent` | A Claude Code agent name. Omitted means claude's default agent. |
 | `roles.<name>.brief` | `code` (the default), `design` or `analysis`. |
 | `roles.<name>.add_dirs` | Directories passed as `--add-dir`. `~` is your home; a relative path is relative to the repository. |
+| `roles.<name>.refocus` | `{ "turns": N, "minutes": M }`, either or both: hand a worker in this role its goal chain again every N prompts or M minutes, whichever comes first. Omitted, or 0, is never. Needs the [worktender-watch mod](watch.md#refocusing-a-worker-on-an-interval). |
 | `labels` | Rules from an issue label to a role. `match` is a label, or a prefix ending in a single `*`. |
 | `default_role` | The role when neither the flag nor a label chose one. Omit it to keep bare starts. |
 

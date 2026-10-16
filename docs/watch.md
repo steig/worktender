@@ -15,7 +15,8 @@ It only speaks in a coordinator's session. A session whose herdr pane sits in a
 linked worktree is a worker, so the watch stays quiet there: no status line,
 band, toast, or turn about the worker's siblings. The one thing it does in a
 worker is [refocus](#refocusing-a-worker-after-compaction) it after Claude
-Code compacts its conversation.
+Code compacts its conversation, and, where its role asks,
+[on an interval](#refocusing-a-worker-on-an-interval).
 
 Every 30 seconds it runs `worktender ls --reports --json` in the repository the
 session started in — about 20 ms — and from that draws three things:
@@ -120,6 +121,43 @@ hand, from inside a worker's worktree.
 Organization-managed Claude Code runs `SessionStart` hooks only for plugins its
 managed settings list, so there it needs the mod listed there.
 
+## Refocusing a worker on an interval
+
+Drift starts long before a compaction. A role can ask for the same block every
+N turns, every N minutes, or both, whichever comes first, in its
+[role configuration](roles.md#the-configuration):
+
+```json
+"roles": {
+  "engineer": { "brief": "code", "refocus": { "turns": 20 } },
+  "cro": { "agent": "cro-analyst", "brief": "analysis", "refocus": { "turns": 10, "minutes": 45 } }
+}
+```
+
+On every prompt a worker is sent (the brief, a PR notice, an inbox reply, a
+nudge), the mod runs `worktender refocus --if-due` in the worker's worktree,
+and attaches whatever it prints to that prompt as context the model reads and
+you do not see. Attaching it starts no turn; the prompt was starting one.
+
+- **worktender keeps the count**, one small file per worktree under the plugin
+  state directory, because the interval is a role's and the mod has no role.
+- **A turn is one prompt.** Minutes are since the last delivery and come due at
+  the next prompt after they elapse; a worker in the middle of one long turn
+  is not interrupted. Both start over when the block is delivered. Slash
+  commands are not counted.
+- **The role** is the one the issue's labels pick, else `default_role`, read
+  once per worktree on its first prompt. `start` does not record the role it
+  chose, so a worker started with `--role` is timed by the role its labels
+  would have picked. The interval itself is read from the configuration every
+  time, so an edit takes effect without restarting anyone.
+- **Off unless a role sets one.** With no interval anywhere, `refocus --if-due`
+  reads the configuration and prints nothing, without a `gh` call or a state
+  file. With one, a worktree's first prompt costs one `gh` call (its labels)
+  and each delivery the usual two. Nothing is cached: the block says what the
+  issue says now.
+- **Workers only**, by the same test as after a compaction; the mod asks it
+  once per session. The `refocus` setting turns this off too.
+
 ## Settings
 
 In `/config`, under `worktender-watch`:
@@ -129,7 +167,7 @@ In `/config`, under `worktender-watch`:
 | `wake` | `toast` | `turn` also starts a turn asking Claude to verify what was reported. That spends tokens without you asking, so it is opt-in. |
 | `scope` | `repo` | `repo` watches only the repository the session started in. `all` adds `--all-repos`, for one coordinator over every repository. |
 | `prFeedback` | `false` | Run `worktender pr-feedback` each look, routing new reviews and failing checks to the worker on the branch. Types into worker panes, so it is opt-in. |
-| `refocus` | `true` | After Claude Code compacts a worker's session, add its goal chain from `worktender refocus` to the worker's context. |
+| `refocus` | `true` | After Claude Code compacts a worker's session, add its goal chain from `worktender refocus` to the worker's context; and, where its role sets an interval, on the prompts `worktender refocus --if-due` says are due. |
 | `intervalSeconds` | `30` | How often to look. |
 | `worktender` | `worktender` | The binary, if it is not on `PATH`. |
 
@@ -143,7 +181,7 @@ and branch alone.
 It starts no worker, merges nothing and closes nothing. The only things it can do
 on its own are queue a prompt, with `wake` set to `turn`, type a PR notice into
 an idle worker, with `prFeedback` on, and add a worker's goal chain to its
-context after a compaction, with `refocus` on.
+context after a compaction or on its role's interval, with `refocus` on.
 
 ## The mod or `gate`
 

@@ -334,3 +334,25 @@ func TestStartBriefsInTheRolesStyle(t *testing.T) {
 		t.Errorf("the role line should say the brief style:\n%s", out.String())
 	}
 }
+
+// An interval counts up from zero, and a misspelt key in it is refused like
+// any other: a "turn" that silently did nothing would be a worker never
+// refocused.
+func TestRolesRefocusIsValidated(t *testing.T) {
+	for _, bad := range []string{
+		`{"roles": {"a": {"refocus": {"turns": -1}}}}`,
+		`{"roles": {"a": {"refocus": {"minutes": -5}}}}`,
+		`{"roles": {"a": {"refocus": {"turn": 5}}}}`,
+	} {
+		if _, err := roles.Parse("config.json", []byte(bad)); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
+	}
+	c, err := roles.Parse("config.json", []byte(`{"roles": {"a": {"refocus": {"turns": 20, "minutes": 30}}, "b": {}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.AnyRefocus() || c.Roles["b"].Refocus.On() || *c.Roles["a"].Refocus != (roles.Refocus{Turns: 20, Minutes: 30}) {
+		t.Errorf("parsed %+v", c.Roles)
+	}
+}

@@ -53,7 +53,10 @@ import (
 // unframed one. What it adds over the brief is small: the worker was already
 // told to read these issues in full and act on them, and whoever can write
 // them could write those.
-const refocusUsage = "usage: worktender refocus"
+//
+// WITH --if-due it is the interval half (#214): the same block, printed only
+// when the worker's role says one is due. See refocusIfDue.
+const refocusUsage = "usage: worktender refocus [--if-due]"
 
 const (
 	refocusTitleMax    = 100
@@ -74,8 +77,12 @@ const (
 var issueBranchPattern = regexp.MustCompile(`^([0-9]+)(?:-|$)`)
 
 func refocusCommand(args []string, out io.Writer) error {
-	if len(args) > 0 {
-		return usagef("unexpected argument %q; %s", args[0], refocusUsage)
+	ifDue := false
+	for _, a := range args {
+		if a != "--if-due" || ifDue {
+			return usagef("unexpected argument %q; %s", a, refocusUsage)
+		}
+		ifDue = true
 	}
 	// The working directory, never herdr's context: the hook runs this in the
 	// worker's own worktree, and herdr's context names whichever workspace is
@@ -84,9 +91,12 @@ func refocusCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return nil
 	}
-	root, number, ok := refocusTarget(dir)
+	root, top, number, ok := refocusTarget(dir)
 	if !ok {
 		return nil
+	}
+	if ifDue {
+		return refocusIfDue(root, top, number, out)
 	}
 
 	chain, err := readChain(root, number)
@@ -101,18 +111,18 @@ func refocusCommand(args []string, out io.Writer) error {
 // inside a linked worktree on an issue branch. The main checkout is excluded
 // even on such a branch: a coordinator works there, and its goal is not one
 // issue.
-func refocusTarget(dir string) (root string, number int, ok bool) {
+func refocusTarget(dir string) (root, top string, number int, ok bool) {
 	root, err := gitx.RepoRoot(dir)
 	if err != nil {
-		return "", 0, false
+		return "", "", 0, false
 	}
-	top, err := gitx.Toplevel(dir)
+	top, err = gitx.Toplevel(dir)
 	if err != nil {
-		return "", 0, false
+		return "", "", 0, false
 	}
 	list, err := gitx.Worktrees(root)
 	if err != nil {
-		return "", 0, false
+		return "", "", 0, false
 	}
 	for _, w := range list {
 		if w.Path != top || !w.IsLinked {
@@ -120,15 +130,15 @@ func refocusTarget(dir string) (root string, number int, ok bool) {
 		}
 		m := issueBranchPattern.FindStringSubmatch(w.Branch)
 		if m == nil {
-			return "", 0, false
+			return "", "", 0, false
 		}
 		n, err := strconv.Atoi(m[1])
 		if err != nil || n <= 0 {
-			return "", 0, false
+			return "", "", 0, false
 		}
-		return root, n, true
+		return root, top, n, true
 	}
-	return "", 0, false
+	return "", "", 0, false
 }
 
 // ghIssue is the part of an issue the chain is built from.
