@@ -255,3 +255,71 @@ test('/wt says so when there is no fleet', async ($, on) => {
   const result = await $.command.run({ command: 'wt', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
   expect(result.text).toContain('No fleet')
 })
+
+// Refocus: the engine beneath answers `ls --json` with `fleet` (186-roles is a
+// linked worktree, main is not) and `refocus` with `chain`, and records what
+// ran. HERDR_PANE_ID is `pane`.
+const CHAIN = 'Refocus: the goal chain for this branch, read from GitHub just now.\n  issue: #186'
+const fleet = doc({ ...row('main', 'idle'), main: true }, row('186-roles', 'working'))
+
+function refocusEngine(on: On, pane: string | undefined, chain = CHAIN, refocusExit = 0) {
+  const runs: string[][] = []
+  on('process.run', ($, e) => {
+    runs.push([...e.argv])
+    const isRefocus = e.argv[1] === 'refocus'
+    return {
+      value: {
+        exitCode: isRefocus ? refocusExit : 0, stdout: isRefocus ? chain : fleet, stderr: '',
+        isStdoutTruncated: false, isStderrTruncated: false,
+      },
+    }
+  })
+  on('env.get', () => ({ value: pane }))
+  on('ui.log', () => ({ value: undefined }))
+  on('classic.SessionStart', () => ({}))
+  return runs
+}
+
+test('after compaction, a worker is handed its goal chain', async ($, on) => {
+  const runs = refocusEngine(on, '186-roles:p1')
+  const result = await $.classic.SessionStart({ source: 'compact', cwd: '/r/wt/186-roles' })
+  expect(result.additionalContext).toEqual([CHAIN])
+  expect(runs.map(r => r.slice(1))).toEqual([['ls', '--json'], ['refocus']])
+})
+
+test('a session that did not just compact is not refocused', async ($, on) => {
+  const runs = refocusEngine(on, '186-roles:p1')
+  for (const source of ['startup', 'resume', 'clear'] as const) {
+    const result = await $.classic.SessionStart({ source })
+    expect(result.additionalContext).toBeUndefined()
+  }
+  expect(runs).toHaveLength(0)
+})
+
+test('a coordinator is never refocused, and never runs refocus', async ($, on) => {
+  const runs = refocusEngine(on, 'main:p1') // the main checkout's own pane
+  expect((await $.classic.SessionStart({ source: 'compact' })).additionalContext).toBeUndefined()
+  expect(runs.some(r => r.includes('refocus'))).toBe(false)
+})
+
+test('a session outside herdr is never refocused', async ($, on) => {
+  const runs = refocusEngine(on, undefined)
+  expect((await $.classic.SessionStart({ source: 'compact' })).additionalContext).toBeUndefined()
+  expect(runs).toHaveLength(0)
+})
+
+test('nothing to refocus on adds nothing', async ($, on) => {
+  refocusEngine(on, '186-roles:p1', '')
+  expect((await $.classic.SessionStart({ source: 'compact' })).additionalContext).toBeUndefined()
+})
+
+test('a failing refocus adds nothing', async ($, on) => {
+  refocusEngine(on, '186-roles:p1', CHAIN, 2)
+  expect((await $.classic.SessionStart({ source: 'compact' })).additionalContext).toBeUndefined()
+})
+
+test('refocus=false turns it off', { options: { refocus: false } }, async ($, on) => {
+  const runs = refocusEngine(on, '186-roles:p1')
+  expect((await $.classic.SessionStart({ source: 'compact' })).additionalContext).toBeUndefined()
+  expect(runs).toHaveLength(0)
+})

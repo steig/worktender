@@ -36,6 +36,12 @@
       "description": "Each poll, run `worktender pr-feedback`: tell the idle worker on a branch about new reviews and failing checks on its open PR (counts, logins and check names only). One gh call per branch.",
       "default": false
     },
+    "refocus": {
+      "type": "boolean",
+      "title": "Refocus workers after compaction",
+      "description": "In a worker's session, after Claude Code compacts it, add the goal chain from `worktender refocus` (tracking issue, issue and its acceptance criteria) to its context. Two gh calls per compaction.",
+      "default": true
+    },
     "intervalSeconds": {
       "type": "number",
       "title": "Poll interval (seconds)",

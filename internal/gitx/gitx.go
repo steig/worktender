@@ -42,6 +42,17 @@ func RepoRoot(dir string) (string, error) {
 	return Resolve(filepath.Dir(common)), nil
 }
 
+// Toplevel returns the root of the checkout dir sits in — the linked worktree
+// itself when called from one, unlike RepoRoot — resolved for comparison with
+// the paths Worktrees reports.
+func Toplevel(dir string) (string, error) {
+	top, err := run(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("not inside a git checkout: %s", dir)
+	}
+	return Resolve(top), nil
+}
+
 // Resolve normalises a path for comparison: absolute, cleaned, and with every
 // symlink expanded.
 //
