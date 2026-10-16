@@ -172,7 +172,11 @@ names, because a runner's own flags can run anything (`go test -exec`,
   and `cargo clippy`;
 - `test -f|-d|-e <path>` and `grep [-q|-qE|-qF] <pattern> <path>`, where the
   path is relative to the repository root, has no `..`, and is at most 100 of
-  `A-Za-z0-9_./-`, and the pattern is at most 60 of `A-Za-z0-9 _.:/-`;
+  `A-Za-z0-9_./-`, and the pattern is at most 60 of `A-Za-z0-9 _.:/-`. A
+  `grep` of a source file (`.go`, `.ts`, `.js`, `.py`, `.rs` and the like) is
+  dropped: a string in code pins one implementation and proves nothing the
+  tests do not, so the drafter is told to prefer a narrowed test run
+  (`go test -run TestName ./...`) and keep `grep` for docs;
 - `worktender doctor` and `worktender ls`, with no argument.
 
 The expected outcome is one of `exits 0`, `exits 1`, `exits non-zero`,
