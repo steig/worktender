@@ -285,7 +285,7 @@ func TestStartupMakesNoGhCalls(t *testing.T) {
 	startupSession(t, r)
 
 	sentinel := filepath.Join(t.TempDir(), "gh-was-called")
-	herdrtest.FakeGh(t, "touch "+sentinel+"; "+herdrtest.GhPRScript("OPEN"))
+	herdrtest.FakeGh(t, "touch "+sentinel+"; "+herdrtest.GhPRScript(t, "OPEN"))
 	t.Setenv(eventsEnv, "1")
 
 	if err := startupCommand(nil, io.Discard); err != nil {

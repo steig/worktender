@@ -2,6 +2,8 @@ package herdrtest
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -30,7 +32,7 @@ func FakeGhPRState(t *testing.T, state string) {
 func FakeGhPRStates(t *testing.T, states ...string) {
 	t.Helper()
 
-	FakeGh(t, GhPRScript(states...))
+	FakeGh(t, GhPRScript(t, states...))
 }
 
 // FakeGhNoPR fakes the answer for a branch that was never opened as a pull
@@ -53,7 +55,9 @@ func FakeGhUnavailable(t *testing.T) {
 
 // GhPRScript is the shell body the FakeGhPR* helpers install, for the few call
 // sites that need to fake a side effect alongside the answer.
-func GhPRScript(states ...string) string {
+func GhPRScript(t *testing.T, states ...string) string {
+	t.Helper()
+
 	prs := make([]ghPR, len(states))
 	for i, state := range states {
 		prs[i].State = state
@@ -63,5 +67,25 @@ func GhPRScript(states ...string) string {
 	if err != nil {
 		panic("marshal fake gh answer: " + err.Error())
 	}
-	return "echo '" + string(answer) + "'"
+	return CatScript(t, string(answer))
+}
+
+// CatScript is a shell command that prints payload byte-for-byte: it writes
+// payload to a file in the test's temp dir and returns `cat` of that file.
+//
+// A fake's answer must not go through echo. Fakes run under /bin/sh, which on
+// Ubuntu is dash, and dash's echo expands backslash escapes, so the `\n` a
+// JSON string carries for a newline arrives as a raw newline and the answer is
+// no longer JSON. Bash's echo leaves it alone, so the breakage shows only in
+// CI (#211). Nor is printf a fix unless the payload stays out of the format
+// string, and quoting the payload into the script invites the same class of
+// bug for any quote it holds. A file sidesteps the shell entirely.
+func CatScript(t *testing.T, payload string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "payload")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write fake payload: %v", err)
+	}
+	return "cat '" + path + "'"
 }

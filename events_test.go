@@ -284,7 +284,7 @@ func TestEventHandlerMakesNoGhCalls(t *testing.T) {
 	repo, checkout, _ := unadoptedRepo(t)
 
 	sentinel := filepath.Join(t.TempDir(), "gh-was-called")
-	herdrtest.FakeGh(t, "touch "+sentinel+"; "+herdrtest.GhPRScript("OPEN"))
+	herdrtest.FakeGh(t, "touch "+sentinel+"; "+herdrtest.GhPRScript(t, "OPEN"))
 
 	armEvent(t, checkout, "wip", repo.RealRoot, "")
 	t.Setenv("WORKTENDER_EVENTS", "1")

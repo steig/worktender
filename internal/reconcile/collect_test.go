@@ -381,7 +381,7 @@ func TestGhPRLookupPicksTheLatestPullRequest(t *testing.T) {
 		for i, state := range states {
 			rows[i] = fmt.Sprintf(`{"state":%q,"createdAt":%q}`, state, createdAt[state])
 		}
-		herdrtest.FakeGh(t, "echo '["+strings.Join(rows, ",")+"]'")
+		herdrtest.FakeGh(t, herdrtest.CatScript(t, "["+strings.Join(rows, ",")+"]"))
 	}
 
 	wantClosed := func(t *testing.T) {
@@ -427,7 +427,7 @@ func TestGhPRLookupPicksTheLatestPullRequest(t *testing.T) {
 	// fake above answers whatever this file tells it to regardless of argv.
 	t.Run("createdAt is asked for", func(t *testing.T) {
 		argv := filepath.Join(t.TempDir(), "argv")
-		herdrtest.FakeGh(t, `echo "$@" > `+argv+`; echo '[]'`)
+		herdrtest.FakeGh(t, `echo "$@" > `+argv+`; `+herdrtest.CatScript(t, "[]"))
 
 		if _, err := reconcile.GhPRLookup(repo.Root, "fix/reused"); err != nil {
 			t.Fatalf("GhPRLookup: %v", err)
@@ -466,8 +466,8 @@ func TestCollectKeepsReusedBranchClosedUnmerged(t *testing.T) {
 	repo.Git("merge", "--no-ff", "-m", "merge first attempt", "reused")
 	repo.CommitIn(checkout, "second.txt", "never merged anywhere")
 
-	herdrtest.FakeGh(t, `echo '[{"state":"MERGED","createdAt":"2026-01-05T10:00:00Z"},`+
-		`{"state":"CLOSED","createdAt":"2026-03-09T10:00:00Z"}]'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `[{"state":"MERGED","createdAt":"2026-01-05T10:00:00Z"},`+
+		`{"state":"CLOSED","createdAt":"2026-03-09T10:00:00Z"}]`))
 
 	collector := collectFixture(t, repo,
 		[]map[string]any{worktreeJSON(checkout, "reused", true, "")}, nil, nil, nil)
@@ -500,7 +500,7 @@ func TestCollectKeepsReusedBranchClosedUnmerged(t *testing.T) {
 func TestGhPRLookupAsksAboutEveryState(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	argv := filepath.Join(t.TempDir(), "argv")
-	herdrtest.FakeGh(t, `echo "$@" > `+argv+`; `+herdrtest.GhPRScript())
+	herdrtest.FakeGh(t, `echo "$@" > `+argv+`; `+herdrtest.GhPRScript(t))
 
 	if _, err := reconcile.GhPRLookup(repo.Root, "wip"); err != nil {
 		t.Fatalf("GhPRLookup: %v", err)
