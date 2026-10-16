@@ -1,6 +1,6 @@
 {
   "name": "worktender-watch",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Watches the worktender fleet: a status line count, a band when a worker reports done or blocked, and a toast (or, opted in, a turn) when one does.",
   "author": {
     "name": "Tom Steigerwald"
