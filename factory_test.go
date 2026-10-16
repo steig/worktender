@@ -158,6 +158,7 @@ func fakeFactoryGh(t *testing.T, ready []queued) string {
 		write(fmt.Sprintf("snapshot-%d.json", q.number), factorySnapshot(t, q, true))
 	}
 	write("list.json", list)
+	write("closed.json", []any{})
 	write("repo.json", map[string]any{"name": "worktender", "owner": map[string]any{"login": "steig"}})
 	write("perm-steig.json", map[string]any{"permission": "admin"})
 
@@ -165,7 +166,7 @@ func fakeFactoryGh(t *testing.T, ready []queued) string {
 	herdrtest.FakeGh(t, fmt.Sprintf(`D='%[1]s'
 answer() { [ -f "$D/$1" ] || { printf 'gh: HTTP 404\n' >&2; exit 1; }; cat "$D/$1"; }
 case "$1 $2" in
-"issue list") answer list.json ;;
+"issue list") case "$*" in *"--state closed"*) answer closed.json ;; *) answer list.json ;; esac ;;
 "issue view") answer "issue-$3.json" ;;
 "repo view") answer repo.json ;;
 "api graphql")
@@ -206,6 +207,24 @@ func unapprove(t *testing.T, edits string, q queued) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(filepath.Dir(edits), fmt.Sprintf("snapshot-%d.json", q.number)), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// closeInProgress makes gh's list of closed issues labelled
+// factory:in-progress answer with numbers, and only with them.
+func closeInProgress(t *testing.T, edits string, numbers ...int) {
+	t.Helper()
+	list := []map[string]any{}
+	for _, n := range numbers {
+		list = append(list, map[string]any{"number": n, "title": fmt.Sprintf("Closed %d", n),
+			"labels": []map[string]any{{"name": labelFactoryInProgress}}})
+	}
+	raw, err := json.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(edits), "closed.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -478,6 +497,77 @@ func TestFactoryJSONIsOneDocumentCarryingEachStart(t *testing.T) {
 	}
 	if err := json.Unmarshal(started.Start, &startDoc); err != nil || startDoc.Branch != "6-six" {
 		t.Errorf("start's document = %s (%v), want one naming 6-six", started.Start, err)
+	}
+}
+
+// A closed issue still labelled in progress has the label taken off, and an
+// open one carrying it — a worker still on it — is left alone. The pass is at
+// the cap, the pass that runs most while workers are out, and clears anyway.
+func TestFactoryClearsInProgressFromClosedIssuesOnly(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	_, edits := factoryFleet(t, repo, []string{"working"}, []queued{
+		{8, "Eight", []string{labelFactoryInProgress}},
+	})
+	closeInProgress(t, edits, 7)
+
+	out := passFactory(t, "--max", "1")
+
+	got := readEdits(t, edits)
+	if len(got) != 1 || !strings.Contains(got[0], "issue edit 7 --remove-label "+labelFactoryInProgress) || strings.Contains(got[0], "--add-label") {
+		t.Errorf("label edits = %q, want only %s removed from closed #7", got, labelFactoryInProgress)
+	}
+	if !strings.Contains(out, "removed "+labelFactoryInProgress+" from closed #7") {
+		t.Errorf("a pass should say what it cleared:\n%s", out)
+	}
+	if strings.Contains(out, "#8") {
+		t.Errorf("an open issue should not be mentioned, let alone touched:\n%s", out)
+	}
+}
+
+// A dry run names the closed issues it would clear, and clears none.
+func TestFactoryDryRunClearsNothing(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	_, edits := factoryFleet(t, repo, nil, nil)
+	closeInProgress(t, edits, 7)
+
+	out := passFactory(t, "--dry-run")
+
+	if got := readEdits(t, edits); got != nil {
+		t.Errorf("a dry run edited labels: %q", got)
+	}
+	if !strings.Contains(out, "would remove "+labelFactoryInProgress+" from closed #7") {
+		t.Errorf("a dry run should name what it would clear:\n%s", out)
+	}
+}
+
+// A failed clear is a warning, not a stall: the queue is still worked, and the
+// pass exits non-zero so the log shows it.
+func TestFactoryFailedClearStillStartsAndExitsNonZero(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+	closeInProgress(t, edits, 7)
+	breakLabelEdits(t, edits)
+
+	var out strings.Builder
+	err := factoryCommand([]string{"--json"}, &out)
+	if exitCode(err) != exitEnvironment {
+		t.Errorf("exit = %d (%v), want %d", exitCode(err), err, exitEnvironment)
+	}
+	if got := createdBranches(server); len(got) != 1 || got[0] != "5-five" {
+		t.Errorf("started %v, want 5-five despite the failed clear", got)
+	}
+	var doc struct {
+		Cleared []struct {
+			Issue   int     `json:"issue"`
+			Removed bool    `json:"removed"`
+			Reason  *string `json:"reason"`
+		} `json:"cleared"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out.String())
+	}
+	if len(doc.Cleared) != 1 || doc.Cleared[0].Issue != 7 || doc.Cleared[0].Removed || doc.Cleared[0].Reason == nil {
+		t.Errorf("cleared = %+v, want #7 not removed, with a reason", doc.Cleared)
 	}
 }
 

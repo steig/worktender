@@ -103,7 +103,7 @@ func factoryCommand(args []string, out io.Writer) error {
 		notes = os.Stderr
 		emit = func(doc *factoryJSON) error { return jsonout.Write(out, doc) }
 	}
-	doc := &factoryJSON{Repository: s.root, Max: *maxWorkers, DryRun: *dryRun, Issues: []factoryIssueJSON{}}
+	doc := &factoryJSON{Repository: s.root, Max: *maxWorkers, DryRun: *dryRun, Issues: []factoryIssueJSON{}, Cleared: []factoryClearedJSON{}}
 	fail := func(err error) error {
 		if wErr := emit(doc.finish(err)); wErr != nil {
 			return wErr
@@ -112,6 +112,16 @@ func factoryCommand(args []string, out io.Writer) error {
 	}
 
 	fmt.Fprintf(notes, "repository: %s\n", s.root)
+
+	// Cleared before the cap is looked at, so a pass at the cap — the pass
+	// that runs most often while workers are out — still tidies the board.
+	// A failure here is reported and the pass goes on: a stale label is
+	// cosmetic, and the queue should not stall behind it.
+	var firstErr error
+	if err := clearClosedInProgress(s.root, *dryRun, notes, doc); err != nil {
+		fmt.Fprintf(notes, "warning: %v\n", err)
+		firstErr = err
+	}
 
 	rows, err := factoryRows(s.client, s.root)
 	if err != nil {
@@ -123,7 +133,7 @@ func factoryCommand(args []string, out io.Writer) error {
 	free := *maxWorkers - doc.Running
 	if free <= 0 {
 		fmt.Fprintln(notes, "at the cap; starting nothing")
-		return emit(doc.finish(nil))
+		return fail(firstErr)
 	}
 
 	ready, err := readyIssues(s.root)
@@ -132,7 +142,7 @@ func factoryCommand(args []string, out io.Writer) error {
 	}
 	if len(ready) == 0 {
 		fmt.Fprintf(notes, "no open issues labelled %s\n", labelFactoryReady)
-		return emit(doc.finish(nil))
+		return fail(firstErr)
 	}
 
 	taken, err := takenBranches(s.root, rows)
@@ -140,7 +150,6 @@ func factoryCommand(args []string, out io.Writer) error {
 		return fail(err)
 	}
 
-	var firstErr error
 	for _, candidate := range ready {
 		if free == 0 {
 			break
@@ -355,6 +364,47 @@ func swapLabel(root string, number int) error {
 	return nil
 }
 
+// clearClosedInProgress takes factory:in-progress off every closed issue that
+// still carries it, and says which. A worker's pull request closes its issue
+// when it merges, and nothing else takes the label off: without this, closed
+// issues read as work in progress and the label stops being a filter for what
+// is.
+//
+// Only closed issues are asked for, so an open one is never touched, and only
+// that label is removed. A dry run lists what it would clear and clears
+// nothing. The first failed edit stops the clearing: gh just failed, and the
+// next edit would go through the same gh.
+func clearClosedInProgress(root string, dryRun bool, notes io.Writer, doc *factoryJSON) error {
+	out, err := factoryGh(root, "issue", "list", "--state", "closed", "--label", labelFactoryInProgress,
+		"--json", "number,title", "--limit", strconv.Itoa(factoryReadyLimit))
+	if err != nil {
+		return fmt.Errorf("list closed issues labelled %s: %w", labelFactoryInProgress, err)
+	}
+	var closed []issue
+	if err := json.Unmarshal(out, &closed); err != nil {
+		return withCode(exitEnvironment, fmt.Errorf("read the closed issues gh listed: %w", err))
+	}
+	slices.SortFunc(closed, func(a, b issue) int { return a.Number - b.Number })
+
+	for _, c := range closed {
+		entry := factoryClearedJSON{Issue: c.Number, Title: c.Title}
+		if dryRun {
+			doc.Cleared = append(doc.Cleared, entry)
+			fmt.Fprintf(notes, "would remove %s from closed #%d: %s\n", labelFactoryInProgress, c.Number, c.Title)
+			continue
+		}
+		if _, err := factoryGh(root, "issue", "edit", strconv.Itoa(c.Number), "--remove-label", labelFactoryInProgress); err != nil {
+			entry.Reason = jsonout.String(err.Error())
+			doc.Cleared = append(doc.Cleared, entry)
+			return fmt.Errorf("remove %s from closed #%d: %w", labelFactoryInProgress, c.Number, err)
+		}
+		entry.Removed = true
+		doc.Cleared = append(doc.Cleared, entry)
+		fmt.Fprintf(notes, "removed %s from closed #%d: %s\n", labelFactoryInProgress, c.Number, c.Title)
+	}
+	return nil
+}
+
 // factoryGh runs gh against the repository's origin, as start's issue lookup
 // does: a worktree's own directory is not always enough for gh to tell which
 // repository it is in.
@@ -445,9 +495,21 @@ type factoryJSON struct {
 	Running int  `json:"running"`
 	DryRun  bool `json:"dry_run"`
 	// Issues is every issue the pass looked at, in the order it looked.
-	Issues   []factoryIssueJSON `json:"issues"`
-	Error    *string            `json:"error"`
-	ExitCode int                `json:"exit_code"`
+	Issues []factoryIssueJSON `json:"issues"`
+	// Cleared is every closed issue the pass found still labelled
+	// factory:in-progress, oldest first.
+	Cleared  []factoryClearedJSON `json:"cleared"`
+	Error    *string              `json:"error"`
+	ExitCode int                  `json:"exit_code"`
+}
+
+type factoryClearedJSON struct {
+	Issue int    `json:"issue"`
+	Title string `json:"title"`
+	// Removed is whether the label came off; false on a dry run, and on a
+	// failed edit, whose error is Reason.
+	Removed bool    `json:"removed"`
+	Reason  *string `json:"reason"`
 }
 
 type factoryIssueJSON struct {
