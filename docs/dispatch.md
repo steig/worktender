@@ -245,6 +245,10 @@ to take end to end; the factory does not second-guess it.
   issue stays labelled `factory:ready`, the pass exits **2**, and the next pass
   skips it because its branch exists. The other order would leave an issue
   labelled in progress with nothing working on it whenever a start failed.
+- **Approval is `start`'s to check**, for a manual start and a queued one alike.
+  When `start` refuses an issue (exit 3), the pass skips it, leaves its label
+  alone, does not count it against the cap, and starts the next one. It still
+  exits 3, so the refusal reaches whoever reads the log.
 - **A failed start** for a reason of the issue's own — a role nobody defined, an
   agent that never took its brief — is reported and the pass moves on to the
   next issue; the pass still exits non-zero. A failure of the machine (exit 2:

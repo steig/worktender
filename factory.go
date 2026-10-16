@@ -179,17 +179,28 @@ func factoryCommand(args []string, out io.Writer) error {
 		entry.Start = startDoc
 		if err != nil {
 			entry.Outcome, entry.Reason = factoryFailed, jsonout.String(err.Error())
+			// start is where an issue's approval is checked — who applied
+			// factory:ready, and whether the issue changed after they did — so
+			// manual starts and this queue cannot disagree about it. A refusal
+			// there is exit 3: the answer is a person's to give. The issue is
+			// skipped, keeps its label and holds no slot, and the pass moves on.
+			// It still exits 3 at the end, so whoever reads the cron log learns
+			// somebody is wanted.
+			verb := "failed to start"
+			if exitCode(err) == exitNeedsHuman {
+				entry.Outcome, verb = factorySkipped, "skipped"
+			}
 			doc.Issues = append(doc.Issues, entry)
-			fmt.Fprintf(notes, "failed to start #%d: %v\n", candidate.Number, err)
+			fmt.Fprintf(notes, "%s #%d: %v\n", verb, candidate.Number, err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("start #%d: %w", candidate.Number, err)
 			}
-			// A failure that belongs to this issue — a role nobody defined, an
-			// agent that never took its brief — leaves the next one startable,
-			// and holding the whole queue behind one bad issue would make the
-			// oldest problem everybody's problem. A failure of the machine
-			// would fail every start after it, each of them maybe leaving a
-			// checkout behind, so the pass stops there.
+			// A failure that belongs to this issue — a refused approval, a role
+			// nobody defined, an agent that never took its brief — leaves the
+			// next one startable, and holding the whole queue behind one bad
+			// issue would make the oldest problem everybody's problem. A failure
+			// of the machine would fail every start after it, each of them maybe
+			// leaving a checkout behind, so the pass stops there.
 			if exitCode(err) == exitEnvironment {
 				break
 			}
@@ -215,6 +226,11 @@ func factoryCommand(args []string, out io.Writer) error {
 	return fail(firstErr)
 }
 
+// factoryStart is the entry point a pass starts an issue through. A variable so
+// the suite can make start refuse one issue without building the whole state
+// start refuses on.
+var factoryStart = startCommand
+
 // runStart runs `start` for one issue, exactly as a person would type it.
 //
 // --repo is always passed: the factory has already resolved the repository,
@@ -224,11 +240,11 @@ func factoryCommand(args []string, out io.Writer) error {
 func runStart(root string, number int, asJSON bool, out io.Writer) (json.RawMessage, error) {
 	args := []string{strconv.Itoa(number), "--repo", root}
 	if !asJSON {
-		return nil, startCommand(args, out)
+		return nil, factoryStart(args, out)
 	}
 
 	var buf bytes.Buffer
-	err := startCommand(append(args, "--json"), &buf)
+	err := factoryStart(append(args, "--json"), &buf)
 	// A start that failed before it had anything to say writes nothing, and
 	// nothing is a null here rather than an invalid document.
 	if raw := bytes.TrimSpace(buf.Bytes()); json.Valid(raw) {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,6 +270,39 @@ func TestFactoryNeverStartsAnIssueTwiceAfterAFailedLabelSwap(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "skipped #5") {
 		t.Errorf("the second pass should say why it left #5 alone:\n%s", out.String())
+	}
+}
+
+// start is where an issue's approval is checked, and a refusal there is exit 3.
+// The pass skips that issue without relabelling it or spending a slot on it,
+// starts the next one, and still exits 3 so the refusal reaches a person.
+func TestFactorySkipsAnIssueStartRefusesAndStartsTheNext(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}, {6, "Six", nil}})
+
+	real := factoryStart
+	factoryStart = func(args []string, out io.Writer) error {
+		if args[0] == "5" {
+			return codef(exitNeedsHuman, "#5 was edited after %s was applied; re-apply it", labelFactoryReady)
+		}
+		return real(args, out)
+	}
+	t.Cleanup(func() { factoryStart = real })
+
+	var out strings.Builder
+	err := factoryCommand([]string{"--max", "1"}, &out)
+	if got := exitCode(err); got != exitNeedsHuman {
+		t.Errorf("exit %d (%v), want exitNeedsHuman so the refusal is seen:\n%s", got, err, out.String())
+	}
+	if got := createdBranches(server); len(got) != 1 || got[0] != "6-six" {
+		t.Errorf("started %v, want only 6-six: a refused issue must not hold the only slot:\n%s", got, out.String())
+	}
+	got := readEdits(t, edits)
+	if len(got) != 1 || !strings.Contains(got[0], "issue edit 6 ") {
+		t.Errorf("label edits = %q, want only #6 relabelled", got)
+	}
+	if !strings.Contains(out.String(), "skipped #5") {
+		t.Errorf("the refusal should be reported as a skip:\n%s", out.String())
 	}
 }
 
