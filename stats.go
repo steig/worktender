@@ -42,8 +42,11 @@ type statsDispatch struct {
 	gates   int
 	gateAts []time.Time
 	inbox   int
-	// feedback is the pr-feedback notices typed at its worker.
-	feedback int
+	// feedback is the pr-feedback notices typed at its worker, and feedbackAts
+	// when each was typed: `lessons propose` needs to know whether a round came
+	// before the worker's last done, which a count cannot say.
+	feedback    int
+	feedbackAts []time.Time
 
 	pr     int
 	facts  *prFacts
@@ -329,6 +332,9 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 		case ledgerFeedback:
 			if d := byBranch[branchKey(e.Repository, e.Branch)]; d != nil && e.Branch != "" {
 				d.feedback++
+				if at, err := time.Parse(time.RFC3339Nano, e.At); err == nil {
+					d.feedbackAts = append(d.feedbackAts, at)
+				}
 			}
 
 		case ledgerGate:

@@ -98,6 +98,14 @@ Every style ends in a pull request, because that is what `gate --require-pr`
 and the rest of worktender check. Work whose result lives outside a repository
 is not a fit for a role.
 
+## Lessons
+
+A role can carry lessons: a sentence or two each, written and approved by you
+after a worker in that role needed a second attempt at a pull request, and
+read by every later worker in the role until it expires. `worktender lessons
+propose` drafts candidates from the dispatch ledger; nothing reaches a worker
+until `worktender lessons approve`. See [Lessons](lessons.md).
+
 ## What a label can reach
 
 **A label chooses among your roles and nothing else.** Whoever can label an

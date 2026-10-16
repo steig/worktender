@@ -51,7 +51,7 @@ func doctorCommand(args []string, out io.Writer) error {
 		herdr.note = clientErr.Error()
 	}
 
-	checks := []check{versionCheck(client), herdr, ghCheck(), eventsCheck(), rolesCheck()}
+	checks := []check{versionCheck(client), herdr, ghCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
 
 	// Nothing below the checks is answerable without herdr, and saying so once
 	// is better than four repetitions of the same cause.
