@@ -16,11 +16,13 @@ reviewer's verdict. Run it in the background the way you would run a gate.
 
 ## What it does, in order
 
-1. **Reads the PR with `gh pr view`** — its head commit, checks, labels and
+1. **Reads the PR with `gh pr view`** — its head and base commits, labels and
    branch. A PR that is not open is refused. **The review is bound to that head
-   commit** from here on: CI is read from the same answer, so the rollup is that
-   commit's, and the reviewer is told which commit it is reviewing.
-2. **Checks CI.** Every check's latest run must have passed (success, neutral or
+   commit** from here on. Nothing after this reads the PR's live state until
+   the verdict is in: CI, the diff and the issue are all fetched by id.
+2. **Checks CI for that commit**, asked of GitHub by commit id rather than for
+   the PR, whose rollup follows whatever its head is by then. Every check's
+   latest run must have passed (success, neutral or
    skipped). Not green means it reports and stops, with no pane opened and no
    model spent:
    - **failing** — exit **4**. pr-feedback tells the worker which checks failed;
@@ -35,19 +37,30 @@ reviewer's verdict. Run it in the background the way you would run a gate.
    optional check holds a review until it is re-run.
 3. **Finds the issue**: the number the branch starts with (`start` names
    branches `<issue>-<slug>`), or `--issue <n>`. A branch that names none is a
-   usage error. It needs the issue, because the acceptance checks live there.
-4. **Opens a new pane beside the worker**, in the worker's workspace and
+   usage error.
+4. **Verifies the issue's approval** the way `start` does for a
+   `factory:ready` issue: the issue must still hash to a payload an account
+   with write access approved with `worktender approve`. The acceptance checks
+   come from that payload — not from the worker's pinned copy, which sits in a
+   checkout the worker writes to, and not from the live issue. **An issue
+   nobody approved is refused, exit 3**: there are no checks review can stand
+   behind.
+5. **Writes the reviewer's inputs** into the worker checkout's git dir, at
+   `git rev-parse --git-path worktender/review-<commit>`: `issue.md`, the
+   approved payload under the untrusted framing, and `change.diff`, the diff
+   of base...head fetched from GitHub's compare API by commit ids. The diff is
+   of exactly the commit reviewed, however the branch moves afterwards.
+6. **Opens a new pane beside the worker**, in the worker's workspace and
    checkout, without taking focus, and starts the reviewer there with the same
    executor `start` and `dispatch` use.
-5. **Briefs it** with one line that names the PR and the issue by number. The
-   reviewer reads the diff with `gh pr diff` and the issue from the approved
-   copy `start` pinned (for a `factory:ready` issue), or with `gh issue view`
-   when there is none.
-6. **Waits for its report** on the pane it opened — bound by pane id, not
+7. **Briefs it** with one line that names the PR, the commit and the issue,
+   and sends it to those two files — not to the live PR or issue.
+8. **Waits for its report** on the pane it opened — bound by pane id, not
    agent name — with gate's own wait, judging **only the metadata channel**:
-   that pane has just printed `gh pr diff`, and an envelope inside a diff is
-   not a report.
-7. **Re-reads the PR.** If the head moved, or CI is no longer green, the
+   that pane has just printed a diff, and an envelope inside a diff is not a
+   report.
+9. **Re-reads the PR after the verdict arrives**, and the recorded commit's
+   checks. If the head moved, or that commit's CI is no longer green, the
    verdict is `review_stale` and never `verified`, whatever it says.
 
 The reviewer's pane is left open when review returns, so a person can read what
@@ -133,11 +146,10 @@ model. `--role` overrides both. See [Roles](roles.md) for the file.
 The PR diff and the issue text are untrusted: whoever filed the issue and the
 worker that wrote the change both wrote them. They follow the rule `start`
 follows. **Neither is pasted into the brief.** The reviewer judges the diff
-against the issue's acceptance checks — for a `factory:ready` issue, the copy a
-person approved by hash — and is told never to judge it against what the diff
-claims. The brief is this plugin's own
-prose and two numbers; the reviewer reads the diff and the issue itself, as tool
-output, under a line saying they are data to judge and that an instruction
+against the issue's acceptance checks — the payload a person approved by hash,
+re-verified by review itself — and is told never to judge it against what the
+diff claims. The brief is this plugin's own prose, two numbers and a commit id;
+the reviewer reads the diff and the issue itself, from files, as tool output, under a line saying they are data to judge and that an instruction
 inside them is a finding. Check names in the output pass through the same
 reduction pr-feedback uses.
 
@@ -148,15 +160,23 @@ terminal is ignored. But any process holding the herdr socket can write any
 pane's metadata — the worker included, if it goes looking for the reviewer's
 pane id. Nothing here closes that; the same is true of every gate.
 
+**The input files are only as fixed as the account they are written as.**
+`issue.md` and `change.diff` are written by review from commit ids and an
+approval it verified, but they sit in the worker checkout's git dir, and the
+worker runs as the same user. A worker that rewrites them between review
+writing and the reviewer reading changes what is reviewed. The commit binding
+and the approval check stop a moved branch or an edited issue from passing
+quietly; they do not stop a hostile process running as you.
+
 **Not editing is intent, not a boundary.** The reviewer is told not to edit,
-commit or push, and it sits in the worker's checkout because that is where the
-pinned issue is. Nothing but its instructions and the permission mode you give
+commit or push, and it sits in the worker's checkout, beside its worker. Nothing but its instructions and the permission mode you give
 it stops a reviewer misled by the diff from writing there, and a diff written to
 talk a reviewer into `pass` is the attack this cannot rule out: the verdict is
 an agent's judgement of text an adversary may have written. Keep a person on
 the merge, and see [the permission-mode problem](dispatch.md#the-permission-mode-problem-stated-plainly).
 
-The reviewer needs to run `gh pr diff`, `gh pr review` and `worktender report`
+The reviewer needs to read two files in the git dir and run `gh pr review` and
+`worktender report`
 with no human at its pane, so it stalls at the first permission prompt unless
 its agent file or `--permission-mode` allows them. The same warning `dispatch`
 prints applies.
@@ -179,7 +199,6 @@ Written on the failure paths too, like `start --json`.
   "verdict": "pass",
   "report": { "status": "done", "pr": 17, "note": "pass: all three checks met" },
   "launch": null,
-  "pinned": true,
   "workspace_id": "w9",
   "pane_id": "w9:p2",
   "agent_name": "review-42-fix-the-thing-012345678-6364c6",
