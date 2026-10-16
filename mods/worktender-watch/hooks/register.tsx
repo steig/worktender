@@ -11,7 +11,7 @@ const summary = atom({ plugin: 'worktender-watch', key: 'summary' } as const, nu
 
 const BAND_LINES = 3
 
-type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; prFeedback: boolean; cwd?: string }
+type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; prFeedback: boolean; refocus: boolean; cwd?: string }
 
 type Look = { counts: Summary; now: Signal[] } | 'worker' | null
 
@@ -78,6 +78,27 @@ async function poll($: EngineInterface, cfg: Config): Promise<Look> {
   }
 }
 
+// The goal chain for the worker standing in cwd, as `worktender refocus`
+// prints it, or null: not a worker, nothing to refocus on, or no answer.
+//
+// Worker first, by the same test that keeps the watch quiet in one (its herdr
+// pane in a linked worktree), so a coordinator never pays for the gh calls and
+// never has a chain for someone else's issue put in its context. refocus is
+// silent outside an issue worktree by itself; this is the other half.
+async function refocus($: EngineInterface, cfg: Config, cwd: string): Promise<string | null> {
+  const self = await $.env.get('HERDR_PANE_ID')
+  if (!self) return null
+  const ls = await $.process.run([cfg.bin, 'ls', '--json'], { cwd, timeoutMs: 20_000 })
+  const doc = ls.exitCode === 0 ? parse(ls.stdout) : null
+  if (!doc || !isWorker(doc, self)) return null
+  const run = await $.process.run([cfg.bin, 'refocus'], { cwd, timeoutMs: 30_000 })
+  if (run.exitCode !== 0) {
+    $.ui.log(`worktender-watch: refocus exited ${run.exitCode}`, { to: 'debug' })
+    return null
+  }
+  const text = run.stdout.trim()
+  return text === '' ? null : text
+}
 
 export const register: Register = (on, options) => {
   const cfg: Config = {
@@ -85,6 +106,7 @@ export const register: Register = (on, options) => {
     wake: options.wake === 'turn' ? 'turn' : 'toast',
     all: options.scope === 'all',
     prFeedback: options.prFeedback === true || options.prFeedback === 'true',
+    refocus: options.refocus !== false && options.refocus !== 'false',
   }
   const everyMs = Math.max(5, Number(options.intervalSeconds) || 30) * 1000
 
@@ -97,6 +119,31 @@ export const register: Register = (on, options) => {
     void poll($, cfg)
     $.clock.every(everyMs, () => void poll($, cfg))
     return started
+  })
+
+  // Refocus: once Claude Code has compacted a worker's conversation, its brief
+  // is a summary's worth of what it was, and the worker drifts toward whatever
+  // is in front of it. SessionStart with source "compact" is the hook that
+  // fires after compaction and can hand the model context (PreCompact cannot:
+  // its result carries no additionalContext), so the chain arrives with the
+  // first turn after it. worktender reads the chain live from GitHub.
+  //
+  // On by default, unlike wake=turn and prFeedback: it starts no turn, types
+  // into no pane, and runs only in a worker and only after a compaction, so
+  // its cost is two gh calls and a few lines of context, rarely. What it puts
+  // in context is issue text the worker was already told to read, which
+  // refocus quotes bounded and framed as untrusted.
+  on('classic.SessionStart', async ($, e, next) => {
+    const started = await next(e)
+    if (e.source !== 'compact' || !cfg.refocus) return started
+    try {
+      const chain = await refocus($, cfg, e.cwd)
+      if (!chain) return started
+      return { ...started, additionalContext: [...(started.additionalContext ?? []), chain] }
+    } catch (err) {
+      $.ui.log(`worktender-watch: refocus: ${String(err)}`, { to: 'debug' })
+      return started
+    }
   })
 
   on('command.run', { command: 'wt' }, async ($, e) => {
