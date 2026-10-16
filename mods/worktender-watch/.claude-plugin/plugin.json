@@ -39,7 +39,7 @@
     "refocus": {
       "type": "boolean",
       "title": "Refocus workers after compaction",
-      "description": "In a worker's session, after Claude Code compacts it, add the goal chain from `worktender refocus` (tracking issue, issue and its acceptance criteria) to its context. Two gh calls per compaction.",
+      "description": "In a worker's session, after Claude Code compacts it, add the goal chain from `worktender refocus` (tracking issue, issue and its acceptance criteria) to its context. Two gh calls per compaction. Also, where the worker's role sets a refocus interval, on the prompts `worktender refocus --if-due` says are due.",
       "default": true
     },
     "intervalSeconds": {
