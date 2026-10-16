@@ -105,10 +105,12 @@ func startCommand(args []string, out io.Writer) error {
 		return err
 	}
 
-	// An issue cleared for an agent has to be approved by someone who could
-	// clear it, unedited since, and say what done means in checks a machine can
-	// run; one that is not is refused here, before anything is created. Every
-	// other issue is read and briefed exactly as it always was.
+	// An issue cleared for an agent must still hash to a payload someone with
+	// write access approved with `worktender approve`; one that does not is
+	// refused here, before anything is created. Every other issue is read and
+	// briefed exactly as it always was. The branch is still named from the
+	// metadata read above: a slug reduced to [a-z0-9-] is not content anyone
+	// has to approve.
 	var approved *approvedIssue
 	if issue.hasLabel(labelFactoryReady) {
 		a, err := factoryApproval(s.root, number)
@@ -119,9 +121,6 @@ func startCommand(args []string, out io.Writer) error {
 			return err
 		}
 		approved = &a
-		// The branch is named from the title that was approved, not from the
-		// read a moment before it.
-		issue.Title = a.Title
 	}
 
 	// The role is settled before the worktree exists: an agent nobody defined

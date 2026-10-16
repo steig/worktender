@@ -19,34 +19,21 @@ import (
 //	- [ ] `test -f docs/acceptance.md` exits 0
 //	- [ ] `worktender version` prints 0.14.0
 //
-// THE GRAMMAR IS AN ALLOW-LIST, AND IT IS STRICT ON PURPOSE. A person approves
-// an issue as GitHub renders it; the agent runs the commands from the raw
-// markdown. Anything in a check that the rendered page does not show — a
-// comment, a tag, an entity, a zero-width or bidi rune — would be a command
-// nobody approved. An earlier version tried to reduce the raw body to what the
-// page shows, and every rule it added met a renderer behaviour it had not
-// modelled. So instead the section admits only text that renders as itself:
+// THE GRAMMAR IS A PARSER, NOT A SECURITY BOUNDARY. What makes the commands
+// safe to hand an agent is that a person approved them byte for byte with
+// `worktender approve` (see approval.go). The grammar exists so that "the
+// commands" is well defined — one parse, the same for the approver, start and
+// a gate — and it is strict so that nothing ambiguous gets that far:
 //
 //   - The heading is exactly `## Acceptance`, at the start of a line, outside a
-//     code fence. Nothing before it contains `<`: an HTML comment or a
-//     <details> opened earlier and never closed would fold the section away
-//     while every line in it still parsed.
-//   - Every non-blank line until the next heading is `- [ ] ` or `- [x] `, the
-//     command in single backticks, one space, and the expected outcome.
-//   - Command and outcome are printable ASCII, 0x20 to 0x7E — no tab, no rune
-//     outside it. Neither holds a backtick, so the command's span cannot end
-//     early and the outcome cannot hold a second span that reads as a command;
-//     the line holds no `<`, `>` or `&`, so no tag, comment or entity can form.
+//     code fence. It runs to the next heading.
+//   - Every non-blank line in it is `- [ ] ` or `- [x] `, the command in single
+//     backticks, one space, and the expected outcome.
+//   - Command and outcome are printable ASCII, 0x20 to 0x7E: no tab, no rune
+//     outside it. Neither holds a backtick, so where the command ends is never
+//     in doubt and the outcome cannot hold a second span that reads as one.
 //   - Any other line refuses the whole issue, by line number. A check skipped
 //     is a check nobody runs.
-//
-// Every character such a line can hold is drawn on the page literally, so what
-// the approver read is byte for byte what will run. The cost is that a command
-// cannot use `&&`, `>` or `<`; two checks, or a script in the repository, do
-// the same job visibly.
-//
-// Only the checks are held to this. The rest of the body is prose the worker is
-// told is untrusted data, exactly as for any issue without the label.
 //
 // The outcome is recorded, not interpreted. Deciding what "exits 0" or
 // "prints X" obliges a re-runner to check is the gate's, a separate step.
@@ -83,8 +70,8 @@ var (
 	headingLine = regexp.MustCompile(`^ {0,3}#{1,6}(?:[ \t]|$)`)
 
 	// checkLine is one check. The character classes are the whole grammar:
-	// printable ASCII less the backtick, <, > and &, in both halves.
-	checkLine = regexp.MustCompile("^- \\[[ x]\\] `([\\x20-\\x25\\x27-\\x3b=\\x3f-\\x5f\\x61-\\x7e]+)` ([\\x20-\\x25\\x27-\\x3b=\\x3f-\\x5f\\x61-\\x7e]+)$")
+	// printable ASCII less the backtick, in both halves.
+	checkLine = regexp.MustCompile("^- \\[[ x]\\] `([\\x20-\\x5f\\x61-\\x7e]+)` ([\\x20-\\x5f\\x61-\\x7e]+)$")
 
 	// fenceLine opens or closes a fenced code block, which can hold a line that
 	// looks like the heading and is not one.
@@ -100,7 +87,7 @@ const acceptanceHeading = "## Acceptance"
 // is either a copy-paste slip or a disagreement, and both want a person.
 func parseAcceptance(body string) acceptanceSection {
 	var got acceptanceSection
-	inSection, inFence, seenAngle := false, false, false
+	inSection, inFence := false, false
 
 	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	for i, line := range lines {
@@ -117,8 +104,8 @@ func parseAcceptance(body string) acceptanceSection {
 				m := checkLine.FindStringSubmatch(line)
 				if m == nil || strings.TrimSpace(m[1]) == "" || strings.TrimSpace(m[2]) == "" {
 					got.Malformed = append(got.Malformed, acceptanceProblem{n,
-						"is not a check: want - [ ] `command` expected outcome, in printable ASCII, " +
-							"with no backtick in the command and no <, > or & anywhere"})
+						"is not a check: want - [ ] `command` expected outcome, in printable ASCII " +
+							"with no other backtick"})
 					continue
 				}
 				got.Checks = append(got.Checks, acceptanceCheck{Command: strings.TrimSpace(m[1]), Expect: strings.TrimSpace(m[2])})
@@ -126,12 +113,6 @@ func parseAcceptance(body string) acceptanceSection {
 			continue
 		}
 
-		// Counted before the fence test, not after it: a < inside what this
-		// reader takes for a fence is still a < to a renderer that disagrees
-		// about where the fence is, and the two need not agree.
-		if strings.Contains(line, "<") {
-			seenAngle = true
-		}
 		if fenceLine.MatchString(line) {
 			inFence = !inFence
 			continue
@@ -143,11 +124,6 @@ func parseAcceptance(body string) acceptanceSection {
 			if got.Found {
 				got.Malformed = append(got.Malformed, acceptanceProblem{n, "is a second Acceptance heading; an issue gets one"})
 				continue
-			}
-			if seenAngle {
-				got.Malformed = append(got.Malformed, acceptanceProblem{n,
-					"is the Acceptance heading with a < somewhere above it, which could open HTML that hides the section; " +
-						"put the section first, or keep < out of what precedes it"})
 			}
 			got.Found, inSection = true, true
 		}

