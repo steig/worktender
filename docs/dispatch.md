@@ -206,6 +206,56 @@ the same fields, fetches no snapshot, writes no file, and types the same brief.
 The worker's report is a claim, not proof. Re-running the checks at the gate,
 so that it does not take the report's word, is a separate step.
 
+## Pulling issues from a queue
+
+`worktender factory` takes the human out of picking each issue. One pass looks
+at the repository's open issues labelled **`factory:ready`**, and while fewer
+than `--max` workers (default 2) are busy, starts the oldest with `start` and
+moves its label to **`factory:in-progress`**. Then it exits. It is not a daemon;
+run it from a loop or from cron.
+
+```sh
+# See what a pass would do, without starting anything.
+worktender factory --repo ~/code/thing --dry-run
+
+# A loop. One loop cannot overlap with itself, which is the simplest way to
+# never run two passes at once.
+while true; do worktender factory --repo ~/code/thing --max 2; sleep 300; done
+
+# Or cron, with flock(1) so a slow pass is skipped rather than doubled.
+*/5 * * * * flock -n /tmp/worktender-factory.lock /path/to/worktender factory --repo /home/you/code/thing
+```
+
+Both labels must exist in the repository before the first pass — `gh label
+create factory:ready` and `gh label create factory:in-progress`. Putting
+`factory:ready` on an issue is the decision that it is clear enough for an agent
+to take end to end; the factory does not second-guess it.
+
+- **Busy means `working` or `blocked`.** A worker that opened its pull request
+  and went `idle` or `done` is waiting on a reviewer, and counting it would stall
+  the queue until somebody pruned. `blocked` counts, because it is waiting on a
+  person, and that person is who the cap is for. herdr has to be running, even
+  for `--dry-run`: only herdr can say what an agent is doing.
+- **Oldest first,** by issue number.
+- **Never twice.** An issue is skipped when any local or remote branch, or any
+  checkout herdr knows, is named for its number the way `start` names branches
+  (`42` or `42-…`), or when it already carries `factory:in-progress`. Matching
+  on the number rather than the whole name means an edited title still matches.
+- **Start, then relabel.** If the relabel fails after a successful start, the
+  issue stays labelled `factory:ready`, the pass exits **2**, and the next pass
+  skips it because its branch exists. The other order would leave an issue
+  labelled in progress with nothing working on it whenever a start failed.
+- **A failed start** for a reason of the issue's own — a role nobody defined, an
+  agent that never took its brief — is reported and the pass moves on to the
+  next issue; the pass still exits non-zero. A failure of the machine (exit 2:
+  herdr or gh unreachable) stops the pass.
+- **Two passes at once can race** onto the same issue; nothing locks between
+  them. Run one loop, or one cron line under `flock`.
+
+```sh
+worktender factory [--max <n>] [--repo <path>] [--dry-run] [--json]
+```
+
 ## A durable, global inbox for agent-to-agent messages
 
 `report` and `gate` are a live handshake between one worker and the coordinator

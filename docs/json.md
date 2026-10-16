@@ -14,9 +14,10 @@ knowing up front:
   with. **These write their document on the failure paths too**, because the
   exit code alone cannot say *which* of five workers a `--any` gate was about,
   and that is the whole answer. Everything they would have printed for a human
-  goes to stderr instead.
+  goes to stderr instead. `factory`, which starts issues through `start`, behaves
+  the same way.
 
-Each of the four also carries **`exit_code`**: the code the process is about to
+Each of these also carries **`exit_code`**: the code the process is about to
 leave with. It is redundant with `$?` and deliberately so — a document read off
 a pipe is routinely separated from its exit status, and the two disagreeing is
 then a visible bug rather than a silent one.
@@ -647,6 +648,49 @@ $ worktender start 42 --repo . --json
   `pane_id` until the worktree exists, `agent_name` until an agent started. On a
   failure they say how far it got — and a `branch` and `workspace_id` with a null
   `agent_name` is a checkout the caller now owns and must decide about.
+
+## `factory --json`
+
+```sh
+$ worktender factory --repo . --json
+{
+  "repository": "/Users/you/code/thing",
+  "max": 2,
+  "running": 1,
+  "dry_run": false,
+  "issues": [
+    {
+      "issue": 41,
+      "title": "Fix the other thing",
+      "outcome": "skipped",
+      "reason": "41-fix-the-other-thing already exists, so a worker was started on it before",
+      "label_swapped": false,
+      "start": null
+    },
+    {
+      "issue": 42,
+      "title": "Fix the thing",
+      "outcome": "started",
+      "reason": null,
+      "label_swapped": true,
+      "start": { "issue": 42, "branch": "42-fix-the-thing", "…": "…" }
+    }
+  ],
+  "error": null,
+  "exit_code": 0
+}
+```
+
+- **`running`** is the busy workers — `working` or `blocked` — counted before
+  the pass started anything: the number `max` was measured against.
+- **`issues`** is every issue the pass looked at, in the order it looked. Issues
+  further down the queue than the free slots reached are not listed.
+- **`outcome`** is `started`, `would_start` (under `--dry-run`), `skipped` or
+  `failed`. **`reason`** says why for the last two, and on a `started` issue
+  with `label_swapped` false, why the relabel failed.
+- **`start`** is `start --json`'s own document for that issue, carried whole
+  rather than written beside this one, so stdout stays one document. Null when
+  start did not run.
 
 ## `dispatch --json`
 
