@@ -54,7 +54,8 @@ reviewer's verdict. Run it in the background the way you would run a gate.
    its shell in the **main checkout**, not the worker's: claude loads project
    settings, hooks, `CLAUDE.md` and agent files from where it starts, and the
    worker's checkout is the worker's to rewrite. The reviewer starts with the
-   same executor `start` and `dispatch` use, and `--add-dir` for its inputs.
+   same executor `start` and `dispatch` use, **able only to read and report**
+   (see [What the reviewer can do](#what-the-reviewer-can-do)).
 7. **Briefs it** with one line that names the PR, the commit, the issue and the
    inputs directory, and sends it to those two files — not to the live PR or
    issue.
@@ -73,8 +74,8 @@ colliding with the first.
 
 ## The verdict
 
-The reviewer posts **one PR review** with `gh pr review --comment`, one line per
-acceptance check, then reports like any worker:
+The reviewer reports like any worker, with its verdict as the first word of
+its note:
 
 ```sh
 worktender report --status done --pr 17 --note "pass: all three checks met"
@@ -109,8 +110,14 @@ the worker's.
 
 ## Findings go to the worker, not to you
 
-There is no second feedback path. The reviewer's PR review is a review like any
-other, and [`pr-feedback`](watch.md#routing-pr-feedback-to-workers) already
+**Review, not the reviewer, posts one PR review**, with your gh, once the
+verdict is in and the commit and CI have been re-checked. Nothing is posted for
+a stale verdict, a blocked reviewer or one that never answered. The review is
+fixed text — PR, commit, issue, outcome, evidence — and the reviewer's note last,
+as an indented code block under a line saying it is untrusted, with backticks
+and `@` defused so it renders as text and pings nobody.
+
+There is no second feedback path. That review is a review like any other, and [`pr-feedback`](watch.md#routing-pr-feedback-to-workers) already
 counts reviews and tells the worker on that branch to read them. So with the
 watch mod's `prFeedback` on, a failed review reaches the worker on its next
 look; without it, run `worktender pr-feedback` yourself. Then review again once
@@ -118,8 +125,9 @@ the worker pushes.
 
 It is a **comment** review because GitHub will not let an account approve or
 request changes on its own pull request, and workers open PRs with your gh
-login. The reviewer's login is the same, so pr-feedback names the review as
-yours.
+login. Review posts it with that same login, so pr-feedback names the review
+as yours. If posting fails, review exits **2** and the document still carries
+the outcome.
 
 ## `risk:high`
 
@@ -173,17 +181,39 @@ and could still find and rewrite that directory, or the main checkout. Keeping
 reviewer inputs out of the worktree stops the ordinary path — a worker editing
 its own checkout — not a determined one.
 
-**Not editing is intent, not a boundary.** The reviewer is told not to edit,
-commit or push. Nothing but its instructions and the permission mode you give it
-stops a reviewer misled by the diff from writing where it can, and a diff written to
-talk a reviewer into `pass` is the attack this cannot rule out: the verdict is
-an agent's judgement of text an adversary may have written. Keep a person on
-the merge, and see [the permission-mode problem](dispatch.md#the-permission-mode-problem-stated-plainly).
+**A diff written to talk the reviewer into `pass` is the attack this cannot
+rule out.** The verdict is an agent's judgement of text an adversary may have
+written. What the launch below limits is the blast radius — a misled reviewer
+can say the wrong word, not act — and a person stays on the merge.
 
-The reviewer needs to read two files in its extra directory and run `gh pr
-review` and `worktender report` with no human at its pane, so it stalls at the first permission prompt unless
-its agent file or `--permission-mode` allows them. The same warning `dispatch`
-prints applies.
+## What the reviewer can do
+
+Its prompt is not what holds it; its launch is. Checked against Claude Code
+2.1.300's `--help`, the reviewer starts with:
+
+```
+--restricted --strict-mcp-config
+--tools Read,Grep,Glob,Bash
+--allowedTools Read,Grep,Glob,Bash(<this binary> report:*)
+--disallowedTools Edit,Write,NotebookEdit,WebFetch,WebSearch
+--permission-mode dontAsk
+--add-dir <inputs>
+```
+
+`--restricted` drops the command-running tools and WebFetch unless `--tools`
+names them, ignores user, project and local settings files (so no hooks and no
+permission rules from any checkout), confines the file tools to the working
+directories, and refuses `bypassPermissions`. Bash is in `--tools` only so the
+one allowed command, `worktender report`, can run; `dontAsk` denies the rest
+instead of waiting on a prompt nobody will answer. **No gh, no git, no other
+shell, no editing, no network.** `review` takes no `--permission-mode`, so
+nothing loosens this.
+
+Not yet verified against a live session: that `dontAsk` denies rather than
+prompts in every case, and that the `Bash(... report:*)` rule cannot be
+widened by a compound command. Claude Code's own matching is the boundary
+there. The reviewer can read the main checkout (its working directory) as well
+as its inputs; there is no checkout of the reviewed commit itself.
 
 ## `review --json`
 
@@ -209,6 +239,7 @@ Written on the failure paths too, like `start --json`.
   "pane_id": "w9:p2",
   "agent_name": "review-42-fix-the-thing-012345678-6364c6",
   "briefed": true,
+  "posted": true,
   "staffing": [ { "status": "done", "kind": "staff", "…": "…" } ],
   "error": null,
   "exit_code": 0
@@ -224,6 +255,7 @@ Written on the failure paths too, like `start --json`.
 - **`approved`** is whether the issue judged against was an approved payload.
   False caps the evidence at `reported`.
 - **`inputs`** is the directory the reviewer was handed.
+- **`posted`** is whether review posted its PR review.
 - **`head`** is the commit the review is bound to.
 - **`report.note`** is the reviewer's own words and stays untrusted data.
 - **`agent_name`** is what to `gate` on if you want to wait for the reviewer

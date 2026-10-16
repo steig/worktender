@@ -82,14 +82,14 @@ func TestReviewBriefFramesTheDiffAndIssueAsUntrusted(t *testing.T) {
 		"extra directory 17-0123456789ab-123", "issue.md", "change.diff",
 		"not the live PR or issue",
 		"UNTRUSTED DATA", "do NOT edit files, commit or push",
-		"gh pr review 17 --comment",
+		"review posts your verdict on the PR",
 		"report --status done --pr 17", `"pass: `, `"fail: `,
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the brief must say %q; got %q", want, line)
 		}
 	}
-	for _, live := range []string{"gh pr diff", "gh issue view"} {
+	for _, live := range []string{"gh pr diff", "gh issue view", "gh pr review"} {
 		if strings.Contains(line, live) {
 			t.Errorf("the brief must not send the reviewer to %q, which moves; got %q", live, line)
 		}
@@ -232,6 +232,7 @@ step() {
 }
 case "$1 $2" in
   "pr view") step pr ;;
+  "pr review") cp "$6" "$FAKE_GH_DIR/posted" ;;
   "issue view") answer meta.json ;;
   "repo view") answer repo.json ;;
   "api graphql") case "$*" in *statusCheckRollup*) step ci ;; *) answer snapshot.json ;; esac ;;
@@ -431,7 +432,10 @@ func TestReviewWantsAnIssueItCanJudgeAgainst(t *testing.T) {
 }
 
 func TestReviewRejectsMalformedInvocations(t *testing.T) {
-	for _, args := range [][]string{nil, {"17", "18"}, {"17", "--timeout", "0"}, {"17", "--issue", "-1"}} {
+	for _, args := range [][]string{nil, {"17", "18"}, {"17", "--timeout", "0"}, {"17", "--issue", "-1"},
+		// The reviewer's permissions are review's to set, so there is no flag
+		// that could loosen them.
+		{"17", "--permission-mode", "bypassPermissions"}} {
 		if err := reviewCommand(args, io.Discard); exitCode(err) != exitUsage {
 			t.Errorf("review %q: %v, want a usage error", args, err)
 		}
@@ -699,5 +703,100 @@ func TestReviewInputsLiveOutsideEveryWorktree(t *testing.T) {
 	args := agentStartArgs(t, server)
 	if i := slices.Index(args, "--add-dir"); i < 0 || i+1 >= len(args) || args[i+1] != dir {
 		t.Errorf("want the reviewer started with --add-dir %s; got %q", dir, args)
+	}
+}
+
+// The reviewer reads a diff its subject wrote, so it is started able only to
+// read and to report: no gh, no general shell, no editing, no network, and
+// never bypassPermissions.
+func TestReviewerIsLaunchedAbleOnlyToReadAndReport(t *testing.T) {
+	server, _, _ := fakeReview(t, greenPR)
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
+
+	if err := reviewCommand([]string{"17"}, io.Discard); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	args := agentStartArgs(t, server)
+
+	value := func(flag string) string {
+		i := slices.Index(args, flag)
+		if i < 0 || i+1 >= len(args) {
+			t.Fatalf("the reviewer was started without %s: %q", flag, args)
+		}
+		return args[i+1]
+	}
+	if !slices.Contains(args, "--restricted") || !slices.Contains(args, "--strict-mcp-config") {
+		t.Errorf("want --restricted and --strict-mcp-config; got %q", args)
+	}
+	if got := value("--tools"); got != "Read,Grep,Glob,Bash" {
+		t.Errorf("--tools = %q", got)
+	}
+	if got, want := value("--allowedTools"), "Read,Grep,Glob,Bash("+selfPath()+" report:*)"; got != want {
+		t.Errorf("--allowedTools = %q, want %q", got, want)
+	}
+	if got := value("--permission-mode"); got != "dontAsk" {
+		t.Errorf("--permission-mode = %q, want dontAsk", got)
+	}
+	for _, tool := range []string{"Edit", "Write", "WebFetch"} {
+		if !strings.Contains(value("--disallowedTools"), tool) {
+			t.Errorf("--disallowedTools should name %s; got %q", tool, value("--disallowedTools"))
+		}
+	}
+	joined := strings.Join(args, " ")
+	for _, never := range []string{"bypassPermissions", "acceptEdits", "dangerously", "Bash(gh", "Bash(*", "Bash(git"} {
+		if strings.Contains(joined, never) {
+			t.Errorf("the reviewer's launch must not carry %q: %q", never, args)
+		}
+	}
+}
+
+// Review posts the PR review itself, with the user's gh, after the verdict
+// arrived and the commit was re-read — and says the note is untrusted.
+func TestReviewPostsTheReviewOnlyAfterTheCommitIsReChecked(t *testing.T) {
+	_, _, gh := fakeReview(t, greenPR)
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "fail: check 2 untested @someone `rm -rf`"}, nil)
+
+	var out strings.Builder
+	err := reviewCommand([]string{"17", "--json"}, &out)
+	if code := exitCode(err); code != exitNoAnswer {
+		t.Fatalf("exit %d (%v), want %d", code, err, exitNoAnswer)
+	}
+	if !reviewDoc(t, out.String()).Posted {
+		t.Error("the document should say the review was posted")
+	}
+
+	calls := strings.Split(gh.read("calls"), "\n")
+	views, posted := 0, -1
+	for i, c := range calls {
+		if strings.HasPrefix(c, "pr view") {
+			views++
+		}
+		if strings.HasPrefix(c, "pr review 17 --comment --body-file") {
+			if views < 2 {
+				t.Errorf("the review was posted before the PR was re-read (%d view(s) so far)", views)
+			}
+			posted = i
+		}
+	}
+	if posted < 0 {
+		t.Fatalf("review posted no PR review; calls:\n%s", gh.read("calls"))
+	}
+
+	body := gh.read("posted")
+	for _, want := range []string{"#17", headA[:12], "issue #42", reviewOutcomeFailed, "UNTRUSTED", "    fail: check 2 untested (at)someone 'rm -rf'"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the posted review should carry %q; got:\n%s", want, body)
+		}
+	}
+}
+
+// A stale verdict is about code that is no longer the PR, so nothing is posted.
+func TestReviewPostsNothingForAStaleVerdict(t *testing.T) {
+	_, _, gh := fakeReview(t, greenPR, prAt(headB, "SUCCESS"))
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
+
+	_ = reviewCommand([]string{"17"}, io.Discard)
+	if strings.Contains(gh.read("calls"), "pr review") {
+		t.Errorf("a stale verdict must not be posted; calls:\n%s", gh.read("calls"))
 	}
 }
