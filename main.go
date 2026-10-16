@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "start", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "refocus", "inbox", "stats", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "approve", "start", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "refocus", "inbox", "stats", "on-event", "startup"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -65,6 +65,10 @@ func run(args []string, out io.Writer) error {
 		// Moves this plugin's own install forward; touches no repository of the
 		// user's.
 		return updateCommand(args[1:], out)
+	case "approve":
+		// A person clearing an issue for an agent: shows the exact payload,
+		// then comments its hash and labels it, with their own gh auth.
+		return approveCommand(args[1:], out)
 	case "start":
 		// Issue number in, agent working on it out. Creates a worktree, so it
 		// must be told which repository.

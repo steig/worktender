@@ -97,6 +97,115 @@ role: ux (label role:ux) · agent: ux-designer (user) · brief: design · dirs: 
 The configuration, how a role is chosen, the brief styles and what a label can
 and cannot reach are in [Roles](roles.md).
 
+## Acceptance checks
+
+A gate can only check what an issue states mechanically. An issue whose "done"
+is prose gets verified against whoever is reading it. So an issue **cleared for
+an agent** — one carrying the `factory:ready` label — states its done as checks
+a machine can run, in a section of its own:
+
+```markdown
+## Acceptance
+
+- [ ] `go test ./...` exits 0
+- [ ] `test -f docs/acceptance.md` exits 0
+- [ ] `worktender version` prints 0.14.0
+```
+
+The grammar is strict:
+
+- The heading is exactly `## Acceptance`, at the start of a line and outside a
+  code fence. The section runs to the next heading.
+- Each non-blank line in it is `- [ ] ` or `- [x] `, then the **command** in
+  single backticks, then one space, then the **outcome** it should give: an
+  exit code, output, a file present.
+- The command and the outcome are printable ASCII (0x20 to 0x7E), and neither
+  contains a backtick.
+- Any other line refuses the whole issue, by line number. A skipped check is a
+  check nobody runs. A second `## Acceptance` heading is refused too.
+
+The grammar makes "the commands" well defined, so the approver, `start`, and
+later a gate all read the same list. It is not what makes running them safe.
+Approval is.
+
+The [`factory-ready` issue template](https://github.com/steig/worktender/blob/main/.github/ISSUE_TEMPLATE/factory-ready.md)
+lays this out.
+
+### Approving the raw bytes, not the page
+
+An agent runs these commands, so a person with write access has to approve them
+first. They approve what the agent will receive, not what GitHub draws:
+
+```sh
+worktender approve 42 --repo .
+```
+
+`approve` fetches the issue once and prints the **canonical payload**: the
+title, the parsed acceptance commands, and the body. All of it is raw and none
+of it is rendered. Every body line is prefixed `| `, and every invisible or
+control character (zero-width, bidi, carriage return, tab) is printed as a
+visible `\u{...}` by `safetext`. Then it prints the payload's sha256 and asks
+for `yes`, unless you pass `--yes`. On yes, it posts the comment
+`worktender-approved: sha256=<hex>` and applies `factory:ready`, both with your
+own `gh` auth.
+
+**Read the output.** The approver approves whatever they were shown. That is
+the residual risk, and nothing downstream can catch what they missed.
+
+Approval is over the raw bytes because approving the rendered page kept
+failing. Two earlier drafts tried to make the raw markdown match what GitHub
+draws: one stripped comments and refused tags, the other used an ASCII-only
+grammar. Each one lost to a renderer behaviour it had not modelled. Link text
+hides its URL, emphasis eats characters, and HTML folds content away. A hash
+over the raw payload has no renderer in it. Any edit, visible on the page or
+not, changes the hash.
+
+**`start` checks the approval.** For a `factory:ready` issue, `start` reads the
+title, body and last 100 comments in one GraphQL response. It rebuilds the
+same payload and proceeds only when a comment from an account with write or
+admin access carries exactly that hash. Access is checked with
+`gh api repos/{owner}/{repo}/collaborators/{login}/permission`. Any of these is
+refused with **3**, before any worktree exists:
+
+- the issue was edited after approval;
+- nobody approved it;
+- the only matching comment is from an account without write access, or a
+  deleted account;
+- the Acceptance section does not parse.
+
+```
+worktender: issue #42 changed since approval, or was not approved: no comment from an account with write access carries sha256 …; run `worktender approve 42`
+```
+
+The code is 3 rather than 1 because no change to the invocation fixes it. A
+person has to read the payload and approve it, which no retry and no
+coordinator can do for them. If `gh` cannot answer at all, the exit is **2**,
+the same as for an unreadable issue.
+
+**The worker reads the approved payload, not the live issue.** From that same
+single fetch, `start` writes the payload byte for byte to
+`$(git rev-parse --git-path worktender/issue.md)` in the new worktree. That is
+inside the worktree's git dir, so it is never committed and goes away when the
+worktree does. Every line of issue text in it starts with `| `, so nothing an
+issue says can pass for one of the file's own lines, including `end of body`.
+The file says that later edits to the live issue are unapproved. It also tells
+the worker not to run a check that reaches beyond checking the work (network,
+credentials, anything outside the repository) and to report it as blocked
+instead. That sentence is a second line of defence. The approval is the
+control.
+
+**The brief counts the checks. It does not carry them.** A ready issue's brief
+points at the pinned file instead of `gh issue view`, and says how many checks
+`start` parsed. The worker runs them and says in its `done` note which pass,
+for example `acceptance 3/4 pass, #2 fails`. No text from the issue author goes
+into the prompt itself.
+
+An issue **without** the label is read exactly as before. `start` asks `gh` for
+the same fields, fetches no snapshot, writes no file, and types the same brief.
+
+The worker's report is a claim, not proof. Re-running the checks at the gate,
+so that it does not take the report's word, is a separate step.
+
 ## A durable, global inbox for agent-to-agent messages
 
 `report` and `gate` are a live handshake between one worker and the coordinator
