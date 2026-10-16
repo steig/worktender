@@ -336,6 +336,12 @@ create factory:ready` and `gh label create factory:in-progress`.
   agent that never took its brief — is reported and the pass moves on to the
   next issue; the pass still exits non-zero. A failure of the machine (exit 2:
   herdr or gh unreachable) stops the pass.
+- **Closed issues lose `factory:in-progress`.** A worker's merged pull request
+  closes its issue but leaves the label on it. Every pass, at the cap or not,
+  removes `factory:in-progress` from each closed issue still carrying it and
+  says which (`cleared` in `--json`); `--dry-run` only lists them. Open issues
+  and other labels are never touched. A failed removal is a warning: the pass
+  still works the queue, then exits **2**.
 - **Two passes at once can race** onto the same issue; nothing locks between
   them. Run one loop, or one cron line under `flock`.
 

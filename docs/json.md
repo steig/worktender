@@ -704,6 +704,9 @@ $ worktender factory --repo . --json
       "start": { "issue": 42, "branch": "42-fix-the-thing", "…": "…" }
     }
   ],
+  "cleared": [
+    { "issue": 38, "title": "Fix an older thing", "removed": true, "reason": null }
+  ],
   "error": null,
   "exit_code": 0
 }
@@ -720,6 +723,10 @@ $ worktender factory --repo . --json
 - **`start`** is `start --json`'s own document for that issue, carried whole
   rather than written beside this one, so stdout stays one document. Null when
   start did not run.
+- **`cleared`** is every closed issue the pass found still labelled
+  `factory:in-progress`, oldest first. **`removed`** is whether the label came
+  off: false under `--dry-run`, and on a failed edit, whose error is
+  **`reason`**.
 
 ## `dispatch --json`
 
