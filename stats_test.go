@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -203,5 +204,80 @@ func TestStatsCountsFeedbackRoundsAsAttempts(t *testing.T) {
 	}
 	if len(doc.Dispatches) != 1 || doc.Dispatches[0].Rounds != 2 || doc.Dispatches[0].Attempts != 3 {
 		t.Fatalf("got %+v, want one dispatch with 2 feedback rounds and 3 attempts", doc.Dispatches)
+	}
+}
+
+// statsRoleOf runs stats both ways and returns the role each one shows for
+// issue: the ROLE column of its table row, and its dispatch's role in --json.
+func statsRoleOf(t *testing.T, issue int) (table string, doc *string) {
+	t.Helper()
+
+	var out strings.Builder
+	if err := statsCommand(nil, &out); err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	prefix := "#" + strconv.Itoa(issue) + " "
+	for _, line := range strings.Split(out.String(), "\n") {
+		if fields := strings.Fields(line); strings.HasPrefix(line, prefix) && len(fields) > 2 {
+			table = fields[2]
+		}
+	}
+	if table == "" {
+		t.Fatalf("stats has no row for #%d:\n%s", issue, out.String())
+	}
+
+	out.Reset()
+	if err := statsCommand([]string{"--json"}, &out); err != nil {
+		t.Fatalf("stats --json: %v", err)
+	}
+	var parsed statsJSON
+	if err := json.Unmarshal([]byte(out.String()), &parsed); err != nil {
+		t.Fatalf("not a document: %v\n%s", err, out.String())
+	}
+	for _, d := range parsed.Dispatches {
+		if d.Issue == issue {
+			return table, d.Role
+		}
+	}
+	t.Fatalf("stats --json has no dispatch for #%d:\n%s", issue, out.String())
+	return "", nil
+}
+
+// The role start chose reaches stats from the ledger it wrote, not from a
+// fixture of what that ledger ought to hold.
+func TestStatsShowsTheRoleStartChose(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	fakeStart(t, repo, "w9", "w9:p1", "working")
+	writeRoles(t, uxRoles, "ux-designer")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","labels":[]}`))
+
+	if err := startCommand([]string{"42", "--role", "ux"}, new(strings.Builder)); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	table, doc := statsRoleOf(t, 42)
+	if table != "ux" {
+		t.Errorf("table role = %q, want ux", table)
+	}
+	if doc == nil || *doc != "ux" {
+		t.Errorf("--json role = %v, want ux", doc)
+	}
+}
+
+// factory runs start with no --role, so the role is the one the issue's labels
+// pick, and the ledger records it the same as a start typed by hand.
+func TestStatsShowsTheRoleOfAFactoryStart(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	factoryFleet(t, repo, nil, []queued{{5, "Five", []string{"role:ux"}}})
+	writeRoles(t, uxRoles, "ux-designer")
+
+	passFactory(t)
+
+	table, doc := statsRoleOf(t, 5)
+	if table != "ux" {
+		t.Errorf("table role = %q, want ux", table)
+	}
+	if doc == nil || *doc != "ux" {
+		t.Errorf("--json role = %v, want ux", doc)
 	}
 }
