@@ -11,7 +11,7 @@ const summary = atom({ plugin: 'worktender-watch', key: 'summary' } as const, nu
 
 const BAND_LINES = 3
 
-type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; cwd?: string }
+type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; prFeedback: boolean; cwd?: string }
 
 type Look = { counts: Summary; now: Signal[] } | 'worker' | null
 
@@ -59,6 +59,16 @@ async function poll($: EngineInterface, cfg: Config): Promise<Look> {
       $.ui.toast(news.length === 1 ? `worktender: ${describe(news[0])}` : `worktender: ${news.length} workers need a look`)
       if (cfg.wake === 'turn') await $.prompt.submit({ text: wakePrompt(news) })
     }
+
+    // Opted in: one pass routing each open PR's failing checks and new
+    // reviews to the idle worker on its branch. worktender keeps what it has
+    // already said, so this is safe to run every poll. It is one gh call per
+    // branch, so it runs last and its failure costs only itself. It covers
+    // the session's repository, whatever `scope` says.
+    if (cfg.prFeedback) {
+      const fb = await $.process.run([cfg.bin, 'pr-feedback'], { cwd: cfg.cwd, timeoutMs: 120_000 })
+      if (fb.exitCode !== 0) $.ui.log(`worktender-watch: pr-feedback exited ${fb.exitCode}`, { to: 'debug' })
+    }
     return { counts, now }
   } catch (err) {
     $.ui.log(`worktender-watch: ${String(err)}`, { to: 'debug' })
@@ -74,6 +84,7 @@ export const register: Register = (on, options) => {
     bin: String(options.worktender || 'worktender'),
     wake: options.wake === 'turn' ? 'turn' : 'toast',
     all: options.scope === 'all',
+    prFeedback: options.prFeedback === true || options.prFeedback === 'true',
   }
   const everyMs = Math.max(5, Number(options.intervalSeconds) || 30) * 1000
 

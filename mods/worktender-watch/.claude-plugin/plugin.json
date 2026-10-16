@@ -30,6 +30,12 @@
         "all"
       ]
     },
+    "prFeedback": {
+      "type": "boolean",
+      "title": "Route PR feedback to workers",
+      "description": "Each poll, run `worktender pr-feedback`: tell the idle worker on a branch about new reviews and failing checks on its open PR (counts, logins and check names only). One gh call per branch.",
+      "default": false
+    },
     "intervalSeconds": {
       "type": "number",
       "title": "Poll interval (seconds)",
