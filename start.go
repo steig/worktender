@@ -296,7 +296,13 @@ var briefSubmitRetry = 2 * time.Second
 // no snapshot source contains, so the read matched nothing and `echoed` came
 // back false — the state in which the submit works. `start` was reading a
 // readiness signal backwards and paying five seconds for it.
+//
+// Nothing is typed until the pane has been read and found not to be one of
+// Claude Code's gatekeeper screens — see refuseGatekeeper.
 func deliverBrief(client *herdrapi.Client, pane, text string) error {
+	if err := refuseGatekeeper(client, pane); err != nil {
+		return err
+	}
 	if err := client.PaneSendText(pane, text); err != nil {
 		return fmt.Errorf("type the brief into %s: %w", pane, err)
 	}
@@ -339,6 +345,12 @@ func submitBrief(client *herdrapi.Client, pane string) error {
 
 	for {
 		if !time.Now().Before(nextPress) {
+			// Read again before every press, not only before the typing: the
+			// dialog can be drawn after agent.start returns, and this Enter is
+			// the key that would accept it.
+			if err := refuseGatekeeper(client, pane); err != nil {
+				return err
+			}
 			if err := client.PaneSendKeys(pane, []string{briefSubmitKey}); err != nil {
 				return fmt.Errorf("submit the brief in %s: %w", pane, err)
 			}
