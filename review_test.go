@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/herdrtest"
 	"github.com/steig/worktender/internal/roles"
@@ -73,11 +75,11 @@ func TestCIStatusIsGreenOnlyWhenEveryLatestCheckPassed(t *testing.T) {
 // diff and the issue read by the reviewer as tool output, framed as data —
 // from files written for one commit, never the live PR or issue.
 func TestReviewBriefFramesTheDiffAndIssueAsUntrusted(t *testing.T) {
-	line := reviewBrief(17, 42, headA, false)
+	line := reviewBrief(17, 42, headA, "17-0123456789ab-123", false)
 
 	for _, want := range []string{
 		"pull request #17", "issue #42", "commit " + headA[:12],
-		"git rev-parse --git-path " + reviewDirPath(headA), "issue.md", "change.diff",
+		"extra directory 17-0123456789ab-123", "issue.md", "change.diff",
 		"not the live PR or issue",
 		"UNTRUSTED DATA", "do NOT edit files, commit or push",
 		"gh pr review 17 --comment",
@@ -101,7 +103,7 @@ func TestReviewBriefFramesTheDiffAndIssueAsUntrusted(t *testing.T) {
 }
 
 func TestReviewBriefAsksForMoreOnRiskHigh(t *testing.T) {
-	line := reviewBrief(17, 42, headA, true)
+	line := reviewBrief(17, 42, headA, "17-0123456789ab-1234567890", true)
 
 	if !strings.Contains(line, "risk:high") || !strings.Contains(line, "adversarially") {
 		t.Errorf("a risk:high review must say so; got %q", line)
@@ -346,8 +348,11 @@ func TestReviewIsVerifiedWhenCIIsGreenAndTheReviewerPasses(t *testing.T) {
 	}
 
 	splits := calledWith(server, "pane.split")
-	if len(splits) != 1 || splits[0].Params["workspace_id"] != "w9" || splits[0].Params["cwd"] != checkout {
-		t.Fatalf("want one pane split in the worker's workspace and checkout; got %+v", splits)
+	// In the worker's workspace, but started in the main checkout: claude
+	// loads settings, hooks and agents from where it starts.
+	root := gitx.Resolve(filepath.Dir(filepath.Dir(filepath.Dir(checkout))))
+	if len(splits) != 1 || splits[0].Params["workspace_id"] != "w9" || splits[0].Params["cwd"] != root {
+		t.Fatalf("want one pane split in the worker's workspace, started in %s; got %+v", root, splits)
 	}
 	if splits[0].Params["focus"] != false {
 		t.Error("the reviewer's pane must not take the user's keyboard")
@@ -360,7 +365,7 @@ func TestReviewIsVerifiedWhenCIIsGreenAndTheReviewerPasses(t *testing.T) {
 		t.Errorf("the reviewer's agent name %q should say what it is", name)
 	}
 	typed := calledWith(server, "pane.send_text")
-	if len(typed) != 1 || !strings.Contains(typed[0].Params["text"].(string), reviewDirPath(headA)) {
+	if len(typed) != 1 || !strings.Contains(typed[0].Params["text"].(string), "17-"+headA[:12]) {
 		t.Fatalf("want the review brief typed into the new pane; got %+v", typed)
 	}
 
@@ -555,12 +560,14 @@ func TestAwaitReviewerHearsOnlyTheReviewersPaneMetadata(t *testing.T) {
 // is fetched by commit id into a file before the reviewer starts, the checks
 // are asked for by commit id, and the issue is the approved payload.
 func TestReviewHandsTheReviewerFilesForTheRecordedCommit(t *testing.T) {
-	_, checkout, gh := fakeReview(t, greenPR)
+	_, _, gh := fakeReview(t, greenPR)
 	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
 
-	if err := reviewCommand([]string{"17"}, io.Discard); err != nil {
+	var stdout strings.Builder
+	if err := reviewCommand([]string{"17", "--json"}, &stdout); err != nil {
 		t.Fatalf("review: %v", err)
 	}
+	doc := reviewDoc(t, stdout.String())
 
 	calls := gh.read("calls")
 	if strings.Contains(calls, "pr diff") {
@@ -573,11 +580,10 @@ func TestReviewHandsTheReviewerFilesForTheRecordedCommit(t *testing.T) {
 		t.Errorf("want the checks asked for the recorded commit before and after the review, got %d; calls:\n%s", n, calls)
 	}
 
-	out, err := exec.Command("git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-path", reviewDirPath(headA)).Output()
-	if err != nil {
-		t.Fatal(err)
+	if doc.Inputs == nil || !doc.Approved {
+		t.Fatalf("want the inputs directory and an approved issue; got %+v", doc)
 	}
-	dir := strings.TrimSpace(string(out))
+	dir := *doc.Inputs
 	diff, err := os.ReadFile(filepath.Join(dir, "change.diff"))
 	if err != nil || string(diff) != reviewDiff {
 		t.Errorf("change.diff = %q, %v; want the compare answer byte for byte", diff, err)
@@ -607,16 +613,91 @@ func TestReviewAsksForTheRecordedCommitsChecksEvenAfterTheHeadMoved(t *testing.T
 	}
 }
 
-// An issue nobody approved has no acceptance checks review can stand behind.
-func TestReviewRefusesAnIssueNobodyApproved(t *testing.T) {
-	server, _, gh := fakeReview(t, greenPR)
+// An issue nobody approved is still reviewed, against its live text framed
+// as untrusted, and a pass is reported for a person — never verified.
+func TestReviewOfAnUnapprovedIssueIsNeverVerified(t *testing.T) {
+	_, _, gh := fakeReview(t, greenPR)
 	gh.write("snapshot.json", snapshotJSON(t, readyTitle, readyBody))
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
 
-	err := reviewCommand([]string{"17"}, io.Discard)
+	var out strings.Builder
+	err := reviewCommand([]string{"17", "--json"}, &out)
 	if code := exitCode(err); code != exitNeedsHuman {
 		t.Fatalf("exit %d (%v), want %d", code, err, exitNeedsHuman)
 	}
-	if n := len(calledWith(server, "pane.split")); n != 0 {
-		t.Errorf("no reviewer should start; pane.split called %d time(s)", n)
+	doc := reviewDoc(t, out.String())
+	if doc.Outcome != reviewOutcomeUnapproved || doc.Approved || doc.Evidence == nil || *doc.Evidence != gateEvidenceReported {
+		t.Errorf("outcome %q approved %v evidence %v, want %q, false, reported", doc.Outcome, doc.Approved, doc.Evidence, reviewOutcomeUnapproved)
+	}
+	issue, err := os.ReadFile(filepath.Join(*doc.Inputs, "issue.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"NOT approved", "UNTRUSTED DATA", "| It is broken."} {
+		if !strings.Contains(string(issue), want) {
+			t.Errorf("issue.md must say %q; got:\n%s", want, issue)
+		}
+	}
+}
+
+// start's pinned copy lives in the worker's git dir, which the worker writes
+// to. Rewriting it changes nothing the reviewer is handed.
+func TestReviewIgnoresAWorkerTamperedPinnedIssue(t *testing.T) {
+	_, checkout, _ := fakeReview(t, greenPR)
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
+
+	raw, err := exec.Command("git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-path", pinnedIssuePath).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	herdrtest.WriteFile(t, strings.TrimSpace(string(raw)), "acceptance checks (1):\n  1. command: true\n     expect:  TAMPERED\n")
+
+	var out strings.Builder
+	if err := reviewCommand([]string{"17", "--json"}, &out); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	issue, err := os.ReadFile(filepath.Join(*reviewDoc(t, out.String()).Inputs, "issue.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _, _, _ := approvalPayload(42, readyTitle, readyBody)
+	if strings.Contains(string(issue), "TAMPERED") || !strings.Contains(string(issue), payload) {
+		t.Errorf("the reviewer must see the approved payload, not the worker's file; got:\n%s", issue)
+	}
+}
+
+// The inputs live in a fresh 0700 directory under the plugin state dir,
+// outside every worktree, and the reviewer reaches them by --add-dir.
+func TestReviewInputsLiveOutsideEveryWorktree(t *testing.T) {
+	server, checkout, _ := fakeReview(t, greenPR)
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
+
+	var out strings.Builder
+	if err := reviewCommand([]string{"17", "--json"}, &out); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	dir := *reviewDoc(t, out.String()).Inputs
+
+	root := gitx.Resolve(filepath.Dir(filepath.Dir(filepath.Dir(checkout))))
+	for _, tree := range []string{root, checkout, gitx.Resolve(checkout)} {
+		if rel, err := filepath.Rel(tree, dir); err == nil && !strings.HasPrefix(rel, "..") {
+			t.Errorf("inputs %s are inside %s", dir, tree)
+		}
+	}
+	if !strings.HasPrefix(dir, os.Getenv("HERDR_PLUGIN_STATE_DIR")) {
+		t.Errorf("inputs %s are not under the plugin state dir", dir)
+	}
+	if info, err := os.Stat(dir); err != nil {
+		t.Error(err)
+	} else if info.Mode().Perm() != 0o700 {
+		t.Errorf("inputs dir mode = %v; want 0700", info.Mode().Perm())
+	}
+	if !strings.HasPrefix(filepath.Base(dir), "17-"+headA[:12]+"-") {
+		t.Errorf("inputs dir %s should be named for the PR and commit", dir)
+	}
+
+	args := agentStartArgs(t, server)
+	if i := slices.Index(args, "--add-dir"); i < 0 || i+1 >= len(args) || args[i+1] != dir {
+		t.Errorf("want the reviewer started with --add-dir %s; got %q", dir, args)
 	}
 }

@@ -38,23 +38,26 @@ reviewer's verdict. Run it in the background the way you would run a gate.
 3. **Finds the issue**: the number the branch starts with (`start` names
    branches `<issue>-<slug>`), or `--issue <n>`. A branch that names none is a
    usage error.
-4. **Verifies the issue's approval** the way `start` does for a
-   `factory:ready` issue: the issue must still hash to a payload an account
-   with write access approved with `worktender approve`. The acceptance checks
-   come from that payload — not from the worker's pinned copy, which sits in a
-   checkout the worker writes to, and not from the live issue. **An issue
-   nobody approved is refused, exit 3**: there are no checks review can stand
-   behind.
-5. **Writes the reviewer's inputs** into the worker checkout's git dir, at
-   `git rev-parse --git-path worktender/review-<commit>`: `issue.md`, the
-   approved payload under the untrusted framing, and `change.diff`, the diff
-   of base...head fetched from GitHub's compare API by commit ids. The diff is
-   of exactly the commit reviewed, however the branch moves afterwards.
-6. **Opens a new pane beside the worker**, in the worker's workspace and
-   checkout, without taking focus, and starts the reviewer there with the same
-   executor `start` and `dispatch` use.
-7. **Briefs it** with one line that names the PR, the commit and the issue,
-   and sends it to those two files — not to the live PR or issue.
+4. **Fetches the issue from GitHub and checks its approval** the way `start`
+   does for a `factory:ready` issue: if it still hashes to a payload an
+   account with write access approved with `worktender approve`, that payload
+   is what the reviewer judges against. Otherwise — never approved, edited
+   since, or checks that do not parse — the reviewer gets the live text, framed
+   the same way, and **a pass can then never be `verified`**. Never from the
+   worker's pinned `issue.md`: that sits in a checkout the worker writes to.
+5. **Writes the reviewer's inputs outside every worktree**: a fresh `0700`
+   directory under the plugin state directory, `review/<pr>-<commit>-<random>`,
+   holding `issue.md` and `change.diff` — the diff of base...head fetched from
+   GitHub's compare API by commit ids, so it is of exactly the commit reviewed
+   however the branch moves afterwards.
+6. **Opens a new pane in the worker's workspace**, without taking focus, with
+   its shell in the **main checkout**, not the worker's: claude loads project
+   settings, hooks, `CLAUDE.md` and agent files from where it starts, and the
+   worker's checkout is the worker's to rewrite. The reviewer starts with the
+   same executor `start` and `dispatch` use, and `--add-dir` for its inputs.
+7. **Briefs it** with one line that names the PR, the commit, the issue and the
+   inputs directory, and sends it to those two files — not to the live PR or
+   issue.
 8. **Waits for its report** on the pane it opened — bound by pane id, not
    agent name — with gate's own wait, judging **only the metadata channel**:
    that pane has just printed a diff, and an envelope inside a diff is not a
@@ -86,6 +89,7 @@ worktender report --status done --pr 17 --note "fail: check 2 has no test"
 | `blocked` | green | `review_blocked` | — | **3** |
 | nothing in time, or its pane died | green | `review_no_answer` | — | **4** |
 | anything, but the head moved or CI went red meanwhile | — | `review_stale` | `reported` | **4** |
+| `pass`, against an issue nobody approved | green | `review_passed_unapproved` | `reported` | **3** |
 
 A `done` whose `--pr` is not the PR under review is unreadable too.
 
@@ -160,24 +164,24 @@ terminal is ignored. But any process holding the herdr socket can write any
 pane's metadata — the worker included, if it goes looking for the reviewer's
 pane id. Nothing here closes that; the same is true of every gate.
 
-**The input files are only as fixed as the account they are written as.**
-`issue.md` and `change.diff` are written by review from commit ids and an
-approval it verified, but they sit in the worker checkout's git dir, and the
-worker runs as the same user. A worker that rewrites them between review
-writing and the reviewer reading changes what is reviewed. The commit binding
-and the approval check stop a moved branch or an edited issue from passing
-quietly; they do not stop a hostile process running as you.
+**Nothing review hands the reviewer is read from a worktree.** The issue comes
+from GitHub, re-verified against its approval; the diff comes from GitHub by
+commit ids; both are written to a fresh `0700` directory under the plugin state
+directory; and the reviewer starts in the main checkout. What that does not do
+is defend against a hostile process running as you: the worker is the same uid,
+and could still find and rewrite that directory, or the main checkout. Keeping
+reviewer inputs out of the worktree stops the ordinary path — a worker editing
+its own checkout — not a determined one.
 
 **Not editing is intent, not a boundary.** The reviewer is told not to edit,
-commit or push, and it sits in the worker's checkout, beside its worker. Nothing but its instructions and the permission mode you give
-it stops a reviewer misled by the diff from writing there, and a diff written to
+commit or push. Nothing but its instructions and the permission mode you give it
+stops a reviewer misled by the diff from writing where it can, and a diff written to
 talk a reviewer into `pass` is the attack this cannot rule out: the verdict is
 an agent's judgement of text an adversary may have written. Keep a person on
 the merge, and see [the permission-mode problem](dispatch.md#the-permission-mode-problem-stated-plainly).
 
-The reviewer needs to read two files in the git dir and run `gh pr review` and
-`worktender report`
-with no human at its pane, so it stalls at the first permission prompt unless
+The reviewer needs to read two files in its extra directory and run `gh pr
+review` and `worktender report` with no human at its pane, so it stalls at the first permission prompt unless
 its agent file or `--permission-mode` allows them. The same warning `dispatch`
 prints applies.
 
@@ -193,6 +197,8 @@ Written on the failure paths too, like `start --json`.
   "head": "0123456789abcdef0123456789abcdef01234567",
   "issue": 42,
   "risk_high": false,
+  "approved": true,
+  "inputs": "/home/me/.local/state/herdr/plugins/steig.worktender/review/17-0123456789ab-2614553904",
   "outcome": "verified",
   "evidence": "verified",
   "ci": { "state": "green", "passing": 4, "failing": [], "pending": [] },
@@ -214,7 +220,10 @@ Written on the failure paths too, like `start --json`.
   was reached — CI stopped it, the wait ended, or something failed.
 - **`outcome`** is one of `verified`, `ci_failing`, `ci_pending`, `ci_missing`,
   `review_failed`, `review_unreadable`, `review_blocked`, `review_no_answer`,
-  `review_stale` or `error`.
+  `review_stale`, `review_passed_unapproved` or `error`.
+- **`approved`** is whether the issue judged against was an approved payload.
+  False caps the evidence at `reported`.
+- **`inputs`** is the directory the reviewer was handed.
 - **`head`** is the commit the review is bound to.
 - **`report.note`** is the reviewer's own words and stays untrusted data.
 - **`agent_name`** is what to `gate` on if you want to wait for the reviewer
