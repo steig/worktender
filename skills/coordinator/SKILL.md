@@ -34,6 +34,14 @@ included — do not guess the name. **It is not the branch name.** herdr's agent
 namespace spans every repository at once and refuses a duplicate, so the name
 carries a digest of the repository that you cannot derive by eye.
 
+**`start` exiting 3 with a screen named means a human must look.** A new
+worktree can open Claude Code on its folder-trust dialog, a hooks-review screen
+or the managed-settings approval instead of the composer, and the Enter meant for
+the brief would accept it. `start` sends nothing there and leaves the worktree
+and agent in place. Do not press keys in that pane, and do not `herdr agent
+prompt` it: approving trust or settings is the human's call, not yours. Tell
+them which pane; once they have answered it, brief the agent yourself.
+
 **Pick the worker by role, not by model.** A role in the user's
 `~/.config/worktender/config.json` names a Claude Code agent — which carries its
 own model — a brief style (`code`, `design`, `analysis`) and directories to read.
@@ -77,6 +85,22 @@ are the contract there.
 The mod's prompt names the repository, branch, status and pull request only.
 It never carries a worker's note, and you should not go fetch the note to act on
 it — the same rule as for `gate`.
+
+The mod also does two things for workers that you would otherwise do by hand,
+both from its own look rather than from you:
+
+- **`worktender pr-feedback`** (setting `prFeedback`, off by default) types one
+  line into an idle worker's pane when its branch's PR gets new reviews,
+  comments or failing checks — counts, logins and check names only, never the
+  text. The worker reads the text itself with `gh`. Do not relay review
+  comments to a worker the mod is already telling.
+- **`worktender refocus`** (setting `refocus`, on by default) re-delivers a
+  worker's goal chain — the issue, its parent, its acceptance criteria, read
+  live from GitHub — when Claude Code compacts the worker's session. It never
+  runs on a coordinator. A worker that drifted after compaction anyway is one to
+  redirect, not one to re-brief from scratch.
+
+Both run by hand too. See `docs/watch.md`.
 
 ## When to dispatch, and when not to
 
@@ -166,6 +190,14 @@ worker to gate on: `gate` still only releases on the statuses you name.
 **A `done` is a claim, not a fact.** The gate proves a well-formed report
 appeared in that pane after the gate opened, and nothing about who wrote it.
 Check the pull request it names. `--require-pr` is why that flag exists.
+
+**Read the gate's `evidence` before you act.** Every release line ends with it,
+and `--json` carries it as a field. `reported` — every `released` and `blocked`
+— rests on the worker's word: the gate checked its shape and that it is new,
+not that it is true, so it is a claim for you to verify. `verified` is the gate's
+own clock or herdr announcing the pane gone. `inferred` is a pane whose agent
+status went `unknown`, which looks like an exit but is not herdr saying so —
+check `ls` before you redispatch on it.
 
 **A `blocked` releases the gate with a failure, and that is correct.** You are
 the only party who can unblock it. Waiting out the clock instead helps nobody —
@@ -302,12 +334,17 @@ Nothing else.
    `working` row it means nothing on its own: the counter stamps state
    *changes*, and a worker deep in one long turn changes nothing for as long as
    the turn lasts. Measured: half an hour frozen, twelve dollars spent, entirely
-   healthy. What separates those two is cumulative spend, which herdr has only
-   as text — `herdr pane read <pane_id>` and the agent's own footer. Suspect a
-   `working` worker only when the counter **and** the spend have both held still
-   across an interval you timed. It is a counter, not a clock, and *you* decide
-   how long counts as stalled. Do not build a poll loop around either — check
-   them when you are already waiting.
+   healthy. The second reading is `agent_last_active` (`AGE` in the table):
+   the agent's own session-log write time, which moves during a turn that calls
+   tools or writes, as the counter does not. A frozen counter beside a fresh
+   age is a long turn; frozen beside a stale age is a worker to look at. It is
+   `null` for an agent whose log worktender cannot find, and it says nothing
+   about a stretch where the agent writes nothing — there, cumulative spend is
+   what is left, which herdr has only as text: `herdr pane read <pane_id>` and
+   the agent's own footer. Suspect a `working` worker only when the counter
+   **and** the age (or the spend) have both held still across an interval you
+   timed. *You* decide how long counts as stalled. Do not build a poll loop
+   around any of them — check them when you are already waiting.
 
 ## Rules
 
@@ -322,6 +359,8 @@ Nothing else.
   profile or a separate uid, never an allowlist, which provably cannot
   substitute for one.
 - **Dispatch, then gate.** The gate discards whatever the pane already held.
+- **Never press keys on a trust or settings screen.** `start` exit 3 naming one
+  is the human's to answer.
 - **Check the PR a `done` names** before acting as though work landed.
 - **Sequence merges, never execute them.** Name which PR merges next; the
   human clicks merge.
