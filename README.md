@@ -33,11 +33,11 @@ worktree.**
 
 ```sh
 $ worktender ls
-   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   DIR
-*  main                      w21        w21:p1  idle     1057  worktender
-   feat/1-reconcile-execute  w22        w22:p1  working  1055  1-reconcile-execute
-   fix/257-erasure-comments  w1K        w1K:p1  idle     812   257-erasure-comments
-   worktree/brave-valley     -          -       -        -     brave-valley-66f8
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   AGE  DIR
+*  main                      w21        w21:p1  idle     1057  6m   worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  8s   1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   3h   257-erasure-comments
+   worktree/brave-valley     -          -       -        -     -    brave-valley-66f8
 ```
 
 `*` marks the repository's main checkout; `-` means herdr has nothing
@@ -77,15 +77,27 @@ column answers; frozen beside `working` is a long turn or a wedge and the column
 cannot say which. See
 [Machine-readable output](docs/json.md#where-it-goes-blind-a-frozen-counter-on-a-working-row).
 
+`AGE` is the clock herdr does not have, borrowed from the agent. herdr does name
+each agent's session, and Claude and Codex each append to a log file named after
+it as they work, so the log's last write is the agent's last activity:
+`~/.claude/projects/*/<session>.jsonl` for Claude,
+`~/.codex/sessions/YYYY/MM/DD/rollout-*-<session>.jsonl` for Codex. Only the
+file's modification time is read, never its contents. Any other agent, or a log
+that is not where it should be, leaves the cell `-` rather than a guess. The
+third worktree above has been idle for three hours, which is the reading the
+counter needed two listings for. It also moves during a turn that writes to its
+log, which the counter does not — so frozen beside `working` with a fresh age is
+a long turn, not a wedge.
+
 Add `--pr` for a pull request column, which is off by default because it costs
 one `gh` call per branch:
 
 ```sh
 $ worktender ls --pr
-   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   PR      DIR
-*  main                      w21        w21:p1  idle     1057  -       worktender
-   feat/1-reconcile-execute  w22        w22:p1  working  1055  OPEN    1-reconcile-execute
-   fix/257-erasure-comments  w1K        w1K:p1  idle     812   MERGED  257-erasure-comments
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   AGE  PR      DIR
+*  main                      w21        w21:p1  idle     1057  6m   -       worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  8s   OPEN    1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   3h   MERGED  257-erasure-comments
 ```
 
 `--reports` adds a column carrying what the worker in each pane last told its
@@ -94,10 +106,10 @@ attached it and a gate reads it:
 
 ```sh
 $ worktender ls --reports
-   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   REPORT   DIR
-*  main                      w21        w21:p1  idle     1057  -        worktender
-   feat/1-reconcile-execute  w22        w22:p1  working  1055  planned  1-reconcile-execute
-   fix/257-erasure-comments  w1K        w1K:p1  idle     812   done #4  257-erasure-comments
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   AGE  REPORT   DIR
+*  main                      w21        w21:p1  idle     1057  6m   -        worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  8s   planned  1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   3h   done #4  257-erasure-comments
 ```
 
 This is what a coordinator asks after its context is cleared, instead of having
@@ -115,12 +127,12 @@ that cannot be read says so on its own line and costs the others nothing:
 ```sh
 $ worktender ls --all-repos
 /Users/you/code/worktender
-     BRANCH         WORKSPACE  PANE    STATUS   SEQ   DIR
-  *  main           w21        w21:p1  idle     1057  worktender
-     77-cross-repo  w30        w30:p1  blocked  812   -
+     BRANCH         WORKSPACE  PANE    STATUS   SEQ   AGE  DIR
+  *  main           w21        w21:p1  idle     1057  6m   worktender
+     77-cross-repo  w30        w30:p1  blocked  812   3h   -
 /Users/you/code/lighthouse
-     BRANCH  WORKSPACE  PANE   STATUS   SEQ   DIR
-  *  main    w4         w4:p1  working  1061  lighthouse
+     BRANCH  WORKSPACE  PANE   STATUS   SEQ   AGE  DIR
+  *  main    w4         w4:p1  working  1061  2s   lighthouse
 ```
 
 `--pr` is deliberately not available across repositories: the lookup runs in
@@ -135,8 +147,8 @@ somebody looks, which is why it is worth a question of its own:
 ```sh
 $ worktender ls --all-repos --blocked
 /Users/you/code/worktender
-     BRANCH         WORKSPACE  PANE    STATUS   SEQ  DIR
-     77-cross-repo  w30        w30:p1  blocked  812  -
+     BRANCH         WORKSPACE  PANE    STATUS   SEQ  AGE  DIR
+     77-cross-repo  w30        w30:p1  blocked  812  3h   -
 ```
 
 Repositories with nothing blocked are left out rather than drawn as empty
@@ -151,10 +163,10 @@ sorted the way the column is actually read:
 
 ```sh
 $ worktender ls --sort status
-   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   DIR
-   77-cross-repo             w30        w30:p1  blocked  812   -
-*  main                      w21        w21:p1  idle     1057  worktender
-   feat/1-reconcile-execute  w22        w22:p1  working  1055  1-reconcile-execute
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   AGE  DIR
+   77-cross-repo             w30        w30:p1  blocked  812   3h   -
+*  main                      w21        w21:p1  idle     1057  6m   worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  8s   1-reconcile-execute
 ```
 
 - **`status`** puts the rows that want a person first — blocked, then idle,
@@ -441,13 +453,13 @@ question. So the commands built on them run with herdr absent:
 
 ```sh
 $ worktender ls
-   BRANCH                 WORKSPACE  PANE  STATUS  SEQ  DIR
-*  main                   -          -     -       -    worktender
-   120-json-stops-here    -          -     -       -    -
-   worktree/brave-valley  -          -     -       -    brave-valley-66f8
+   BRANCH                 WORKSPACE  PANE  STATUS  SEQ  AGE  DIR
+*  main                   -          -     -       -    -    worktender
+   120-json-stops-here    -          -     -       -    -    -
+   worktree/brave-valley  -          -     -       -    -    brave-valley-66f8
 ```
 
-The workspace, pane, agent and counter columns are empty because **those facts
+The workspace, pane, agent, counter and age columns are empty because **those facts
 do not exist**, not because they could not be read — with no herdr there are no
 workspaces and no agents. `prune` and `prune-apply` reach exactly the verdicts
 they would otherwise, and `prune-apply` removes what it says it will.

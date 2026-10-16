@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steig/worktender/internal/wt"
 )
@@ -255,10 +256,14 @@ func TestEveryHandWrittenPageIsInTheNav(t *testing.T) {
 // both.
 func reportsFigure() []wt.Row {
 	s1, s2, s3 := uint64(1057), uint64(1055), uint64(812)
+	// Half a unit past each age the figures print, so the render a moment later
+	// still rounds down to the same cell.
+	now := time.Now()
+	a1, a2, a3 := now.Add(-6*time.Minute-30*time.Second), now.Add(-8500*time.Millisecond), now.Add(-3*time.Hour-30*time.Minute)
 	rows := []wt.Row{
-		{Main: true, Branch: "main", WorkspaceID: "w21", PaneID: "w21:p1", AgentStatus: "idle", AgentStatusSeq: &s1, Dir: "worktender"},
-		{Branch: "feat/1-reconcile-execute", WorkspaceID: "w22", PaneID: "w22:p1", AgentStatus: "working", AgentStatusSeq: &s2, Dir: "1-reconcile-execute"},
-		{Branch: "fix/257-erasure-comments", WorkspaceID: "w1K", PaneID: "w1K:p1", AgentStatus: "idle", AgentStatusSeq: &s3, Dir: "257-erasure-comments"},
+		{Main: true, Branch: "main", WorkspaceID: "w21", PaneID: "w21:p1", AgentStatus: "idle", AgentStatusSeq: &s1, AgentLastActive: a1, Dir: "worktender"},
+		{Branch: "feat/1-reconcile-execute", WorkspaceID: "w22", PaneID: "w22:p1", AgentStatus: "working", AgentStatusSeq: &s2, AgentLastActive: a2, Dir: "1-reconcile-execute"},
+		{Branch: "fix/257-erasure-comments", WorkspaceID: "w1K", PaneID: "w1K:p1", AgentStatus: "idle", AgentStatusSeq: &s3, AgentLastActive: a3, Dir: "257-erasure-comments"},
 	}
 	wt.WithReports(rows, func(pane string) (wt.Report, error) {
 		switch pane {
