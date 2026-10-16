@@ -134,7 +134,7 @@ func TestStatsDerivesTheFiguresPerMergedPR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"pr view 7 --json state,additions,deletions --repo git@github.com:o/r.git", "pr view 9 "} {
+	for _, want := range []string{"pr view 7 --json state,additions,deletions,title,mergedAt,mergeCommit --repo git@github.com:o/r.git", "pr view 9 "} {
 		if !strings.Contains(string(calls), want) {
 			t.Errorf("gh was not asked %q; calls:\n%s", want, calls)
 		}

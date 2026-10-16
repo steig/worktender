@@ -495,6 +495,7 @@ $ worktender stats --json
 {
   "ledger": "/Users/you/.local/state/herdr/plugins/steig.worktender/ledger.jsonl",
   "skipped_lines": 0,
+  "escape_window_seconds": 1209600,
   "dispatches": [
     {
       "issue": 42,
@@ -521,6 +522,9 @@ $ worktender stats --json
       "inbox_messages": 3,
       "gate_runs": 2,
       "ceremony_ratio": 2.5,
+      "merged_at": "2026-10-01T12:00:00Z",
+      "escaped": true,
+      "escape": { "kind": "revert", "by": 12, "at": "2026-10-03T09:00:00Z" },
       "error": null
     }
   ],
@@ -531,8 +535,12 @@ $ worktender stats --json
     "median_wall_clock_seconds": 3600,
     "attempts_per_merged_pr": 2,
     "rework_rate": 1,
-    "ceremony_per_merged_pr": 5
-  }
+    "ceremony_per_merged_pr": 5,
+    "escapes_checked": 1,
+    "escapes": 1,
+    "escape_rate": 1
+  },
+  "alerts": null
 }
 ```
 
@@ -555,6 +563,22 @@ $ worktender stats --json
 - **`summary`**'s per-merged-PR figures are null until something has merged; an
   average over nothing is not zero. **`rework_rate`** is the share of merged pull
   requests with more than one attempt, as a fraction.
+- **`escaped`** is null when the pull request has not merged, gh gave no merge
+  time, or the escape searches failed for its repository; otherwise true or
+  false. **`escape`** is what made it one — `kind` `revert` (with `by` the
+  reverting pull request, `at` when it merged) or `regression` (with `by` the
+  blaming issue, `at` when it was opened) — and null otherwise. The exact rules
+  are in [dispatch.md](dispatch.md#escapes). **`escape_window_seconds`** is the
+  window they were judged over (`--escape-window`).
+- **`summary.escape_rate`** is `escapes` over `escapes_checked`, the merged
+  dispatches whose repository gh could search. Both are null when none could
+  be: an unsearchable repository is unknown, not escape-free.
+- **`alerts`** is null unless `--check` was given, and `[]` when it was and
+  nothing crossed a threshold. Each alert is `{kind, issue, branch, value,
+  threshold, message}`: `kind` is `ceremony`, `proof_loop` or `escape_rate`;
+  `issue` and `branch` are null for `escape_rate`, which is about the fleet;
+  `message` is the line the text output prints after `alert: `. The exit code
+  is 3 whenever the list is non-empty, `--json` or not.
 - **`skipped_lines`** counts ledger lines that did not decode — a torn write, or
   a format this binary does not know. They are left out rather than failing the
   read, and said on stderr.
