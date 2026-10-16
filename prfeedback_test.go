@@ -2,7 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,17 +40,34 @@ func prFeedbackFleet(t *testing.T, answer any, status func() string) *herdrtest.
 	return server
 }
 
+// passPRFeedback runs one pass and returns what it printed. A failure carries
+// that output, which is where a branch says why it could not be checked.
+func passPRFeedback(t *testing.T) string {
+	t.Helper()
+	var out strings.Builder
+	if err := prFeedbackCommand(nil, &out); err != nil {
+		t.Fatalf("%v; it printed:\n%s", err, out.String())
+	}
+	return out.String()
+}
+
 // fakeGhAnswer makes gh print answer as JSON, whatever it is asked.
+//
+// The answer is a file the script cats, not an argument to echo. The fake
+// runs under /bin/sh, which on Ubuntu is dash, and dash's echo turns the
+// `\n` a JSON string escapes a newline as back into a raw newline: invalid
+// JSON, so the branch "could not be checked" in CI and nowhere with bash.
 func fakeGhAnswer(t *testing.T, answer any) {
 	t.Helper()
 	raw, err := json.Marshal(answer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "'") {
-		t.Fatal("the fake answer is single-quoted in shell and cannot contain a quote")
+	path := filepath.Join(t.TempDir(), "answer.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	herdrtest.FakeGh(t, "echo '"+string(raw)+"'")
+	herdrtest.FakeGh(t, "cat '"+path+"'")
 }
 
 // idleUntilSubmitted answers idle until the notice has been submitted, then
@@ -111,9 +129,7 @@ func TestPRFeedbackNeverCarriesReviewText(t *testing.T) {
 		},
 	), idleUntilSubmitted(&server))
 
-	if err := prFeedbackCommand(nil, io.Discard); err != nil {
-		t.Fatal(err)
-	}
+	passPRFeedback(t)
 	texts := sentTexts(server)
 	if len(texts) != 1 {
 		t.Fatalf("want one notice, got %q", texts)
@@ -167,18 +183,14 @@ func TestPRFeedbackSaysEachThingOnce(t *testing.T) {
 	})
 
 	for range 2 {
-		if err := prFeedbackCommand(nil, io.Discard); err != nil {
-			t.Fatal(err)
-		}
+		passPRFeedback(t)
 	}
 	if texts := sentTexts(server); len(texts) != 1 {
 		t.Fatalf("two passes with nothing new between them sent %d notices: %q", len(texts), texts)
 	}
 
 	fakeGhAnswer(t, openPR([]map[string]any{review("r1", "alice", ""), review("r2", "bob", "")}, nil, failing))
-	if err := prFeedbackCommand(nil, io.Discard); err != nil {
-		t.Fatal(err)
-	}
+	passPRFeedback(t)
 	texts := sentTexts(server)
 	if len(texts) != 2 {
 		t.Fatalf("a new review sent %d notices in all, want 2: %q", len(texts), texts)
@@ -202,21 +214,16 @@ func TestPRFeedbackWaitsForAnIdleAgent(t *testing.T) {
 			return idleUntilSubmitted(&server)()
 		})
 
-	var out strings.Builder
-	if err := prFeedbackCommand(nil, &out); err != nil {
-		t.Fatal(err)
-	}
+	out := passPRFeedback(t)
 	if texts := sentTexts(server); len(texts) != 0 {
 		t.Fatalf("typed into a working agent: %q", texts)
 	}
-	if !strings.Contains(out.String(), "deferred") {
-		t.Errorf("the deferral was not said:\n%s", out.String())
+	if !strings.Contains(out, "deferred") {
+		t.Errorf("the deferral was not said:\n%s", out)
 	}
 
 	busy.Store(false)
-	if err := prFeedbackCommand(nil, io.Discard); err != nil {
-		t.Fatal(err)
-	}
+	passPRFeedback(t)
 	if texts := sentTexts(server); len(texts) != 1 || !strings.Contains(texts[0], "@alice") {
 		t.Fatalf("the deferred notice did not arrive once the agent went idle: %q", texts)
 	}
@@ -225,9 +232,7 @@ func TestPRFeedbackWaitsForAnIdleAgent(t *testing.T) {
 // A branch with no open pull request is asked about and left alone.
 func TestPRFeedbackIgnoresABranchWithNoOpenPR(t *testing.T) {
 	server := prFeedbackFleet(t, []any{}, func() string { return "idle" })
-	if err := prFeedbackCommand(nil, io.Discard); err != nil {
-		t.Fatal(err)
-	}
+	passPRFeedback(t)
 	if texts := sentTexts(server); len(texts) != 0 {
 		t.Fatalf("sent %q for a branch with no PR", texts)
 	}
@@ -239,9 +244,7 @@ func TestPRFeedbackRoutesAReviewByThePRAuthor(t *testing.T) {
 	var server *herdrtest.Server
 	server = prFeedbackFleet(t, openPR([]map[string]any{review("r1", "worker", "please rename")}, nil, nil),
 		idleUntilSubmitted(&server))
-	if err := prFeedbackCommand(nil, io.Discard); err != nil {
-		t.Fatal(err)
-	}
+	passPRFeedback(t)
 	if texts := sentTexts(server); len(texts) != 1 || !strings.Contains(texts[0], "1 from @worker") {
 		t.Fatalf("a review by the PR's author was not routed: %q", texts)
 	}
@@ -260,9 +263,7 @@ func TestPRFeedbackReadsOnlyTheLatestRunOfACheck(t *testing.T) {
 		{"__typename": "StatusContext", "context": "deploy", "state": "FAILURE", "startedAt": "2026-10-16T03:00:00Z"},
 	}), func() string { return "idle" })
 
-	if err := prFeedbackCommand(nil, io.Discard); err != nil {
-		t.Fatal(err)
-	}
+	passPRFeedback(t)
 	if texts := sentTexts(server); len(texts) != 0 {
 		t.Fatalf("reported a failure a newer run has since passed: %q", texts)
 	}
