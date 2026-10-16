@@ -158,7 +158,15 @@ body, labels and timeline in one GraphQL response, and refuses with **3** unless
 - the body has not been edited since that event (`lastEditedAt`), and neither
   has the title (a `RenamedTitleEvent`). An edit in the same second as the label
   counts as after it. Removing the label and applying it again approves the
-  edited content.
+  edited content;
+- the raw text holds nothing the rendered page hides. A person approves the
+  page, but the worker reads the raw markdown. HTML comments render as nothing,
+  so they are stripped, which leaves the raw text equal to the page. The
+  template's own guidance lives in comments. Other content is refused: raw HTML
+  tags (`<details>`, a hidden `<span>`), link reference definitions, a comment
+  that never closes, and invisible or bidi characters, by `safetext`'s
+  definition. Code spans and fences are exempt from the tag and comment rules,
+  because GitHub draws them literally, but not from the character rule.
 
 Each refusal asks a person with write access to re-read the issue and apply
 the label again. If `gh` cannot produce the snapshot at all, the exit is
@@ -169,8 +177,10 @@ the issue.
 writes the verified title, body and numbered checks to
 `$(git rev-parse --git-path worktender/issue.md)` in the new worktree. That is
 inside the worktree's git dir, so it is never committed and goes away when the
-worktree does. Every line of issue text in it is quoted with `> ` between
-markers `start` writes. The file says that later edits to the live issue are
+worktree does. It is written from the same single snapshot the checks passed
+on, and nothing is fetched again. Every line of issue text in it is quoted with
+`> ` and escaped with `safetext`, so no text from the issue can produce one of
+the file's own lines, including the line that closes a quote. The file says that later edits to the live issue are
 unapproved. It also says not to run a check that reaches beyond checking the
 work (network access, credentials, anything outside the repository) and to
 report that check as blocked instead. That sentence is a second line of

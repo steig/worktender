@@ -16,6 +16,7 @@ type readyGh struct {
 	meta       string // gh issue view --json number,title,labels
 	snapshot   string // gh api graphql; "" makes the call fail
 	permission string // the approver's permission; "" makes the lookup fail
+	later      string // what every graphql call after the first answers, if set
 }
 
 const (
@@ -63,6 +64,9 @@ func fakeReadyGh(t *testing.T, gh readyGh) string {
 	if gh.snapshot != "" {
 		herdrtest.WriteFile(t, filepath.Join(dir, "snapshot.json"), gh.snapshot)
 	}
+	if gh.later != "" {
+		herdrtest.WriteFile(t, filepath.Join(dir, "later.json"), gh.later)
+	}
 	if gh.permission != "" {
 		herdrtest.WriteFile(t, filepath.Join(dir, "permission.json"), `{"permission":"`+gh.permission+`"}`)
 	}
@@ -72,7 +76,9 @@ answer() { [ -f "$FAKE_GH_DIR/$1" ] || { echo "gh: HTTP 404" >&2; exit 1; }; cat
 case "$1 $2" in
   "issue view") answer meta.json ;;
   "repo view") answer repo.json ;;
-  "api graphql") answer snapshot.json ;;
+  "api graphql")
+    if [ -f "$FAKE_GH_DIR/answered" ] && [ -f "$FAKE_GH_DIR/later.json" ]; then answer later.json
+    else : > "$FAKE_GH_DIR/answered"; answer snapshot.json; fi ;;
   "api repos/steig/worktender/collaborators/"*/permission) answer permission.json ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac`)
@@ -130,7 +136,7 @@ func TestStartRefusesAReadyIssueWithoutAcceptance(t *testing.T) {
 		"malformed": "## Acceptance\n- [ ] tests pass\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, body, nil, approvedBy("steig")), "admin"})
+			server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, body, nil, approvedBy("steig")), "admin", ""})
 			assertRefusedBeforeAnyAgent(t, server, err, "Acceptance")
 		})
 	}
@@ -139,35 +145,35 @@ func TestStartRefusesAReadyIssueWithoutAcceptance(t *testing.T) {
 // The label is only an approval if whoever applied it could have cleared the
 // issue: read access, or none, is refused.
 func TestStartRefusesALabelAppliedWithoutWriteAccess(t *testing.T) {
-	server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, approvedBy("drive-by")), "read"})
+	server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, approvedBy("drive-by")), "read", ""})
 	assertRefusedBeforeAnyAgent(t, server, err, "@drive-by applied the label with read access")
 }
 
 // An account gh will not report a permission for — a bot, a stranger the API
 // answers 404 about — cannot be shown to have write access, so it is refused.
 func TestStartRefusesWhenTheApproversAccessCannotBeConfirmed(t *testing.T) {
-	server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, approvedBy("some-app[bot]")), ""})
+	server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, approvedBy("some-app[bot]")), "", ""})
 	assertRefusedBeforeAnyAgent(t, server, err, "could not confirm")
 }
 
 func TestStartRefusesALabelWithNoActor(t *testing.T) {
-	server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, nil), "admin"})
+	server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, nil), "admin", ""})
 	assertRefusedBeforeAnyAgent(t, server, err, "no longer exists")
 }
 
 // Content edited after the label was applied is content nobody approved.
 func TestStartRefusesAReadyIssueEditedAfterItWasLabelled(t *testing.T) {
 	t.Run("body", func(t *testing.T) {
-		server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, afterLabel, approvedBy("steig")), "admin"})
+		server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, afterLabel, approvedBy("steig")), "admin", ""})
 		assertRefusedBeforeAnyAgent(t, server, err, "body was edited")
 	})
 	t.Run("body in the same second", func(t *testing.T) {
-		server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, labelledAt, approvedBy("steig")), "admin"})
+		server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, labelledAt, approvedBy("steig")), "admin", ""})
 		assertRefusedBeforeAnyAgent(t, server, err, "body was edited")
 	})
 	t.Run("title", func(t *testing.T) {
 		renamed := map[string]any{"__typename": "RenamedTitleEvent", "createdAt": afterLabel}
-		server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, approvedBy("steig"), renamed), "admin"})
+		server, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, nil, approvedBy("steig"), renamed), "admin", ""})
 		assertRefusedBeforeAnyAgent(t, server, err, "title was edited")
 	})
 	t.Run("relabelled since is fine", func(t *testing.T) {
@@ -175,7 +181,7 @@ func TestStartRefusesAReadyIssueEditedAfterItWasLabelled(t *testing.T) {
 		// approved the edited content.
 		reapplied := map[string]any{"__typename": "LabeledEvent", "createdAt": "2026-10-01T14:00:00Z",
 			"actor": approvedBy("steig"), "label": map[string]any{"name": "factory:ready"}}
-		_, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, afterLabel, approvedBy("steig"), reapplied), "admin"})
+		_, _, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, afterLabel, approvedBy("steig"), reapplied), "admin", ""})
 		if err != nil {
 			t.Fatalf("a label re-applied after the edit approves it: %v", err)
 		}
@@ -185,7 +191,7 @@ func TestStartRefusesAReadyIssueEditedAfterItWasLabelled(t *testing.T) {
 // An edit made before the label is what the approver read, so it proceeds —
 // and the worker is sent to the copy start verified, not to the live issue.
 func TestStartBriefsAnApprovedIssueFromThePinnedCopy(t *testing.T) {
-	server, checkout, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, beforeLabel, approvedBy("steig")), "write"})
+	server, checkout, err := startReady(t, readyGh{readyMeta, snapshot(t, readyBody, beforeLabel, approvedBy("steig")), "write", ""})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -275,7 +281,7 @@ func TestStartTreatsAnUnlabelledIssueExactlyAsBefore(t *testing.T) {
 // A snapshot gh cannot produce fails the way an unreadable issue does: the
 // machine, not the issue, so not a reason to wake anyone. It still refuses.
 func TestStartFailsWhenTheApprovalCannotBeRead(t *testing.T) {
-	server, _, err := startReady(t, readyGh{readyMeta, "", "admin"})
+	server, _, err := startReady(t, readyGh{readyMeta, "", "admin", ""})
 	if err == nil {
 		t.Fatal("start must fail when it cannot read what it has to verify")
 	}
