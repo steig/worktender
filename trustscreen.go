@@ -39,6 +39,11 @@ import (
 //     hooks says so inside the trust dialog, which the needles above already
 //     catch — and it was not verified against any build. It stays because a
 //     false positive costs a person one look, and a miss costs an accepted hook.
+//   - "Managed settings require approval" and its confirm label "Yes, I trust
+//     these settings" are string literals in the same 2.1.300 binary, from the
+//     dialog that asks to approve settings an organization pushed. An Enter
+//     there approves them, which is the trust screen's harm in another place.
+//     Like the trust dialog, it was read out of the source, not off a screen.
 var gatekeeperScreens = []struct {
 	name    string
 	needles []string
@@ -52,6 +57,10 @@ var gatekeeperScreens = []struct {
 	}},
 	{"hooks-review", []string{
 		"hooks need review",
+	}},
+	{"managed-settings", []string{
+		"managed settings require approval",
+		"yes, i trust these settings",
 	}},
 }
 

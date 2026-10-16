@@ -678,6 +678,28 @@ func TestStartTypesNothingOnTheHooksReviewScreen(t *testing.T) {
 	}
 }
 
+// And for the managed-settings approval dialog, where an Enter approves what an
+// organization pushed — the trust screen's harm, aimed at settings.
+func TestStartTypesNothingOnTheManagedSettingsScreen(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
+	showScreen(server, "w9", "w9:p1",
+		"│ Managed settings require approval │\n│ Settings requiring approval: │\n│ ❯ 1. Yes, I trust these settings │\n│   2. No, exit Claude Code │\n")
+	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	briefConfirmWithin(t, 0)
+
+	err := startCommand([]string{"42"}, &strings.Builder{})
+	if code := exitCode(err); code != exitNeedsHuman {
+		t.Fatalf("exit code = %d, want %d (needs a human): %v", code, exitNeedsHuman, err)
+	}
+	if !strings.Contains(err.Error(), "managed-settings") {
+		t.Errorf("the error should name the screen, got %v", err)
+	}
+	if sent := keystrokes(server); len(sent) != 0 {
+		t.Errorf("sent %v to a pane showing the managed-settings screen, want nothing", sent)
+	}
+}
+
 // The dialog may be drawn after the first look: the brief is typed into what
 // was a composer, and by the time Enter is due the trust screen is up. The Enter
 // is the key that would accept it, so it is the one that must not be sent.

@@ -167,7 +167,7 @@ matching on the message.
 | **0** | It happened. | Proceed. |
 | **1** | Usage: an unknown flag, a missing argument, a repository you declined to name, a target that cannot report. | Fix the invocation. Retrying unchanged fails identically. |
 | **2** | Environment: herdr's socket unreachable, git failing, `gh` unauthenticated. **Also every unclassified failure.** | Fix the machine, then retry. |
-| **3** | Needs a human: a worker reported `blocked`, or `start` briefed an agent that never took it up, or found Claude Code's folder-trust or hooks-review screen where the brief was due. | Escalate. No retry clears it. |
+| **3** | Needs a human: a worker reported `blocked`, or `start` briefed an agent that never took it up, or found Claude Code's folder-trust, hooks-review or managed-settings approval screen where the brief was due. | Escalate. No retry clears it. |
 | **4** | No answer arrived: a gate timed out, a pane died before reporting. | The work may simply be unfinished; redispatching is reasonable. |
 
 **2 is the catch-all on purpose.** The alternatives are worse: defaulting to
