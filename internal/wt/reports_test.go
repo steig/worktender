@@ -120,10 +120,10 @@ func TestTheReportColumnIsAbsentUntilAskedFor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := len(strings.Fields(without.String())); n != 6 {
-		t.Errorf("the plain listing drew %d columns, want the usual 6: %q", n, without.String())
+	if n := len(strings.Fields(without.String())); n != 7 {
+		t.Errorf("the plain listing drew %d columns, want the usual 7: %q", n, without.String())
 	}
-	if n := len(strings.Fields(with.String())); n != 7 {
+	if n := len(strings.Fields(with.String())); n != 8 {
 		t.Errorf("--reports should add exactly one column, got %d: %q", n, with.String())
 	}
 	if docs := wt.JSON([]wt.Row{{Branch: "a", Dir: "a"}}); docs[0].Report != nil {

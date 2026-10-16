@@ -746,17 +746,17 @@ func TestLsWorksWithoutHerdr(t *testing.T) {
 		t.Errorf("the main checkout should be listed and marked:\n%s", got)
 	}
 
-	// Marker, branch, workspace, pane, agent status, counter, dir. The four in
-	// the middle are herdr's, and with no herdr they are empty rather than
-	// unread — that is the whole claim the README's example block makes.
+	// Marker, branch, workspace, pane, agent status, counter, age, dir. The
+	// five in the middle are herdr's, and with no herdr they are empty rather
+	// than unread — that is the whole claim the README's example block makes.
 	fields := strings.Fields(linked)
-	if len(fields) != 6 {
-		t.Fatalf("want branch, four herdr columns and a dir, got %d in %q", len(fields), linked)
+	if len(fields) != 7 {
+		t.Fatalf("want branch, five herdr columns and a dir, got %d in %q", len(fields), linked)
 	}
 	if fields[0] != "wip" {
 		t.Errorf("branch column = %q, want wip", fields[0])
 	}
-	for i, column := range []string{"workspace", "pane", "agent status", "counter"} {
+	for i, column := range []string{"workspace", "pane", "agent status", "counter", "age"} {
 		if fields[1+i] != "-" {
 			t.Errorf("%s column = %q, want empty with no herdr", column, fields[1+i])
 		}

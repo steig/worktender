@@ -31,9 +31,9 @@ name gets longer. And the table has one word for four different absences:
 
 ```sh
 $ worktender ls --pr
-   BRANCH                 WORKSPACE  PANE    STATUS  SEQ   PR  DIR
-*  main                   w21        w21:p1  idle    1057  -   worktender
-   worktree/brave-valley  -          -       -       -     -   brave-valley-66f8
+   BRANCH                 WORKSPACE  PANE    STATUS  SEQ   AGE  PR  DIR
+*  main                   w21        w21:p1  idle    1057  6m   -   worktender
+   worktree/brave-valley  -          -       -       -     -    -   brave-valley-66f8
 ```
 
 The labels say which column is which. They do not say what any one cell means,
@@ -66,6 +66,7 @@ $ worktender ls --pr --json
       "pane_id": "w21:p1",
       "agent_status": "idle",
       "agent_status_seq": 1057,
+      "agent_last_active": "2026-10-15T14:02:41Z",
       "pr": null,
       "report": null,
       "dir": "worktender",
@@ -78,6 +79,7 @@ $ worktender ls --pr --json
       "pane_id": null,
       "agent_status": null,
       "agent_status_seq": null,
+      "agent_last_active": null,
       "pr": { "state": null, "error": "gh pr list worktree/brave-valley: gh: To get started with GitHub CLI, please run: gh auth login" },
       "report": null,
       "dir": "brave-valley-66f8",
@@ -267,6 +269,35 @@ and not an answer.
 observe it. The plugin has no resident process — see
 [Events](events.md) — and this field adds none.
 
+### `agent_last_active`
+
+The timestamp herdr does not have, read from somewhere else. herdr does name
+each agent's session — `agent_session` on `agent.list`, which herdr 0.9.5 gives
+as `{"kind": "id", "value": "<session id>"}` — and Claude and Codex each append
+to a log file named after that id as they work. `agent_last_active` is that
+file's modification time, RFC 3339 in UTC:
+
+| Agent | Log it reads the mtime of |
+| --- | --- |
+| Claude | `~/.claude/projects/*/<session>.jsonl` |
+| Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*-<session>.jsonl` |
+
+**Only the mtime, never the contents.** Those logs are the agent's whole
+conversation. A stat answers the one question asked and cannot leak the rest.
+
+**`null` when it cannot be found, never an estimate.** That is any other agent,
+a session herdr gives as anything but an id, or a log that is not where it
+should be — a different `HOME`, or a layout the agent has since changed. The
+table prints the same fact as `-` in its `AGE` column, as a coarse age rather
+than a timestamp; the JSON carries the timestamp because an age is stale the
+moment it is written and you have your own clock.
+
+It is the agent's write time, not herdr's, which makes it the complement of
+the counter rather than a replacement for it. It moves during a turn that writes
+to the log — a tool call, a message — which the counter does not, so it is a
+second reading on the `working` row above. It says nothing about a stretch in
+which the agent writes nothing at all.
+
 ### `report`, and what it can and cannot tell you
 
 `--reports` asks each staffed pane what the worker in it last told its
@@ -275,10 +306,10 @@ coordinator, read back off the pane's own herdr metadata — the same place
 
 ```sh
 $ worktender ls --reports
-   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   REPORT   DIR
-*  main                      w21        w21:p1  idle     1057  -        worktender
-   feat/1-reconcile-execute  w22        w22:p1  working  1055  planned  1-reconcile-execute
-   fix/257-erasure-comments  w1K        w1K:p1  idle     812   done #4  257-erasure-comments
+   BRANCH                    WORKSPACE  PANE    STATUS   SEQ   AGE  REPORT   DIR
+*  main                      w21        w21:p1  idle     1057  6m   -        worktender
+   feat/1-reconcile-execute  w22        w22:p1  working  1055  8s   planned  1-reconcile-execute
+   fix/257-erasure-comments  w1K        w1K:p1  idle     812   3h   done #4  257-erasure-comments
 ```
 
 ```json
@@ -329,6 +360,7 @@ $ worktender ls --all-repos --blocked --json
           "pane_id": "w30:p1",
           "agent_status": "blocked",
           "agent_status_seq": 812,
+          "agent_last_active": "2026-10-15T11:09:03Z",
           "pr": null,
           "report": null,
           "dir": "77-cross-repo",
@@ -425,7 +457,7 @@ $ worktender doctor --json
       "worktrees": 3,
       "agents": { "working": 1, "blocked": 1, "idle": 1 },
       "blocked": [
-        { "main": false, "branch": "79-stuck", "workspace_id": "w7", "pane_id": null, "agent_status": "blocked", "agent_status_seq": null, "pr": null, "report": null, "dir": "79-stuck", "ghost": false }
+        { "main": false, "branch": "79-stuck", "workspace_id": "w7", "pane_id": null, "agent_status": "blocked", "agent_status_seq": null, "agent_last_active": null, "pr": null, "report": null, "dir": "79-stuck", "ghost": false }
       ]
     }
   ],
@@ -446,8 +478,9 @@ $ worktender doctor --json
   `agents`. It is the one status where the session has stopped and only a person
   can restart it, so which worktree it was is the entire question — a count
   answers nobody. Empty when none are, null when the repository could not be
-  read. `pane_id` is null throughout, and `agent_status_seq` with it: `doctor`
-  does not ask for panes, and the counter belongs to the agent in one. `ls
+  read. `pane_id` is null throughout, and `agent_status_seq` and
+  `agent_last_active` with it: `doctor` does not ask for panes, and both belong
+  to the agent in one. `ls
   --all-repos --blocked --json` is the view that carries both — the pane a
   dispatch needs, and the counter that says whether it is worth dispatching to.
 - The scope is herdr's open worktree workspaces rather than wherever you are

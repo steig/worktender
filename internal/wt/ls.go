@@ -3,11 +3,13 @@ package wt
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
@@ -64,6 +66,10 @@ type Row struct {
 	// changed state, and nil when there is no such agent or herdr gave no
 	// counter for it. See WithAgentSeqs for what it is and is not.
 	AgentStatusSeq *uint64
+	// AgentLastActive is when the agent in PaneID last wrote its session log,
+	// and the zero time when that log could not be found. See
+	// sessionLogActivity for where it comes from and why it is never guessed.
+	AgentLastActive time.Time
 	// PR is nil unless a pull request lookup ran for this row — see WithPRs.
 	PR *PR
 	// Report is nil unless a report lookup ran for this row — see WithReports.
@@ -246,6 +252,13 @@ func firstPane(client *herdrapi.Client, workspaceID string) string {
 // the `revision` on `pane.read`. See docs/json.md for the full measurement and
 // the composite that does work.
 //
+// The same agent.list also names each agent's session, and that is where the
+// last-active time comes from: not from herdr, which still has no clock, but
+// from the mtime of the session log the agent itself writes. It rides along
+// here rather than in a lookup of its own because the session id arrives in the
+// answer this already asked for, and a second agent.list would be a round trip
+// for nothing. See sessionLogActivity.
+//
 // Keyed by pane, so this is the agent in the row's PaneID — the pane staffing
 // starts an agent in and `dispatch --pane` targets. An agent elsewhere in the
 // workspace leaves the counter nil rather than lending the row its own.
@@ -263,16 +276,27 @@ func WithAgentSeqs(client *herdrapi.Client, listings ...[]Row) {
 		return
 	}
 	seqs := map[string]*uint64{}
+	sessions := map[string]*herdrapi.AgentSessionInfo{}
 	for _, agent := range agents.Agents {
 		if agent.StateChangeSeq != nil {
 			seqs[agent.PaneID] = agent.StateChangeSeq
 		}
+		if agent.AgentSession != nil {
+			sessions[agent.PaneID] = agent.AgentSession
+		}
 	}
 
+	// No home directory means no logs to find, which leaves the column empty
+	// rather than costing the listing anything.
+	home, _ := os.UserHomeDir()
 	for _, rows := range listings {
 		for i, row := range rows {
-			if row.PaneID != "" {
-				rows[i].AgentStatusSeq = seqs[row.PaneID]
+			if row.PaneID == "" {
+				continue
+			}
+			rows[i].AgentStatusSeq = seqs[row.PaneID]
+			if at, ok := sessionLogActivity(home, sessions[row.PaneID]); ok {
+				rows[i].AgentLastActive = at
 			}
 		}
 	}
@@ -509,7 +533,8 @@ func renderRows(w io.Writer, rows []Row, cols Columns, indent string) {
 			marker = indent + "?"
 		}
 		cells := []string{marker, cell(row.Branch), cell(row.WorkspaceID),
-			cell(row.PaneID), cell(row.AgentStatus), cell(seqCell(row.AgentStatusSeq))}
+			cell(row.PaneID), cell(row.AgentStatus), cell(seqCell(row.AgentStatusSeq)),
+			cell(ageCell(row.AgentLastActive, time.Now()))}
 		if cols.Reports {
 			cells = append(cells, cell(reportCell(row.Report)))
 		}
@@ -532,7 +557,7 @@ func renderRows(w io.Writer, rows []Row, cols Columns, indent string) {
 // the rows, and every value in this table is lower case except a pull request
 // state. The case is the separator.
 func renderHeader(w io.Writer, cols Columns, indent string) {
-	cells := []string{indent + " ", "BRANCH", "WORKSPACE", "PANE", "STATUS", "SEQ"}
+	cells := []string{indent + " ", "BRANCH", "WORKSPACE", "PANE", "STATUS", "SEQ", "AGE"}
 	if cols.Reports {
 		cells = append(cells, "REPORT")
 	}
@@ -634,6 +659,35 @@ func seqCell(seq *uint64) string {
 		return ""
 	}
 	return strconv.FormatUint(*seq, 10)
+}
+
+// ageCell is how long ago the agent last wrote its session log, empty when the
+// log was not found.
+//
+// Coarse on purpose: one unit, rounded down. The question this column answers
+// is "seconds, minutes or hours", and `3h` beside `idle` is the reading the
+// counter could not give from one listing. The JSON carries the timestamp
+// itself for anything that wants to subtract more carefully.
+//
+// A log written after now — clock skew, or a write between the stat and this
+// line — reads as 0s rather than a negative age nobody could act on.
+func ageCell(at, now time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	d := now.Sub(at)
+	switch {
+	case d < 0:
+		return "0s"
+	case d < time.Minute:
+		return strconv.Itoa(int(d/time.Second)) + "s"
+	case d < time.Hour:
+		return strconv.Itoa(int(d/time.Minute)) + "m"
+	case d < 48*time.Hour:
+		return strconv.Itoa(int(d/time.Hour)) + "h"
+	default:
+		return strconv.Itoa(int(d/(24*time.Hour))) + "d"
+	}
 }
 
 // reportCell is the report column: what the worker in this pane last said,
@@ -786,6 +840,17 @@ type RowJSON struct {
 	// — the limit is in docs/json.md, and a stall detector built on this field
 	// alone fires on healthy workers.
 	AgentStatusSeq *uint64 `json:"agent_status_seq"`
+	// AgentLastActive is when the agent in PaneID last wrote its own session
+	// log, RFC 3339 in UTC, and null when that log could not be found — no
+	// agent, an agent kind whose log layout this plugin does not know, or a log
+	// that is not where it should be. Never estimated.
+	//
+	// A timestamp rather than the table's age, because an age is stale the
+	// moment it is written and the consumer has its own clock to subtract from.
+	// It is the agent's write time and not herdr's: it moves during a turn that
+	// writes to the log, which the counter does not, and it says nothing about
+	// a turn that writes nothing.
+	AgentLastActive *string `json:"agent_last_active"`
 	// PR is null when no lookup ran for this row: --pr was not passed, or this
 	// is the main checkout, which is never asked about.
 	PR *PRJSON `json:"pr"`
@@ -864,16 +929,17 @@ func JSON(rows []Row) []RowJSON {
 	out := make([]RowJSON, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, RowJSON{
-			Main:           row.Main,
-			Branch:         jsonout.String(row.Branch),
-			WorkspaceID:    jsonout.String(row.WorkspaceID),
-			PaneID:         jsonout.String(row.PaneID),
-			AgentStatus:    jsonout.String(row.AgentStatus),
-			AgentStatusSeq: row.AgentStatusSeq,
-			Report:         reportJSONFor(row.Report),
-			PR:             prJSON(row.PR),
-			Dir:            row.Dir,
-			Ghost:          row.Ghost,
+			Main:            row.Main,
+			Branch:          jsonout.String(row.Branch),
+			WorkspaceID:     jsonout.String(row.WorkspaceID),
+			PaneID:          jsonout.String(row.PaneID),
+			AgentStatus:     jsonout.String(row.AgentStatus),
+			AgentStatusSeq:  row.AgentStatusSeq,
+			AgentLastActive: lastActiveJSON(row.AgentLastActive),
+			Report:          reportJSONFor(row.Report),
+			PR:              prJSON(row.PR),
+			Dir:             row.Dir,
+			Ghost:           row.Ghost,
 		})
 	}
 	return out
@@ -890,6 +956,16 @@ func ReposJSON(repos []Repo) []RepoJSON {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// lastActiveJSON is the session log's write time on the wire, null when there
+// was none to read.
+func lastActiveJSON(at time.Time) *string {
+	if at.IsZero() {
+		return nil
+	}
+	s := at.UTC().Format(time.RFC3339)
+	return &s
 }
 
 func prJSON(pr *PR) *PRJSON {
