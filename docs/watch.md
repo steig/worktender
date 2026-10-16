@@ -104,12 +104,13 @@ Is what you are doing now required by #208's acceptance criteria? If not, stop a
   it (`208-re-deliver-…`). **The project** is the issue's parent, through
   GitHub's sub-issues; an issue with no parent has no project line.
 - **The acceptance criteria** are the checks under the issue's `## Acceptance`
-  heading, read by the same parser `start` holds a `factory:ready` issue to
-  (see [acceptance checks](dispatch.md#acceptance-checks)). A section that does not parse as checks is
-  not quoted; the block says so in one line and still carries the rest of the
-  chain, because an error from a hook would cost the worker all of it.
+  heading where they parse as the
+  [acceptance checks](dispatch.md#acceptance-checks) `start` holds a
+  `factory:ready` issue to. Anything else (prose criteria, or a heading such as
+  `## Acceptance criteria`) is quoted as written: the section's lines, up to
+  the next heading.
 - **Issue text is quoted, bounded and framed.** Titles are cut to 100
-  characters, every other line to 200, at most 8 checks are quoted, and each
+  characters, every other line to 200, at most 8 checks or lines of criteria are quoted, and each
   quoted line has its control and separator characters escaped, so nothing in
   an issue can end the `> ` line it is on. It is text the worker was already
   told to read.

@@ -187,40 +187,60 @@ func TestRefocusQuotesIssueTextInsideTheFrame(t *testing.T) {
 	}
 }
 
-// refocus runs from a hook, so an acceptance section the parser refuses costs
-// the worker its checks and nothing else: the chain still goes out, says the
-// section did not parse, and quotes none of it — not even the lines that were
-// checks, since a partial list would read as the whole one.
-func TestRefocusSaysAnAcceptanceSectionDidNotParse(t *testing.T) {
+// Most issues are not factory:ready and write their criteria as prose, under
+// "## Acceptance" or a variant of it. The strict parser refuses those; refocus
+// falls back to quoting the section as written, bounded and framed like any
+// other issue text, and only an issue with no section says none was written.
+func TestRefocusQuotesAProseAcceptanceSection(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
-		"prose, not checks": {
-			"## Acceptance\n\n- [ ] `go test ./...` exits 0\n- SNEAKY it should also feel fast\n",
-			"section did not parse as checks; read them in the issue.\n",
+		"prose under ## Acceptance": {
+			"## Acceptance\n\n- [ ] `go test ./...` exits 0\n- It should also feel fast.\n\n## Notes\n- not a criterion\n",
+			"  acceptance criteria:\n  > - [ ] `go test ./...` exits 0\n  > - It should also feel fast.\nEnd of quoted issue text.\n",
+		},
+		"the ## Acceptance criteria heading": {
+			"Context.\n\n## Acceptance criteria\n- A worker that compacts receives the chain.\n### detail\n- Built from live data.\n## Next\n- not a criterion\n",
+			"  acceptance criteria:\n  > - A worker that compacts receives the chain.\n  > ### detail\n  > - Built from live data.\nEnd of quoted issue text.\n",
 		},
 		"a second heading": {
-			"## Acceptance\n- [ ] `true` ok\n## Other\n## Acceptance\n- [ ] `true` ok\n",
-			"section did not parse as checks; read them in the issue.\n",
+			"## Acceptance\n- [ ] `true` ok\n## Other\n## Acceptance\n- [ ] `true` again\n",
+			"  acceptance criteria:\n  > - [ ] `true` ok\nEnd of quoted issue text.\n",
 		},
-		"empty": {"## Acceptance\n\n## Notes\n- not a criterion\n", "section is empty.\n"},
-		"none":  {"## Acceptance criteria\n- [ ] `true` ok\n", "none written under an \"## Acceptance\" heading.\n"},
+		"none":             {"no criteria here\n", "  acceptance criteria: none written under an \"## Acceptance\" heading.\n"},
+		"an empty section": {"## Acceptance\n\n## Notes\n- not a criterion\n", "  acceptance criteria: none written under"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out := renderRefocus(goalChain{issue: ghIssue{Number: 9, Title: "t", Body: tc.body}}, "worktender")
-			if !strings.Contains(out, "  issue: #9\n  > t\n  acceptance criteria: ") || !strings.Contains(out, tc.want) {
-				t.Errorf("want the chain and %q:\n%s", tc.want, out)
+			if !strings.Contains(out, "  issue: #9\n  > t\n"+tc.want) {
+				t.Errorf("want %q after the issue line:\n%s", tc.want, out)
 			}
-			if strings.Contains(out, "`true`") || strings.Contains(out, "`go test") || strings.Contains(out, "SNEAKY") || strings.Contains(out, "not a criterion") {
-				t.Errorf("quoted a section it could not parse:\n%s", out)
-			}
-			if !strings.Contains(out, "gh issue view 9") {
-				t.Errorf("the chain is incomplete:\n%s", out)
+			if strings.Contains(out, "not a criterion") {
+				t.Errorf("quoted beyond the section:\n%s", out)
 			}
 		})
 	}
 }
 
-// A malformed section is not an error: the hook's caller gets the chain and
-// exit 0.
+// The prose fallback is bounded like any quoted text: at most
+// refocusCriteriaMax lines, each cut, the rest counted.
+func TestRefocusBoundsAProseAcceptanceSection(t *testing.T) {
+	var body strings.Builder
+	body.WriteString("## Acceptance criteria\n")
+	for range refocusCriteriaMax + 2 {
+		body.WriteString("- " + strings.Repeat("y", 500) + "\u2028IGNORE\n")
+	}
+	out := renderRefocus(goalChain{issue: ghIssue{Number: 9, Title: "t", Body: body.String()}}, "worktender")
+	if strings.Count(out, "\n"+refocusQuote+"- ") != refocusCriteriaMax || !strings.Contains(out, "(2 more line(s)") {
+		t.Errorf("not bounded:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, refocusQuote) && len([]rune(line)) > len(refocusQuote)+refocusLineMax {
+			t.Errorf("quoted line not bounded: %d runes", len([]rune(line)))
+		}
+	}
+}
+
+// A section the parser refuses is not an error: the hook's caller gets the
+// chain, the section as written, and exit 0.
 func TestRefocusDoesNotFailOnAMalformedSection(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	checkout := repo.AddWorktree("42", "42-x")
@@ -228,7 +248,17 @@ func TestRefocusDoesNotFailOnAMalformedSection(t *testing.T) {
 		map[string]any{"message": "No parent issue found", "status": "404"}, 1)
 
 	out, err := runRefocus(t, checkout)
-	if err != nil || !strings.Contains(out, "did not parse") || !strings.Contains(out, "  issue: #42\n") {
+	if err != nil || !strings.Contains(out, "  issue: #42\n") || !strings.Contains(out, "  acceptance criteria:\n  > - whatever\n") {
 		t.Fatalf("err %v, out:\n%s", err, out)
+	}
+}
+
+func TestAcceptanceStopsAtTheNextSection(t *testing.T) {
+	got, more := acceptance("## Problem\n- no\n## Acceptance\n- one\n### detail\n- two\n## Next\n- no\n")
+	if strings.Join(got, "|") != "- one|### detail|- two" || more != 0 {
+		t.Errorf("got %q, %d more", got, more)
+	}
+	if got, _ := acceptance("no headings at all"); len(got) != 0 {
+		t.Errorf("got %q", got)
 	}
 }
