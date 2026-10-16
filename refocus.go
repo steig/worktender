@@ -45,8 +45,8 @@ import (
 //
 //   - titles, cut to refocusTitleMax runes;
 //   - the parent's first line, as its goal, cut to refocusLineMax;
-//   - at most refocusCriteriaMax lines of the issue's acceptance section,
-//     each cut to refocusLineMax.
+//   - at most refocusCriteriaMax of the issue's acceptance checks, each cut
+//     to refocusLineMax.
 //
 // Every quoted line has its control, format and separator runes escaped by
 // safetext, so nothing can end the "> " line it was framed on and start an
@@ -235,18 +235,7 @@ func renderRefocus(c goalChain, self string) string {
 	}
 	fmt.Fprintf(&b, "  issue: #%d\n", n)
 	b.WriteString(refocusQuote + quoteLine(c.issue.Title, refocusTitleMax) + "\n")
-	criteria, more := acceptance(c.issue.Body)
-	if len(criteria) == 0 {
-		b.WriteString("  acceptance criteria: none written under an \"## Acceptance\" heading.\n")
-	} else {
-		b.WriteString("  acceptance criteria:\n")
-		for _, line := range criteria {
-			b.WriteString(refocusQuote + quoteLine(line, refocusLineMax) + "\n")
-		}
-		if more > 0 {
-			fmt.Fprintf(&b, "  (%d more line(s); read the issue for them)\n", more)
-		}
-	}
+	writeCriteria(&b, parseAcceptance(c.issue.Body))
 	b.WriteString(refocusClose + "\n")
 	fmt.Fprintf(&b, "  you: working issue #%d in this worktree. Re-read it in full with `gh issue view %d`", n, n)
 	if c.parent != nil {
@@ -259,36 +248,36 @@ func renderRefocus(c goalChain, self string) string {
 	return b.String()
 }
 
-// acceptance is the lines under an issue's "## Acceptance" heading, up to the
-// next heading of the same or a higher level, blank lines dropped; at most
-// refocusCriteriaMax of them, and how many more there were.
+// writeCriteria is the acceptance part of the block: the issue's checks, read
+// through the parser `approve` and `start` hold a ready issue to, so what a
+// worker is refocused on is the "done" it will be held to and not a looser
+// reading of it.
 //
-// TODO(#200): #200 is adding acceptance criteria a gate can run, with its own
-// parser for this section. Once it lands, read the criteria through that and
-// delete this; it is deliberately the smallest thing that finds the heading.
-func acceptance(body string) (lines []string, more int) {
-	in := false
-	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if level := headingLevel(trimmed); level > 0 {
-			if in && level <= 2 {
+// A SECTION THAT DOES NOT PARSE IS SAID, NOT REFUSED. `start` refuses one, but
+// refocus runs from a hook, and an error there costs the worker its whole
+// chain — the project and the issue it is on — for a fault in one section. So
+// the chain goes out without checks, and one line of this package's own words
+// says why. It names no line of the section: the parser's reasons would be
+// right, but they are for whoever repairs the issue, and the worker's next
+// step is the same either way — read the issue.
+func writeCriteria(b *strings.Builder, a acceptanceSection) {
+	switch {
+	case !a.Found:
+		b.WriteString("  acceptance criteria: none written under an \"## Acceptance\" heading.\n")
+	case len(a.Malformed) > 0:
+		b.WriteString("  acceptance criteria: the \"## Acceptance\" section did not parse as checks; read them in the issue.\n")
+	case len(a.Checks) == 0:
+		b.WriteString("  acceptance criteria: the \"## Acceptance\" section is empty.\n")
+	default:
+		b.WriteString("  acceptance criteria:\n")
+		for i, c := range a.Checks {
+			if i == refocusCriteriaMax {
+				fmt.Fprintf(b, "  (%d more check(s); read the issue for them)\n", len(a.Checks)-i)
 				break
 			}
-			if level == 2 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(trimmed[level:])), "acceptance") {
-				in = true
-				continue
-			}
-		}
-		if !in || trimmed == "" {
-			continue
-		}
-		if len(lines) < refocusCriteriaMax {
-			lines = append(lines, trimmed)
-		} else {
-			more++
+			b.WriteString(refocusQuote + quoteLine("- `"+c.Command+"` "+c.Expect, refocusLineMax) + "\n")
 		}
 	}
-	return lines, more
 }
 
 // headingLevel is how many leading #s an ATX heading has, or 0.
