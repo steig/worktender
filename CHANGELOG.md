@@ -6,6 +6,47 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.16.0] — 2026-10-16
+
+### Added
+
+- **`worktender draft <issue>`: proposed acceptance checks, for a human to
+  approve.** (#232, #234, #246) A headless, read-only agent reads the issue and
+  an export of the repository's tracked files (never untracked or ignored ones)
+  and proposes checks in the acceptance grammar. Each line must parse and match
+  an exact command shape: the repo's own test, build and lint runners, plus
+  `grep` and `test` on repo-relative docs and files. Greps of source files,
+  shell metacharacters, network tools and free-form outcomes are dropped, with
+  the reason printed. It only prints by default. `--write` shows the exact
+  section and asks `yes` before editing the issue (`--yes` skips the question).
+  It never labels or approves the issue; `worktender approve` is still the step
+  that clears it. Ctrl-C stops the drafter and removes its export. (#236)
+- **`prune-apply` closes a finished worker's ghost workspace.** (#248) When a
+  worker's PR merges and its checkout is gone, `prune-apply` closes the
+  workspace herdr still holds open, but only when:
+  - exactly one pane carries a report;
+  - that report is `done` with a PR that is merged and whose head branch is
+    the workspace's;
+  - no other pane runs an agent;
+  - the report still says so at close time.
+
+  An agent still in the pane needs `--release-agents`. Every other ghost is
+  only named, as before.
+- **`factory` removes `factory:in-progress` from closed issues** on every
+  pass, and lists them as `cleared` in `--json`. (#242)
+
+### Fixed
+
+- **`start`, `dispatch` and `factory` print `gate --target <pane id>`.** (#247)
+  herdr can drop an agent's name once Claude Code retitles the terminal, which
+  left the printed command failing with `agent_not_found`. The pane id lasts
+  for the worker's whole life.
+- **`factory --dry-run` resolves the repository as a real pass does,** so it
+  refuses without `--repo` outside a plugin action, instead of planning a pass
+  that cannot run. (#240)
+- The acceptance-check examples used `worktender version`, which is not a
+  command. (#233)
+
 ## [0.15.0] — 2026-10-16
 
 ### Added
