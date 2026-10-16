@@ -10,9 +10,12 @@
 /claude_md_test.go       @steig
 /skills/                 @steig
 /.claude-plugin/         @steig
+/mods/                   @steig
 /herdr-plugin.toml       @steig
 /acceptance.go           @steig
+/approve.go              @steig
 /approval.go             @steig
+/trustscreen.go          @steig
 /report.go               @steig
 /start.go                @steig
 /dispatch.go             @steig
@@ -20,5 +23,7 @@
 /draft.go                @steig
 /prfeedback.go           @steig
 /gate.go                 @steig
+/review.go               @steig
+/internal/execute/       @steig
 /internal/reconcile/     @steig
 /internal/safetext/      @steig

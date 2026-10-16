@@ -1,8 +1,8 @@
 # worktender
 
 A zero-dependency Go herdr plugin. Every worker in a worktree reads this file,
-so it holds rules a reviewer can check, not taste. It is held under 60 lines by
-`TestClaudeMdStaysWithinBudget`; a rule that does not fit replaces one that does.
+so it holds rules a reviewer can point to. `TestClaudeMdStaysWithinBudget` holds
+it to 60 lines; a rule that does not fit replaces one that does.
 
 ## Build and test
 
@@ -30,8 +30,9 @@ so it holds rules a reviewer can check, not taste. It is held under 60 lines by
   4 no-answer. Errors carry them through `usagef` / `withCode`.
 - Reuse an existing value before spelling it again: report statuses are
   `reportStatuses` in `report.go`. A second spelling of the same string is drift.
-- Production code never branches on whether a test hook is nil. A seam is
-  always set; tests replace it.
+- Do not nil-check a test hook in production so tests can skip it. A hook that
+  is optional in production says what nil means, and nil fails safe
+  (`LookupReport` in `internal/execute`).
 - A helper with one caller is inlined unless it names a step the caller reads
   better for. No wrapper types, options structs or interfaces for one use.
 - No defensive checks at internal boundaries the type system or the caller
