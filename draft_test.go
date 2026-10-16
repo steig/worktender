@@ -134,10 +134,47 @@ func TestDraftAllowListAccepts(t *testing.T) {
 		"npm run lint",
 		"worktender doctor",
 		"grep -q " + strings.Repeat("a", 60) + " docs/a.md",
-		`grep -qF "draftUsage: worktender/draft" draft.go`,
+		`grep -qF "draftUsage: worktender/draft" docs/reference.md`,
+		"grep -q main Makefile",
+		"grep -q version CHANGELOG.md",
 	} {
 		if why := vetDraftedCommand(cmd, runners); why != "" {
 			t.Errorf("%q refused: %s", cmd, why)
+		}
+	}
+}
+
+// A grep for a string in a source file pins one implementation and proves
+// nothing the tests do not, so it is dropped with its reason, whatever the
+// language; the same grep of a doc is kept.
+func TestDraftDropsGrepOfSourceFiles(t *testing.T) {
+	runners := draftRunners(draftRepo(t).Root)
+	for _, path := range []string{"draft.go", "internal/x/factory_test.go", "src/app.ts", "web/App.TSX", "lib/a.js", "tool.py", "src/main.rs", "run.sh"} {
+		kept, dropped := vetDraft("- [ ] `grep -q SIGTERM "+path+"` exits 0\n", runners)
+		if len(kept) != 0 || len(dropped) != 1 || !strings.Contains(dropped[0].Reason, "source file "+path) {
+			t.Errorf("grep of %s: kept %+v, dropped %+v; want it dropped as a source file", path, kept, dropped)
+		}
+	}
+	if kept, dropped := vetDraft("- [ ] `grep -q SIGTERM docs/draft.md` exits 0\n", runners); len(kept) != 1 {
+		t.Errorf("grep of a doc dropped: %+v", dropped)
+	}
+	// test -f is for files the issue asks to exist, source files included.
+	if why := vetDraftedCommand("test -f internal/x/new.go", runners); why != "" {
+		t.Errorf("test -f of a source file refused: %s", why)
+	}
+}
+
+// The prompt steers the drafter to tests and builds, narrowed where it can,
+// and away from grepping source, before the allow-list has to drop anything.
+func TestDraftPromptPrefersTests(t *testing.T) {
+	prompt := strings.Join(strings.Fields(draftPrompt(7, "t", "b", draftRunners(draftRepo(t).Root))), " ")
+	for _, want := range []string{
+		"Prefer checks that run the repository's tests and builds, narrowed to the relevant package or test name",
+		"go test -run TestName ./...",
+		"Use grep and test -f only for docs or files the issue asks to exist, never to look for an identifier in source code",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt does not say %q", want)
 		}
 	}
 }

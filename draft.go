@@ -280,8 +280,20 @@ func repoPath(w string) string {
 	return ""
 }
 
+// draftSourceExts are the extensions of source files a grep may not read. A
+// grep for an identifier in source pins one implementation — a correct fix
+// that names it differently fails the check — and proves nothing the tests
+// do not, so in the first factory batches every one was trimmed by hand.
+// grep stays for docs and other files an issue asks to say something.
+var draftSourceExts = []string{
+	".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".rb",
+	".java", ".kt", ".swift", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".php",
+	".scala", ".ex", ".exs", ".lua", ".zig", ".sh",
+}
+
 // grepArgs is exactly `[-q|-qE|-qF] <pattern> <path>`: no option that reads
-// patterns from a file, recurses or follows anything, and one repository path.
+// patterns from a file, recurses or follows anything, and one repository path
+// that is not a source file.
 func grepArgs(words []string) string {
 	if len(words) == 3 && slices.Contains([]string{"-q", "-qE", "-qF"}, words[0]) {
 		words = words[1:]
@@ -292,7 +304,13 @@ func grepArgs(words []string) string {
 	if !draftPatternChars.MatchString(words[0]) {
 		return "has a grep pattern that is not 1 to 60 letters, digits, spaces or _.:/-"
 	}
-	return repoPath(words[1])
+	if why := repoPath(words[1]); why != "" {
+		return why
+	}
+	if slices.Contains(draftSourceExts, strings.ToLower(filepath.Ext(words[1]))) {
+		return fmt.Sprintf("greps the source file %s; a test or build shows the change, a string in code does not", words[1])
+	}
+	return ""
 }
 
 // testArgs is exactly `-f|-d|-e <path>`.
@@ -485,7 +503,11 @@ func draftPrompt(number int, title, body string, runners []draftRunner) string {
 	b.WriteString("The command is ONE simple command run from the repository root, in printable ASCII, with no\n")
 	b.WriteString("backtick, pipe, redirect, ;, &&, $, glob, parenthesis or backslash. The expected outcome is exactly\n")
 	b.WriteString("one of \"exits 0\", \"exits 1\", \"exits non-zero\", \"prints nothing\" or \"prints <word>\", the word being\n")
-	b.WriteString("letters, digits and ._- only. Prefer checks that fail before the work and pass after it.\n")
+	b.WriteString("letters, digits and ._- only. Prefer checks that fail before the work and pass after it.\n\n")
+	b.WriteString("Prefer checks that run the repository's tests and builds, narrowed to the relevant package or test\n")
+	b.WriteString("name where you can (for example go test -run TestName ./...). Use grep and test -f only for docs or\n")
+	b.WriteString("files the issue asks to exist, never to look for an identifier in source code: a grep of a source\n")
+	b.WriteString("file is discarded, since it fails a correct fix that names things differently.\n\n")
 	b.WriteString("A command must start with one of these, and any other is discarded:\n\n")
 	for _, r := range runners {
 		b.WriteString("  " + r.describe + "\n")
