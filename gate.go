@@ -22,7 +22,7 @@ const gateDefaultTimeout = 15 * time.Minute
 // Unwrapped, because a wrapped envelope line is two lines to a parser.
 const gateReadSource = herdrapi.ReadSourceRecentUnwrapped
 
-const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr] [--timeout 15m] [--json]"
+const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr] [--timeout 15m] [--dagr] [--json]"
 
 // gateOptions is one gate invocation.
 type gateOptions struct {
@@ -34,6 +34,11 @@ type gateOptions struct {
 	requirePR bool
 	timeout   time.Duration
 	asJSON    bool
+	// dagr asks for the wait to be mirrored into a herdr-dagr run file, and
+	// dagrPath is where. The path is resolved by gateCommand rather than by the
+	// parser, so parsing stays a pure function of the arguments.
+	dagr     bool
+	dagrPath string
 }
 
 // names is how a wait covering several workers refers to itself in a message
@@ -110,6 +115,7 @@ func parseGate(args []string) (gateOptions, error) {
 	timeout := flags.Duration("timeout", gateDefaultTimeout, "how long to wait before giving up")
 	var until statusFlag
 	flags.Var(&until, "until", "release on this status; repeat for more than one")
+	dagr := flags.Bool("dagr", false, "keep .dagr/run.json current for the herdr-dagr pane while waiting")
 	asJSON := jsonFlag(flags)
 
 	if err := flags.Parse(args); err != nil {
@@ -128,7 +134,7 @@ func parseGate(args []string) (gateOptions, error) {
 		// The gate's reason for existing is completion, so that is the default.
 		until = statusFlag{"done"}
 	}
-	return gateOptions{targets: targets, until: until, requirePR: *requirePR, timeout: *timeout, asJSON: *asJSON}, nil
+	return gateOptions{targets: targets, until: until, requirePR: *requirePR, timeout: *timeout, asJSON: *asJSON, dagr: *dagr}, nil
 }
 
 // satisfies is the whole predicate surface: a status from the closed set, and
@@ -156,6 +162,11 @@ func gateCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if opts.dagr {
+		if opts.dagrPath, err = dagrRunPath(); err != nil {
+			return fmt.Errorf("--dagr: %w", err)
+		}
+	}
 	return runGate(client, opts, out)
 }
 
@@ -178,6 +189,14 @@ type gateTarget struct {
 type gateFresh struct {
 	target int
 	report report
+}
+
+// gateDeath is one worker a frame ended, how the gate knows, and at which
+// evidence tier.
+type gateDeath struct {
+	target   int
+	why      string
+	evidence string
 }
 
 // runGate resolves the targets, waits, and renders in whichever of the two
@@ -208,7 +227,17 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 	}
 	recordGate(opts, targets)
 
-	outcome, evidence, about, released, err := gateWait(client, opts, targets, notes, started)
+	var dagr *dagrExport
+	if opts.dagrPath != "" {
+		if dagr, err = openDagrExport(opts.dagrPath, targets, notes, time.Now); err != nil {
+			if opts.asJSON {
+				return writeGateJSON(out, gateDocument(opts, targets, gateOutcomeError, "", -1, nil, time.Since(started), err), err)
+			}
+			return err
+		}
+	}
+
+	outcome, evidence, about, released, err := gateWait(client, opts, targets, notes, started, dagr)
 	waited := time.Since(started)
 
 	if opts.asJSON {
@@ -248,7 +277,11 @@ func writeGateJSON(out io.Writer, doc gateJSON, gateErr error) error {
 // evidence is empty only beside gateOutcomeError. A failure's message ends with
 // it too, because in human mode that message is the only place the outcome is
 // said at all.
-func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, out io.Writer, started time.Time) (string, string, int, *report, error) {
+//
+// dagr is told everything the gate observes as it observes it, before the gate
+// decides what any of it means, so the run file records a report or a death
+// even when another worker's report is what released the wait.
+func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, out io.Writer, started time.Time, dagr *dagrExport) (string, string, int, *report, error) {
 	deadline := started.Add(opts.timeout)
 
 	// Subscribe BEFORE reading the baselines, or a report landing between the
@@ -275,6 +308,8 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 	for {
 		event, err := stream.Next()
 		if errors.Is(err, herdrapi.ErrStreamExpired) {
+			dagr.timedOut(targets, time.Since(started))
+			dagr.write()
 			return gateOutcomeTimeout, gateEvidenceVerified, -1, nil, gateExpired(opts, targets, time.Since(started))
 		}
 		if err != nil {
@@ -286,6 +321,9 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 		// closing ends every worker inside it.
 		var fresh []gateFresh
 		gone, goneWhy, goneEvidence := -1, "", ""
+		// deaths is every worker this frame ended, for the run file. The gate
+		// itself acts on the first; the view has no reason to forget the rest.
+		var deaths []gateDeath
 		for i := range targets {
 			verdict, why, evidence := gateVerdict(event, targets[i].pane, targets[i].workspace)
 			if verdict == gateIgnore {
@@ -296,9 +334,24 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 			for _, r := range targets[i].seen.advance(readChannels(client, targets[i].pane)) {
 				fresh = append(fresh, gateFresh{target: i, report: r})
 			}
-			if verdict == gateGone && gone < 0 {
-				gone, goneWhy, goneEvidence = i, why, evidence
+			if verdict == gateGone {
+				deaths = append(deaths, gateDeath{target: i, why: why, evidence: evidence})
+				if gone < 0 {
+					gone, goneWhy, goneEvidence = i, why, evidence
+				}
 			}
+		}
+
+		// Reports before deaths, so a worker that printed `done` and died in the
+		// same breath is drawn as having finished, not as lost.
+		for _, f := range fresh {
+			dagr.reported(targets[f.target], f.report)
+		}
+		for _, d := range deaths {
+			dagr.gone(targets[d.target], d.why, d.evidence)
+		}
+		if len(fresh) > 0 || len(deaths) > 0 {
+			dagr.write()
 		}
 
 		// A look can turn up more than one new report, so every one is weighed

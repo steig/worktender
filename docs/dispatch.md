@@ -80,7 +80,7 @@ Branch on the code, not on the message. The full table is in
 worktender start <issue> [--role <role>] [--model <model>] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
 worktender dispatch --pane <id> --name <agent> [--role <role>] [--model <model>] [--permission-mode <mode>] [--resume]
 worktender report --status planned|blocked|done [--pr N] --note <text>
-worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--timeout 15m]
+worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--timeout 15m] [--dagr]
 ```
 
 ## Starting a worker as a role
@@ -295,6 +295,44 @@ Every target is resolved before the wait opens, so one mistyped name out of five
 fails immediately rather than at the deadline. Naming one worker twice — its
 agent name and its pane id are both accepted, and both resolve — is refused
 rather than watched twice.
+
+## Watching a dispatch in herdr-dagr
+
+`--dagr` keeps a [herdr-dagr](https://github.com/aemrebarut/herdr-dagr) run file
+current while the gate waits, so the dagr pane (`open-dagr`) draws the fleet
+live. It writes `.dagr/run.json` in the main checkout — the path dagr reads by
+default — replacing it in one rename on every report, death and timeout the
+gate sees. Without the flag nothing is written.
+
+```sh
+"$worktender" gate --any 12-thing,13-other,14-third --until done --timeout 20m --dagr
+```
+
+Each worker is one task, and only what the gate observed is drawn:
+
+| The gate saw | Task | Attempt | Evidence |
+| --- | --- | --- | --- |
+| no report yet, or `planned` | `working` | `working`, the note as progress | — |
+| `blocked` | `blocked`, unblocked by the coordinator | `working` | — |
+| `done` | `done` | `done`, the pr as receipt | ◇ reported |
+| the pane or workspace ended | `failed` | `lost` | ◆ verified |
+| herdr's agent status went `unknown` | `blocked` | `lost` | ≈ heuristic |
+| the timeout | unchanged, with a note | unchanged | — |
+
+A `done` is never drawn ◆ verified: it is the worker's word, as it is in the
+gate's own output. A timeout changes no worker, because the gate running out
+of time says nothing about whether they are still working.
+
+Rounds of `--any` share the file. A worker the current gate is not watching
+keeps whatever the last gate to watch it drew, and a worker gated again after it
+settled opens a second attempt rather than repainting the first. Delete the file
+to start a fresh view.
+
+The `.dagr` directory is created with a `.gitignore` of `*`, so the run file
+never shows up as untracked; a `.dagr` you already had is left as it was. A
+`.dagr/run.json` that worktender did not write — another producer's run — is
+refused before the wait opens (exit 1) rather than overwritten. A write that
+fails mid-wait is a warning; it never changes the gate's outcome or exit code.
 
 ## Why dispatch is separate from `sync`
 
