@@ -124,7 +124,7 @@ func TestIssueBranchNames(t *testing.T) {
 func TestStartDoesNotEvenAskGhForTheIssueBody(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `printf '%s\n' "$@" > "$FAKE_GH_ARGS"; echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, `printf '%s\n' "$@" > "$FAKE_GH_ARGS"; `+herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 
 	args := filepath.Join(t.TempDir(), "args")
 	t.Setenv("FAKE_GH_ARGS", args)
@@ -327,7 +327,7 @@ func TestStartPrintsTheCommitItForkedFrom(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	repo.SetOriginHead("main")
 	fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42"}, &out); err != nil {
@@ -359,7 +359,7 @@ func TestStartSaysHowToRepairAStackedBranch(t *testing.T) {
 	repo.Git("checkout", "main")
 
 	fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--base", "feat/76-machine-readable"}, &out); err != nil {
@@ -392,7 +392,7 @@ func TestStartSaysHowToRepairAStackedBranch(t *testing.T) {
 func TestStartSurvivesABaseItCannotResolve(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--base", "no/such/ref"}, &out); err != nil {
@@ -408,7 +408,7 @@ func TestStartSurvivesABaseItCannotResolve(t *testing.T) {
 func TestStartPassesNoAgentArgsByDefault(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w5", "w5:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":5,"title":"t","body":"b"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":5,"title":"t","body":"b"}`))
 
 	if err := startCommand([]string{"5"}, &strings.Builder{}); err != nil {
 		t.Fatalf("start: %v", err)
@@ -435,7 +435,7 @@ func TestStartPassesNoAgentArgsByDefault(t *testing.T) {
 func TestStartSubmitsTheBriefAsAKeyEventAfterTypingIt(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 
 	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
 		t.Fatalf("start: %v", err)
@@ -479,7 +479,7 @@ func TestStartPressesEnterAgainWhileTheAgentStaysIdle(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
 	idleThenBusy(server, "w9", "w9:p1", 3)
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 	briefSubmitRetryOf(t, 0)
 
 	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
@@ -499,7 +499,7 @@ func TestStartPressesEnterAgainWhileTheAgentStaysIdle(t *testing.T) {
 func TestStartStopsPressingOnceTheAgentReacts(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 	briefSubmitRetryOf(t, 0)
 
 	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
@@ -518,7 +518,7 @@ func TestStartStopsPressingOnceTheAgentReacts(t *testing.T) {
 func TestStartLeavesTheAgentAloneBetweenPresses(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 	briefConfirmWithin(t, 300*time.Millisecond)
 	briefSubmitRetryOf(t, time.Hour)
 
@@ -537,7 +537,7 @@ func TestStartLeavesTheAgentAloneBetweenPresses(t *testing.T) {
 func TestStartFailsWhenTheAgentNeverTakesTheBriefUp(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	fakeStart(t, repo, "w9", "w9:p1", "idle")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 	briefConfirmWithin(t, 0)
 
 	err := startCommand([]string{"42"}, &strings.Builder{})
@@ -561,7 +561,7 @@ func TestStartFailsWhenTheAgentNeverTakesTheBriefUp(t *testing.T) {
 func TestStartAcceptsAnAgentThatWentStraightToBlocked(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	fakeStart(t, repo, "w9", "w9:p1", "blocked")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 	briefConfirmWithin(t, 0)
 
 	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
@@ -639,7 +639,7 @@ func TestStartTypesNothingOnTheFolderTrustScreen(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
 	showScreen(server, "w9", "w9:p1", trustScreen)
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 	briefConfirmWithin(t, 0)
 
 	err := startCommand([]string{"42"}, &strings.Builder{})
@@ -663,7 +663,7 @@ func TestStartTypesNothingOnTheHooksReviewScreen(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
 	showScreen(server, "w9", "w9:p1", "│ Hooks need review │\n│ ❯ 1. Accept │\n")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 	briefConfirmWithin(t, 0)
 
 	err := startCommand([]string{"42"}, &strings.Builder{})
@@ -685,7 +685,7 @@ func TestStartTypesNothingOnTheManagedSettingsScreen(t *testing.T) {
 	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
 	showScreen(server, "w9", "w9:p1",
 		"│ Managed settings require approval │\n│ Settings requiring approval: │\n│ ❯ 1. Yes, I trust these settings │\n│   2. No, exit Claude Code │\n")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 	briefConfirmWithin(t, 0)
 
 	err := startCommand([]string{"42"}, &strings.Builder{})
@@ -712,7 +712,7 @@ func TestStartDoesNotPressEnterOnATrustScreenDrawnAfterTyping(t *testing.T) {
 		}
 		return trustScreen
 	})
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 	briefConfirmWithin(t, 0)
 
 	err := startCommand([]string{"42"}, &strings.Builder{})
@@ -729,7 +729,7 @@ func TestStartDoesNotPressEnterOnATrustScreenDrawnAfterTyping(t *testing.T) {
 func TestStartReadsThePaneBeforeTypingIntoIt(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 
 	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
 		t.Fatalf("start: %v", err)
@@ -783,7 +783,7 @@ func TestStartTakesFlagsOnEitherSideOfTheIssueNumber(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			repo := herdrtest.NewRepo(t)
 			server := fakeStart(t, repo, "w9", "w9:p1", "working")
-			herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+			herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 
 			if err := startCommand(args, &strings.Builder{}); err != nil {
 				t.Fatalf("start %v: %v", args, err)
@@ -840,7 +840,7 @@ func TestStartActsOnTheRepositoryItWasGiven(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
 	t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", "")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","body":"it is broken"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {

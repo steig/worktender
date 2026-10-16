@@ -45,8 +45,9 @@ import (
 //
 //   - titles, cut to refocusTitleMax runes;
 //   - the parent's first line, as its goal, cut to refocusLineMax;
-//   - at most refocusCriteriaMax lines of the issue's acceptance section,
-//     each cut to refocusLineMax.
+//   - at most refocusCriteriaMax of the issue's acceptance checks, or of the
+//     lines of its acceptance section where those are not checks, each cut
+//     to refocusLineMax.
 //
 // Every quoted line has its control, format and separator runes escaped by
 // safetext, so nothing can end the "> " line it was framed on and start an
@@ -235,18 +236,7 @@ func renderRefocus(c goalChain, self string) string {
 	}
 	fmt.Fprintf(&b, "  issue: #%d\n", n)
 	b.WriteString(refocusQuote + quoteLine(c.issue.Title, refocusTitleMax) + "\n")
-	criteria, more := acceptance(c.issue.Body)
-	if len(criteria) == 0 {
-		b.WriteString("  acceptance criteria: none written under an \"## Acceptance\" heading.\n")
-	} else {
-		b.WriteString("  acceptance criteria:\n")
-		for _, line := range criteria {
-			b.WriteString(refocusQuote + quoteLine(line, refocusLineMax) + "\n")
-		}
-		if more > 0 {
-			fmt.Fprintf(&b, "  (%d more line(s); read the issue for them)\n", more)
-		}
-	}
+	writeCriteria(&b, c.issue.Body)
 	b.WriteString(refocusClose + "\n")
 	fmt.Fprintf(&b, "  you: working issue #%d in this worktree. Re-read it in full with `gh issue view %d`", n, n)
 	if c.parent != nil {
@@ -259,13 +249,50 @@ func renderRefocus(c goalChain, self string) string {
 	return b.String()
 }
 
-// acceptance is the lines under an issue's "## Acceptance" heading, up to the
-// next heading of the same or a higher level, blank lines dropped; at most
-// refocusCriteriaMax of them, and how many more there were.
+// writeCriteria is the acceptance part of the block. An issue whose section
+// parses as checks — the parser `approve` and `start` hold a ready issue to —
+// gets those checks, so a factory worker is refocused on the "done" it will be
+// held to.
 //
-// TODO(#200): #200 is adding acceptance criteria a gate can run, with its own
-// parser for this section. Once it lands, read the criteria through that and
-// delete this; it is deliberately the smallest thing that finds the heading.
+// EVERY OTHER ISSUE GETS ITS SECTION AS WRITTEN. refocus runs for every
+// worker, not only factory:ready ones, and most issues write their criteria as
+// prose, often under "## Acceptance criteria". The strict parser has no answer
+// for those, and an error would be worse than none: refocus runs from a hook,
+// where failing costs the worker the whole chain. So anything the parser does
+// not accept falls back to the section's raw lines, under the same bounding
+// and framing as every other quoted line.
+func writeCriteria(b *strings.Builder, body string) {
+	if a := parseAcceptance(body); a.Found && len(a.Malformed) == 0 && len(a.Checks) > 0 {
+		b.WriteString("  acceptance criteria:\n")
+		for i, c := range a.Checks {
+			if i == refocusCriteriaMax {
+				fmt.Fprintf(b, "  (%d more check(s); read the issue for them)\n", len(a.Checks)-i)
+				break
+			}
+			b.WriteString(refocusQuote + quoteLine("- `"+c.Command+"` "+c.Expect, refocusLineMax) + "\n")
+		}
+		return
+	}
+	lines, more := acceptance(body)
+	if len(lines) == 0 {
+		b.WriteString("  acceptance criteria: none written under an \"## Acceptance\" heading.\n")
+		return
+	}
+	b.WriteString("  acceptance criteria:\n")
+	for _, line := range lines {
+		b.WriteString(refocusQuote + quoteLine(line, refocusLineMax) + "\n")
+	}
+	if more > 0 {
+		fmt.Fprintf(b, "  (%d more line(s); read the issue for them)\n", more)
+	}
+}
+
+// acceptance is the lines under an issue's "## Acceptance…" heading — any
+// level-2 heading that starts with the word, so "## Acceptance criteria" too —
+// up to the next heading of the same or a higher level, blank lines dropped;
+// at most refocusCriteriaMax of them, and how many more there were. It is the
+// prose fallback for writeCriteria, deliberately looser than parseAcceptance:
+// it only has to find the section, never decide what a check is.
 func acceptance(body string) (lines []string, more int) {
 	in := false
 	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {

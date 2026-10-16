@@ -203,3 +203,76 @@ func TestRefocusRefusesUnknownArguments(t *testing.T) {
 		}
 	}
 }
+
+// writeRecordedRole is what `start` leaves in a worktree's git dir.
+func writeRecordedRole(t *testing.T, checkout, content string) {
+	t.Helper()
+	path, err := gitPathIn(checkout, startedRolePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	herdrtest.WriteFile(t, path, content)
+}
+
+// `start --role ux` on an issue whose labels pick no role records ux, and the
+// interval is ux's.
+func TestStartRecordsTheRoleItChose(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	fakeStart(t, repo, "w9", "w9:p1", "working")
+	checkout := repo.AddWorktree("42", "42-fix-the-thing")
+	writeRoles(t, intervalRoles)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","labels":[{"name":"bug"}]}`))
+
+	var out strings.Builder
+	if err := startCommand([]string{"42", "--role", "ux"}, &out); err != nil {
+		t.Fatalf("start: %v\n%s", err, out.String())
+	}
+	if got := recordedRole(checkout); got != "ux" {
+		t.Errorf("recorded role %q, want ux", got)
+	}
+	if strings.Contains(out.String(), "not recorded") {
+		t.Errorf("start said it could not record the role:\n%s", out.String())
+	}
+}
+
+// A recorded role wins over the labels, and costs no gh call to settle: here
+// the labels pick no role at all, and the worker still gets ux's interval.
+func TestRefocusIfDuePrefersTheRecordedRole(t *testing.T) {
+	checkout, _ := dueWorld(t, intervalRoles)
+	log := dueGh(t, 214, []string{"bug"}, 0)
+	writeRecordedRole(t, checkout, "ux\n")
+
+	mustQuiet(t, checkout, "the brief")
+	if calls := ghCalls(t, log); calls != "" {
+		t.Fatalf("the labels were read although start recorded the role:\n%s", calls)
+	}
+	mustQuiet(t, checkout, "turn 1")
+	if out, err := refocusDue(t, checkout); err != nil || !strings.Contains(out, "Refocus:") {
+		t.Fatalf("turn 2 under the recorded role: err %v, out %q", err, out)
+	}
+	if calls := ghCalls(t, log); strings.Contains(calls, "number,title,labels") {
+		t.Errorf("the labels were read:\n%s", calls)
+	}
+}
+
+// With no usable record — a worktree from before start kept one, or an empty
+// file — the labels decide, as they did.
+func TestRefocusIfDueFallsBackToTheLabels(t *testing.T) {
+	for name, record := range map[string]string{"no record": "", "an empty record": "\n"} {
+		t.Run(name, func(t *testing.T) {
+			checkout, _ := dueWorld(t, intervalRoles)
+			log := dueGh(t, 214, []string{"role:ux"}, 0)
+			if record != "" {
+				writeRecordedRole(t, checkout, record)
+			}
+			mustQuiet(t, checkout, "the brief")
+			if calls := ghCalls(t, log); !strings.Contains(calls, "number,title,labels") {
+				t.Fatalf("the labels were not read:\n%s", calls)
+			}
+			mustQuiet(t, checkout, "turn 1")
+			if out, err := refocusDue(t, checkout); err != nil || !strings.Contains(out, "Refocus:") {
+				t.Fatalf("turn 2 under the labels' role: err %v, out %q", err, out)
+			}
+		})
+	}
+}
