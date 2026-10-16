@@ -226,10 +226,12 @@ while true; do worktender factory --repo ~/code/thing --max 2; sleep 300; done
 */5 * * * * flock -n /tmp/worktender-factory.lock /path/to/worktender factory --repo /home/you/code/thing
 ```
 
-Both labels must exist in the repository before the first pass — `gh label
-create factory:ready` and `gh label create factory:in-progress`. Putting
-`factory:ready` on an issue is the decision that it is clear enough for an agent
-to take end to end; the factory does not second-guess it.
+**An issue gets onto the queue through `worktender approve <issue>`**, not by
+hand-labelling it. `approve` shows the payload, posts its hash comment and
+applies `factory:ready` (see [Acceptance checks](#acceptance-checks)). A label
+applied any other way puts an issue on the queue that `start` will refuse.
+Both labels must exist in the repository before the first pass: run `gh label
+create factory:ready` and `gh label create factory:in-progress`.
 
 - **Every live worker holds a slot until it reports done.** `idle` counts: a
   worker between turns is still mid-task, waiting on its checks, a review or a
@@ -248,10 +250,13 @@ to take end to end; the factory does not second-guess it.
   issue stays labelled `factory:ready`, the pass exits **2**, and the next pass
   skips it because its branch exists. The other order would leave an issue
   labelled in progress with nothing working on it whenever a start failed.
-- **Approval is `start`'s to check**, for a manual start and a queued one alike.
-  When `start` refuses an issue (exit 3), the pass skips it, leaves its label
-  alone, does not count it against the cap, and starts the next one. It still
-  exits 3, so the refusal reaches whoever reads the log.
+- **Approval is `start`'s to check**, for a manual start and a queued one alike;
+  the factory does not restate it. When `start` refuses an issue (exit 3:
+  edited since it was approved, or never approved by an account with write
+  access), the pass skips it, prints start's own message (which names the
+  `worktender approve <issue>` to run), leaves its label alone, does not count
+  it against the cap, and starts the next one. It still exits 3, so the refusal
+  reaches whoever reads the log.
 - **A failed start** for a reason of the issue's own — a role nobody defined, an
   agent that never took its brief — is reported and the pass moves on to the
   next issue; the pass still exits non-zero. A failure of the machine (exit 2:

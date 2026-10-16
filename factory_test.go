@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,7 @@ type queued struct {
 // linked worktree whose agent has that herdr status and, after a slash, that
 // last report. The fake gh's ready queue is ready, listed in the order given.
 //
-// worktree.create makes the branch for real, as herdr would, so a second pass
+// worktree.create makes the worktree for real, as herdr would, so a second pass
 // in the same test meets the branch the first one left behind. It returns the
 // server and the file gh appends each `issue edit` to.
 func factoryFleet(t *testing.T, repo *herdrtest.Repo, busy []string, ready []queued) (*herdrtest.Server, string) {
@@ -32,7 +31,7 @@ func factoryFleet(t *testing.T, repo *herdrtest.Repo, busy []string, ready []que
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
 	server.Handle("worktree.create", func(params map[string]any) (any, error) {
 		branch, _ := params["branch"].(string)
-		repo.Git("branch", branch)
+		repo.AddWorktree(branch, branch)
 		return map[string]any{
 			"type": "workspace_created",
 			"workspace": map[string]any{
@@ -121,9 +120,18 @@ func setFactoryWorktrees(server *herdrtest.Server, repo *herdrtest.Repo, linked 
 	})
 }
 
+// factoryBody is every queued issue's body: an Acceptance section start's
+// grammar accepts, so the approval check has a payload to hash.
+const factoryBody = "## Problem\nIt is broken.\n\n## Acceptance\n- [ ] `go test ./...` exits 0\n"
+
 // fakeFactoryGh answers `issue list` with the queue, `issue view N` with that
-// issue, and records every `issue edit`. Answers are files the script cats:
-// echo under dash mangles the backslashes JSON escapes with.
+// issue, and records every `issue edit`. It also answers the calls start's
+// approval check makes: the repository, the issue snapshot, and the
+// permission of the account that approved it. Every issue is approved by
+// steig, an admin, unless unapprove says otherwise.
+//
+// Answers are files the script cats: echo under dash mangles the backslashes
+// JSON escapes with.
 func fakeFactoryGh(t *testing.T, ready []queued) string {
 	t.Helper()
 
@@ -147,17 +155,59 @@ func fakeFactoryGh(t *testing.T, ready []queued) string {
 		entry := map[string]any{"number": q.number, "title": q.title, "labels": labels}
 		list = append(list, entry)
 		write(fmt.Sprintf("issue-%d.json", q.number), entry)
+		write(fmt.Sprintf("snapshot-%d.json", q.number), factorySnapshot(t, q, true))
 	}
 	write("list.json", list)
+	write("repo.json", map[string]any{"name": "worktender", "owner": map[string]any{"login": "steig"}})
+	write("perm-steig.json", map[string]any{"permission": "admin"})
 
 	edits := filepath.Join(dir, "edits")
-	herdrtest.FakeGh(t, fmt.Sprintf(`case "$1 $2" in
-"issue list") cat '%[1]s/list.json' ;;
-"issue view") cat '%[1]s/issue-'"$3"'.json' ;;
-"issue edit") [ -e '%[1]s/edit-fails' ] && exit 1; printf '%%s\n' "$*" >> '%[2]s' ;;
-*) exit 1 ;;
+	herdrtest.FakeGh(t, fmt.Sprintf(`D='%[1]s'
+answer() { [ -f "$D/$1" ] || { printf 'gh: HTTP 404\n' >&2; exit 1; }; cat "$D/$1"; }
+case "$1 $2" in
+"issue list") answer list.json ;;
+"issue view") answer "issue-$3.json" ;;
+"repo view") answer repo.json ;;
+"api graphql")
+  for a in "$@"; do case "$a" in number=*) n=${a#number=} ;; esac; done
+  answer "snapshot-$n.json" ;;
+"api repos/steig/worktender/collaborators/"*/permission)
+  login=${2#repos/steig/worktender/collaborators/}; answer "perm-${login%%/permission}.json" ;;
+"issue edit") [ -e "$D/edit-fails" ] && exit 1; printf '%%s\n' "$*" >> '%[2]s' ;;
+*) printf 'unexpected gh call: %%s\n' "$*" >&2; exit 1 ;;
 esac`, dir, edits))
 	return edits
+}
+
+// factorySnapshot is the GraphQL answer start's approval check reads for q,
+// carrying steig's approval of exactly that content when approved is set.
+func factorySnapshot(t *testing.T, q queued, approved bool) map[string]any {
+	t.Helper()
+
+	nodes := []map[string]any{}
+	if approved {
+		_, hash, _, err := approvalPayload(q.number, q.title, factoryBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodes = append(nodes, map[string]any{"author": map[string]any{"login": "steig"}, "body": approvalCommentPrefix + hash})
+	}
+	return map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{
+		"number": q.number, "title": q.title, "body": factoryBody, "comments": map[string]any{"nodes": nodes},
+	}}}}
+}
+
+// unapprove makes q's snapshot carry no approval, so start refuses it the way
+// it refuses an issue edited since `worktender approve` or never approved.
+func unapprove(t *testing.T, edits string, q queued) {
+	t.Helper()
+	raw, err := json.Marshal(factorySnapshot(t, q, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(edits), fmt.Sprintf("snapshot-%d.json", q.number)), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // breakLabelEdits makes every later `issue edit` fail.
@@ -316,20 +366,15 @@ func TestFactoryNeverStartsAnIssueTwiceAfterAFailedLabelSwap(t *testing.T) {
 }
 
 // start is where an issue's approval is checked, and a refusal there is exit 3.
-// The pass skips that issue without relabelling it or spending a slot on it,
+// #5 carries no approval of its current content — edited since `worktender
+// approve`, or never approved — so start refuses it. The pass skips it without
+// relabelling it or spending a slot on it, passes start's message through,
 // starts the next one, and still exits 3 so the refusal reaches a person.
 func TestFactorySkipsAnIssueStartRefusesAndStartsTheNext(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
-	server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}, {6, "Six", nil}})
-
-	real := factoryStart
-	factoryStart = func(args []string, out io.Writer) error {
-		if args[0] == "5" {
-			return codef(exitNeedsHuman, "#5 was edited after %s was applied; re-apply it", labelFactoryReady)
-		}
-		return real(args, out)
-	}
-	t.Cleanup(func() { factoryStart = real })
+	five := queued{5, "Five", nil}
+	server, edits := factoryFleet(t, repo, nil, []queued{five, {6, "Six", nil}})
+	unapprove(t, edits, five)
 
 	var out strings.Builder
 	err := factoryCommand([]string{"--max", "1"}, &out)
@@ -343,8 +388,8 @@ func TestFactorySkipsAnIssueStartRefusesAndStartsTheNext(t *testing.T) {
 	if len(got) != 1 || !strings.Contains(got[0], "issue edit 6 ") {
 		t.Errorf("label edits = %q, want only #6 relabelled", got)
 	}
-	if !strings.Contains(out.String(), "skipped #5") {
-		t.Errorf("the refusal should be reported as a skip:\n%s", out.String())
+	if !strings.Contains(out.String(), "skipped #5") || !strings.Contains(out.String(), "worktender approve 5") {
+		t.Errorf("the refusal should be reported as a skip, in start's own words:\n%s", out.String())
 	}
 }
 
