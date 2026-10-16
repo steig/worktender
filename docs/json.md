@@ -128,6 +128,15 @@ strongest guard here is not unsatisfied but *unavailable*, and the workspace's
 panes may still hold a live agent whose conversation closing it would destroy.
 `prune` reports the same entry and removes nothing.
 
+Except one shape: a ghost where exactly one pane last reported `done` with a PR
+number, gh says that PR merged from the branch the checkout was named for, every
+other pane is a plain shell with no agent and no report, and no agent is busy. A
+finished agent in the worker's pane also needs `--release-agents`, and the entry
+then has `releases_agents: true`. `prune` reports that as an action of kind
+`close-ghost` with status `planned`, and `prune-apply` re-reads the report and
+the agents, closes the workspace with herdr's `workspace.close`, and reports it
+`done`. Anything short of all of that is a plain ghost.
+
 Before this existed the state was in no listing at all. `Reconcile` walks
 worktrees to adopt and to prune, and walks workspaces only to read through to a
 worktree, so a workspace that outlived its checkout was visited by nothing —

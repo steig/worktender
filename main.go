@@ -310,7 +310,16 @@ func newSessionIn(repo string, need herdrNeed) (*session, error) {
 
 // plan collects the current state and decides what the repository needs.
 func (s *session) plan(releaseAgents bool) ([]reconcile.Action, error) {
-	return s.planWith(reconcile.NewCollector(s.client, s.root), releaseAgents)
+	collector := reconcile.NewCollector(s.client, s.root)
+	// Only prune reads reports: a ghost is the one verdict a report can change,
+	// and closing one is a prune-apply step.
+	if s.client != nil {
+		collector.LookupReport = s.ghostReport
+		collector.LookupPRNumber = func(number int) (reconcile.PRState, string) {
+			return reconcile.GhPRNumber(s.root, number)
+		}
+	}
+	return s.planWith(collector, releaseAgents)
 }
 
 // planWith is plan against a collector the caller has adjusted, which is how
@@ -326,6 +335,30 @@ func (s *session) planWith(collector *reconcile.Collector, releaseAgents bool) (
 	}
 	state.ReleaseAgents = releaseAgents
 	return reconcile.Reconcile(state), nil
+}
+
+// ghostReport reads a pane's last report for the ghost close, through the
+// session's own client.
+//
+// A pane with worktender tokens that do not decode is an error, not "no
+// report": something wrote a report there and it cannot be read, so it may be
+// the one that says the work is unfinished. Only a pane with no worktender
+// token at all has nothing to say.
+func (s *session) ghostReport(pane string) (reconcile.PaneReport, error) {
+	info, err := s.client.PaneGet(pane)
+	if err != nil {
+		return reconcile.PaneReport{}, err
+	}
+	r, _, ok := decodeReport(info.Pane.Tokens)
+	if ok {
+		return reconcile.PaneReport{Found: true, Status: r.status, PR: r.pr}, nil
+	}
+	for key := range info.Pane.Tokens {
+		if strings.HasPrefix(key, "worktender_") {
+			return reconcile.PaneReport{}, fmt.Errorf("pane %s carries a worktender report that does not decode", pane)
+		}
+	}
+	return reconcile.PaneReport{}, nil
 }
 
 // output is where a command's answer goes, and in which of the two shapes.
@@ -375,9 +408,9 @@ func (o *output) record(results []execute.Result) {
 // cannot be applied by one and must not point at it.
 func (o *output) applyHint() string {
 	if o.releaseAgents {
-		return "run `worktender prune-apply --release-agents` to remove the worktrees listed above"
+		return "run `worktender prune-apply --release-agents` to carry out what is planned above"
 	}
-	return "run the `Worktender: prune (apply)` action to remove the worktrees listed above"
+	return "run the `Worktender: prune (apply)` action to carry out what is planned above"
 }
 
 // reconcileJSON is what `sync`, `prune` and `prune-apply` write for a machine.
@@ -412,6 +445,9 @@ func (s *session) perform(o *output, actions []reconcile.Action, applyPrune bool
 		Root:       s.root,
 		CallerDir:  s.dir,
 		ApplyPrune: applyPrune,
+	}
+	if s.client != nil {
+		executor.LookupReport = s.ghostReport
 	}
 	results := executor.Run(actions)
 
@@ -685,7 +721,7 @@ func pruneCommand(args []string, out io.Writer, apply bool) error {
 		if err != nil {
 			return err
 		}
-		_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), false)
+		_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost, reconcile.KindCloseGhost), false)
 		return firstError(err, o.flush(s.root))
 	}
 
@@ -705,7 +741,7 @@ func pruneCommand(args []string, out io.Writer, apply bool) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), true)
+	_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost, reconcile.KindCloseGhost), true)
 	return firstError(err, o.flush(s.root))
 }
 

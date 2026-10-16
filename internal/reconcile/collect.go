@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,13 @@ type Collector struct {
 	// LookupPR resolves a branch's pull request state. Nil disables PR
 	// lookups, which makes every verdict fall back to git.
 	LookupPR func(branch string) PRState
+	// LookupReport reads a pane's last worktender report. Nil leaves every
+	// ghost a ghost, which is the direction that closes nothing.
+	LookupReport func(paneID string) (PaneReport, error)
+	// LookupPRNumber resolves a pull request named by number, which is how a
+	// report names one, to its state and head branch. Nil leaves every
+	// reported PR unmerged.
+	LookupPRNumber func(number int) (PRState, string)
 	// Warn receives notices about facts that could not be read. Nil discards
 	// them; it is never the channel an answer arrives on.
 	Warn io.Writer
@@ -129,7 +137,51 @@ func (c *Collector) Collect() (State, error) {
 		})
 	}
 
+	c.readGhostReports(&state)
 	return state, nil
+}
+
+// readGhostReports asks each pane of every ghost workspace what its worker last
+// reported, and gh whether the pull request it named merged.
+//
+// Ghosts only: a report decides nothing about a worktree that is still there,
+// and each read is a herdr call per pane and a gh call per PR. A PR named twice
+// is asked about once.
+func (c *Collector) readGhostReports(state *State) {
+	if c.LookupReport == nil {
+		return
+	}
+	live := worktreesByPath(*state)
+	type answer struct {
+		state PRState
+		head  string
+	}
+	asked := map[int]answer{}
+
+	for _, ws := range state.Workspaces {
+		if _, ok := live[pathKey(ws.CheckoutPath)]; ok {
+			continue
+		}
+		for _, pane := range ws.PaneIDs {
+			r, err := c.LookupReport(pane)
+			if err != nil {
+				c.warnf("could not read the report on pane %s: %v; leaving workspace %s open\n", pane, err, ws.ID)
+				r = PaneReport{Unreadable: true}
+			}
+			if r.Found && r.Status == reportDone && r.PR != 0 && c.LookupPRNumber != nil {
+				pr, seen := asked[r.PR]
+				if !seen {
+					pr.state, pr.head = c.LookupPRNumber(r.PR)
+					asked[r.PR] = pr
+				}
+				r.PRState, r.PRHead = pr.state, pr.head
+			}
+			if state.PaneReports == nil {
+				state.PaneReports = map[string]PaneReport{}
+			}
+			state.PaneReports[pane] = r
+		}
+	}
 }
 
 // resolve fills in the git and gh facts every guard turns on, given a worktree
@@ -288,6 +340,36 @@ func GhPRLookup(root, branch string) (PRState, error) {
 		return state, nil
 	default:
 		return PRNone, fmt.Errorf("gh pr list %s: unknown state %q", branch, state)
+	}
+}
+
+// GhPRNumber asks gh for the state and head branch of a pull request named by
+// number. Any failure yields PRNone, which closes nothing.
+func GhPRNumber(root string, number int) (PRState, string) {
+	args := []string{"pr", "view", strconv.Itoa(number), "--json", "state,headRefName"}
+	if origin := gitx.RemoteURL(root); origin != "" {
+		args = append(args, "--repo", origin)
+	}
+
+	cmd := exec.Command("gh", args...)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return PRNone, ""
+	}
+
+	var payload struct {
+		State       string `json:"state"`
+		HeadRefName string `json:"headRefName"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return PRNone, ""
+	}
+	switch state := PRState(payload.State); state {
+	case PRMerged, PRClosed, PROpen:
+		return state, payload.HeadRefName
+	default:
+		return PRNone, ""
 	}
 }
 
