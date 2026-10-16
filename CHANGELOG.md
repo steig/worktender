@@ -6,6 +6,15 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.16.1] — 2026-10-16
+
+### Changed
+
+- **The watch mod's status line leads with what needs you.** (#250) It reads
+  `wt: 1 to review · 1 blocked · 2 working`: `done` reads "to review" and comes
+  first, and idle agents are no longer counted. With only idle agents the entry
+  is gone. Watch mod 0.4.1.
+
 ## [0.16.0] — 2026-10-16
 
 ### Added
