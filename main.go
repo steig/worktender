@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "approve", "start", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "refocus", "inbox", "stats", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "approve", "start", "factory", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "refocus", "inbox", "stats", "on-event", "startup"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -73,6 +73,10 @@ func run(args []string, out io.Writer) error {
 		// Issue number in, agent working on it out. Creates a worktree, so it
 		// must be told which repository.
 		return startCommand(args[1:], out)
+	case "factory":
+		// One pass over the factory:ready queue, starting the oldest issues
+		// until --max workers hold a slot. Starts through `start`.
+		return factoryCommand(args[1:], out)
 	case "sync":
 		// Adopt and staff. Finished worktrees are only listed.
 		return syncCommand(args[1:], out)

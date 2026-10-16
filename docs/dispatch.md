@@ -206,6 +206,68 @@ the same fields, fetches no snapshot, writes no file, and types the same brief.
 The worker's report is a claim, not proof. Re-running the checks at the gate,
 so that it does not take the report's word, is a separate step.
 
+## Pulling issues from a queue
+
+`worktender factory` takes the human out of picking each issue. One pass looks
+at the repository's open issues labelled **`factory:ready`**, and while fewer
+than `--max` workers (default 2) hold a slot, starts the oldest with `start` and
+moves its label to **`factory:in-progress`**. Then it exits. It is not a daemon;
+run it from a loop or from cron.
+
+```sh
+# See what a pass would do, without starting anything.
+worktender factory --repo ~/code/thing --dry-run
+
+# A loop. One loop cannot overlap with itself, which is the simplest way to
+# never run two passes at once.
+while true; do worktender factory --repo ~/code/thing --max 2; sleep 300; done
+
+# Or cron, with flock(1) so a slow pass is skipped rather than doubled.
+*/5 * * * * flock -n /tmp/worktender-factory.lock /path/to/worktender factory --repo /home/you/code/thing
+```
+
+**An issue gets onto the queue through `worktender approve <issue>`**, not by
+hand-labelling it. `approve` shows the payload, posts its hash comment and
+applies `factory:ready` (see [Acceptance checks](#acceptance-checks)). A label
+applied any other way puts an issue on the queue that `start` will refuse.
+Both labels must exist in the repository before the first pass: run `gh label
+create factory:ready` and `gh label create factory:in-progress`.
+
+- **Every live worker holds a slot until it reports done.** `idle` counts: a
+  worker between turns is still mid-task, waiting on its checks, a review or a
+  `pr-feedback` notice, and it will spend again when it resumes. Without that,
+  every pass would start more workers while the earlier ones waited. A slot is
+  freed when the worker's last `report` says `done` (the same report
+  `ls --reports` shows), or when its agent is gone: the pane closed or the
+  worktree pruned. A report that cannot be read leaves the slot held. herdr has
+  to be running, even for `--dry-run`, because the count comes from herdr.
+- **Oldest first,** by issue number.
+- **Never twice.** An issue is skipped when any local or remote branch, or any
+  checkout herdr knows, is named for its number the way `start` names branches
+  (`42` or `42-…`), or when it already carries `factory:in-progress`. Matching
+  on the number rather than the whole name means an edited title still matches.
+- **Start, then relabel.** If the relabel fails after a successful start, the
+  issue stays labelled `factory:ready`, the pass exits **2**, and the next pass
+  skips it because its branch exists. The other order would leave an issue
+  labelled in progress with nothing working on it whenever a start failed.
+- **Approval is `start`'s to check**, for a manual start and a queued one alike;
+  the factory does not restate it. When `start` refuses an issue (exit 3:
+  edited since it was approved, or never approved by an account with write
+  access), the pass skips it, prints start's own message (which names the
+  `worktender approve <issue>` to run), leaves its label alone, does not count
+  it against the cap, and starts the next one. It still exits 3, so the refusal
+  reaches whoever reads the log.
+- **A failed start** for a reason of the issue's own — a role nobody defined, an
+  agent that never took its brief — is reported and the pass moves on to the
+  next issue; the pass still exits non-zero. A failure of the machine (exit 2:
+  herdr or gh unreachable) stops the pass.
+- **Two passes at once can race** onto the same issue; nothing locks between
+  them. Run one loop, or one cron line under `flock`.
+
+```sh
+worktender factory [--max <n>] [--repo <path>] [--dry-run] [--json]
+```
+
 ## A durable, global inbox for agent-to-agent messages
 
 `report` and `gate` are a live handshake between one worker and the coordinator
