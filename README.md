@@ -59,12 +59,15 @@ for uncommitted work, so the strongest guard here is not unsatisfied but
 unavailable, and its panes may still hold a live agent whose conversation
 closing it would destroy. Close it in herdr once you are sure.
 
-The one ghost `prune-apply` does close is the factory's ordinary finish: the
-pane's last worktender report is `done` with a PR number, `gh pr view` says that
-PR merged, and no agent in the workspace is busy. Merged work exists somewhere
-else, so the missing guard has its answer. `prune` lists such a ghost as
-`close-ghost`, a workspace it would close; `prune-apply` closes it with herdr's
-`workspace.close` and names it. Fail any of those and it stays a named ghost.
+The one ghost `prune-apply` does close is the factory's ordinary finish: exactly
+one pane's last worktender report is `done` with a PR number, `gh pr view` says
+that PR merged from the branch the checkout was named for, and every other pane
+is a plain shell with no agent and no report. Merged work exists somewhere else,
+so the missing guard has its answer. A finished agent still in the worker's pane
+is only taken under `--release-agents`, the same authority a prune needs; a busy
+one never is. `prune` lists such a ghost as `close-ghost`, a workspace it would
+close; `prune-apply` re-reads the report and the agents, closes it with herdr's
+`workspace.close`, and names it. Fail any of those and it stays a named ghost.
 
 The pane is the one `dispatch --pane` takes.
 

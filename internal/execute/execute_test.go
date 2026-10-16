@@ -1130,18 +1130,32 @@ func TestPruneWithoutHerdrStillRefusesADirtyCheckout(t *testing.T) {
 	}
 }
 
-// A ghost's close re-reads what can change between the plan and the act: an
-// agent picking work back up, or a checkout reappearing at the path. Either
-// leaves the workspace open.
+// A ghost's close re-reads what can change between the plan and the act: the
+// worker's report, the agents in the workspace, and whether a checkout
+// reappeared at the path. Any change leaves the workspace open.
 func TestCloseGhostRechecksBeforeClosing(t *testing.T) {
+	done := reconcile.PaneReport{Found: true, Status: "done", PR: 240}
 	for _, tc := range []struct {
-		name, agent string
-		reappear    bool
-		want        execute.Status
+		name     string
+		agent    string // status of the agent in w2:p1; "" for none
+		other    bool   // an agent in a second pane
+		release  bool
+		report   *reconcile.PaneReport
+		noLookup bool
+		reappear bool
+		want     execute.Status
 	}{
-		{"finished agent", "idle", false, execute.StatusDone},
-		{"agent went back to work", "working", false, execute.StatusSkipped},
-		{"checkout reappeared", "idle", true, execute.StatusSkipped},
+		{name: "finished agent, released", agent: "idle", release: true, report: &done, want: execute.StatusDone},
+		{name: "no agent left", report: &done, want: execute.StatusDone},
+		{name: "agent went back to work", agent: "working", release: true, report: &done, want: execute.StatusSkipped},
+		{name: "agent appeared without --release-agents", agent: "idle", report: &done, want: execute.StatusSkipped},
+		{name: "agent started in another pane", agent: "idle", other: true, release: true, report: &done, want: execute.StatusSkipped},
+		{name: "worker reported again", agent: "idle", release: true,
+			report: &reconcile.PaneReport{Found: true, Status: "planned", PR: 240}, want: execute.StatusSkipped},
+		{name: "worker reported another PR", agent: "idle", release: true,
+			report: &reconcile.PaneReport{Found: true, Status: "done", PR: 241}, want: execute.StatusSkipped},
+		{name: "report cannot be re-read", agent: "idle", release: true, noLookup: true, want: execute.StatusSkipped},
+		{name: "checkout reappeared", agent: "idle", release: true, report: &done, reappear: true, want: execute.StatusSkipped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := herdrtest.NewRepo(t)
@@ -1152,11 +1166,23 @@ func TestCloseGhostRechecksBeforeClosing(t *testing.T) {
 
 			exec, server := fixture(t, repo)
 			exec.ApplyPrune = true
-			occupy(server, tc.agent)
+			var agents []map[string]any
+			if tc.agent != "" {
+				agents = append(agents, map[string]any{"pane_id": "w2:p1", "agent_status": tc.agent})
+			}
+			if tc.other {
+				agents = append(agents, map[string]any{"pane_id": "w2:p2", "agent_status": "idle"})
+			}
+			server.HandleResult("agent.list", map[string]any{"type": "agent_list", "agents": agents})
+			server.HandleResult("pane.list", map[string]any{"type": "pane_list",
+				"panes": []map[string]any{{"pane_id": "w2:p1"}, {"pane_id": "w2:p2"}}})
 			server.HandleResult("workspace.close", map[string]any{"type": "ok"})
+			if !tc.noLookup {
+				exec.LookupReport = func(string) (reconcile.PaneReport, error) { return *tc.report, nil }
+			}
 
-			action := reconcile.Action{Kind: reconcile.KindCloseGhost, Path: path,
-				WorkspaceID: "w2", ReleasesAgents: true, Reason: "PR #240 merged"}
+			action := reconcile.Action{Kind: reconcile.KindCloseGhost, Path: path, WorkspaceID: "w2",
+				PaneID: "w2:p1", PR: 240, ReleasesAgents: tc.release, Reason: "PR #240 merged"}
 			result := only(t, exec.Run([]reconcile.Action{action}))
 			if result.Status != tc.want {
 				t.Fatalf("status = %q, want %q: %s", result.Status, tc.want, result.Detail)

@@ -883,9 +883,10 @@ func finishedGhost() reconcile.State {
 		Workspaces: []reconcile.Workspace{
 			{ID: "w35", CheckoutPath: "/repo/wt/gone", IsLinked: true, PaneIDs: []string{"w35:p1", "w35:p2"}},
 		},
-		AgentPanes: map[string]reconcile.AgentState{"w35:p1": reconcile.AgentIdle},
+		AgentPanes:    map[string]reconcile.AgentState{"w35:p1": reconcile.AgentIdle},
+		ReleaseAgents: true,
 		PaneReports: map[string]reconcile.PaneReport{
-			"w35:p1": {Found: true, Status: "done", PR: 240, PRState: reconcile.PRMerged},
+			"w35:p1": {Found: true, Status: "done", PR: 240, PRState: reconcile.PRMerged, PRHead: "gone"},
 			// A shell split beside the worker, with nothing to say.
 			"w35:p2": {},
 		},
@@ -899,8 +900,8 @@ func TestGhostWhoseWorkerIsDoneAndWhosePRMergedIsClosed(t *testing.T) {
 	if closing == nil {
 		t.Fatalf("a finished ghost should be planned for closing, got %+v", actions)
 	}
-	if closing.WorkspaceID != "w35" {
-		t.Errorf("the close must name the workspace, got %q", closing.WorkspaceID)
+	if closing.WorkspaceID != "w35" || closing.PaneID != "w35:p1" || closing.PR != 240 {
+		t.Errorf("the close must name the workspace, the worker's pane and its PR, got %+v", closing)
 	}
 	if !strings.Contains(closing.Reason, "#240") {
 		t.Errorf("the reason should name the merged PR, got %q", closing.Reason)
@@ -926,7 +927,28 @@ func TestGhostStaysAGhostUnlessEveryConditionHolds(t *testing.T) {
 			s.AgentPanes["w35:p2"] = reconcile.AgentWorking
 		},
 		"no report": func(s *reconcile.State) {
+			s.PaneReports = map[string]reconcile.PaneReport{"w35:p1": {}, "w35:p2": {}}
+		},
+		"panes never read": func(s *reconcile.State) {
 			s.PaneReports = nil
+		},
+		"one pane never read": func(s *reconcile.State) {
+			delete(s.PaneReports, "w35:p2")
+		},
+		"finished agent without --release-agents": func(s *reconcile.State) {
+			s.ReleaseAgents = false
+		},
+		"a second agent in another pane": func(s *reconcile.State) {
+			s.AgentPanes["w35:p2"] = reconcile.AgentIdle
+		},
+		"a second worker reported done too": func(s *reconcile.State) {
+			s.PaneReports["w35:p2"] = s.PaneReports["w35:p1"]
+		},
+		"PR from another branch": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "done", PR: 240, PRState: reconcile.PRMerged, PRHead: "something-else"}
+		},
+		"gh named no head branch": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "done", PR: 240, PRState: reconcile.PRMerged}
 		},
 		"last report planned": func(s *reconcile.State) {
 			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "planned", PR: 240, PRState: reconcile.PRMerged}
@@ -966,5 +988,35 @@ func TestGhostStaysAGhostUnlessEveryConditionHolds(t *testing.T) {
 				t.Error("it should still be named as a ghost")
 			}
 		})
+	}
+}
+
+// With no agent left in it there is no conversation to end, so the close does
+// not need --release-agents.
+func TestFinishedGhostWithNoAgentClosesWithoutReleaseAgents(t *testing.T) {
+	state := finishedGhost()
+	state.AgentPanes = map[string]reconcile.AgentState{}
+	state.ReleaseAgents = false
+
+	closing := find(reconcile.Reconcile(state), reconcile.KindCloseGhost, "/repo/wt/gone")
+	if closing == nil {
+		t.Fatal("a finished ghost with no agent in it should be planned for closing")
+	}
+	if closing.ReleasesAgents {
+		t.Error("there is no agent for this close to release")
+	}
+}
+
+// Held for want of the flag, the ghost says which flag.
+func TestFinishedGhostHeldForReleaseAgentsSaysSo(t *testing.T) {
+	state := finishedGhost()
+	state.ReleaseAgents = false
+
+	ghost := find(reconcile.Reconcile(state), reconcile.KindGhost, "/repo/wt/gone")
+	if ghost == nil {
+		t.Fatal("it should be named as a ghost")
+	}
+	if !strings.Contains(ghost.Reason, "--release-agents") {
+		t.Errorf("the reason should name the flag that closes it, got %q", ghost.Reason)
 	}
 }

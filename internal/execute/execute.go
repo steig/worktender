@@ -95,6 +95,10 @@ type Executor struct {
 	CallerDir string
 	// ApplyPrune turns prunes from a dry run into actual removals.
 	ApplyPrune bool
+	// LookupReport re-reads a pane's last report before a ghost is closed.
+	// Nil leaves every ghost open, because the close rests on that report and
+	// an unverifiable guard is not a satisfied one.
+	LookupReport func(paneID string) (reconcile.PaneReport, error)
 	// BusyRetryFor bounds how long staffing keeps re-offering a pane herdr
 	// reports busy. Zero means AgentStartTimeout; tests set it short.
 	BusyRetryFor time.Duration
@@ -274,29 +278,64 @@ func (e *Executor) prune(action reconcile.Action) Result {
 // merged. Under the same dry-run switch as a prune, because it ends whatever
 // conversation the workspace's panes still hold.
 //
-// The plan's evidence that the work landed does not go stale — a merged PR
-// stays merged — but the two facts around it can: an agent can pick work up
-// again, and a checkout can be recreated at the path. Either makes this
-// workspace something other than the finished ghost the plan saw.
+// A merged PR stays merged, but everything around it can move between the plan
+// and the act: the worker can be re-briefed and report again, an agent can pick
+// work up or start in another pane, and a checkout can be recreated at the
+// path. Any of those makes this workspace something other than the finished
+// ghost the plan saw, so each is read again here.
 func (e *Executor) closeGhost(action reconcile.Action) Result {
+	skip := func(why string) Result { return Result{action, StatusSkipped, why} }
+
 	if _, err := os.Stat(action.Path); err == nil {
-		return Result{action, StatusSkipped, "a checkout reappeared at " + action.Path + " since the plan was made"}
+		return skip("a checkout reappeared at " + action.Path + " since the plan was made")
 	}
-	_, busy, err := e.workspaceOccupant(action.WorkspaceID)
+
+	if e.LookupReport == nil {
+		return skip("could not re-read the worker's report, so the close has nothing to rest on")
+	}
+	r, err := e.LookupReport(action.PaneID)
 	switch {
 	case err != nil:
-		return Result{action, StatusSkipped, fmt.Sprintf("could not confirm the workspace is idle: %v", err)}
-	case busy:
-		return Result{action, StatusSkipped, "the agent here started working since the plan was made"}
+		return skip(fmt.Sprintf("could not re-read the worker's report: %v", err))
+	case !r.Found || r.Status != "done" || r.PR != action.PR:
+		return skip(fmt.Sprintf("the worker in %s has reported again since the plan was made", action.PaneID))
+	}
+
+	agents, err := e.Client.AgentList()
+	if err != nil {
+		return skip(fmt.Sprintf("could not confirm the workspace is idle: %v", err))
+	}
+	panes, err := e.Client.PaneList(action.WorkspaceID)
+	if err != nil {
+		return skip(fmt.Sprintf("could not confirm the workspace is idle: %v", err))
+	}
+	hosting := make(map[string]reconcile.AgentState, len(agents.Agents))
+	for _, a := range agents.Agents {
+		hosting[a.PaneID] = reconcile.AgentState(a.AgentStatus)
+	}
+	for _, p := range panes.Panes {
+		status, ok := hosting[p.PaneID]
+		switch {
+		case !ok:
+			continue
+		case p.PaneID != action.PaneID:
+			return skip(fmt.Sprintf("an agent started in pane %s since the plan was made", p.PaneID))
+		case !status.Finished():
+			return skip("the agent here started working since the plan was made")
+		case !action.ReleasesAgents:
+			return skip("an agent started here since the plan was made")
+		}
 	}
 
 	if !e.ApplyPrune {
-		return Result{action, StatusPlanned, "would close workspace " + action.WorkspaceID + ": " + action.Reason}
+		return Result{action, StatusPlanned,
+			"would close workspace " + action.WorkspaceID + ": " + action.Reason + releaseNote(action)}
 	}
 	if err := e.Client.WorkspaceClose(action.WorkspaceID); err != nil {
 		return Result{action, StatusFailed, fmt.Sprintf("close workspace %s: %v", action.WorkspaceID, err)}
 	}
-	return Result{action, StatusDone, "closed workspace " + action.WorkspaceID + ": " + action.Reason}
+	return Result{action, StatusDone,
+		"closed workspace " + action.WorkspaceID + ": " + action.Reason + releaseNote(action)}
 }
 
 // releaseNote says when a removal also takes an agent's pane away. The reason

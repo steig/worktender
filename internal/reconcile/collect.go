@@ -32,8 +32,9 @@ type Collector struct {
 	// ghost a ghost, which is the direction that closes nothing.
 	LookupReport func(paneID string) (PaneReport, error)
 	// LookupPRNumber resolves a pull request named by number, which is how a
-	// report names one. Nil leaves every reported PR unmerged.
-	LookupPRNumber func(number int) PRState
+	// report names one, to its state and head branch. Nil leaves every
+	// reported PR unmerged.
+	LookupPRNumber func(number int) (PRState, string)
 	// Warn receives notices about facts that could not be read. Nil discards
 	// them; it is never the channel an answer arrives on.
 	Warn io.Writer
@@ -151,7 +152,11 @@ func (c *Collector) readGhostReports(state *State) {
 		return
 	}
 	live := worktreesByPath(*state)
-	asked := map[int]PRState{}
+	type answer struct {
+		state PRState
+		head  string
+	}
+	asked := map[int]answer{}
 
 	for _, ws := range state.Workspaces {
 		if _, ok := live[pathKey(ws.CheckoutPath)]; ok {
@@ -166,10 +171,10 @@ func (c *Collector) readGhostReports(state *State) {
 			if r.Found && r.Status == reportDone && r.PR != 0 && c.LookupPRNumber != nil {
 				pr, seen := asked[r.PR]
 				if !seen {
-					pr = c.LookupPRNumber(r.PR)
+					pr.state, pr.head = c.LookupPRNumber(r.PR)
 					asked[r.PR] = pr
 				}
-				r.PRState = pr
+				r.PRState, r.PRHead = pr.state, pr.head
 			}
 			if state.PaneReports == nil {
 				state.PaneReports = map[string]PaneReport{}
@@ -338,10 +343,10 @@ func GhPRLookup(root, branch string) (PRState, error) {
 	}
 }
 
-// GhPRNumberState asks gh for the state of a pull request named by number. Any
-// failure yields PRNone, which closes nothing.
-func GhPRNumberState(root string, number int) PRState {
-	args := []string{"pr", "view", strconv.Itoa(number), "--json", "state"}
+// GhPRNumber asks gh for the state and head branch of a pull request named by
+// number. Any failure yields PRNone, which closes nothing.
+func GhPRNumber(root string, number int) (PRState, string) {
+	args := []string{"pr", "view", strconv.Itoa(number), "--json", "state,headRefName"}
 	if origin := gitx.RemoteURL(root); origin != "" {
 		args = append(args, "--repo", origin)
 	}
@@ -350,18 +355,21 @@ func GhPRNumberState(root string, number int) PRState {
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		return PRNone
+		return PRNone, ""
 	}
 
-	var payload prRecord
+	var payload struct {
+		State       string `json:"state"`
+		HeadRefName string `json:"headRefName"`
+	}
 	if err := json.Unmarshal(out, &payload); err != nil {
-		return PRNone
+		return PRNone, ""
 	}
 	switch state := PRState(payload.State); state {
 	case PRMerged, PRClosed, PROpen:
-		return state
+		return state, payload.HeadRefName
 	default:
-		return PRNone
+		return PRNone, ""
 	}
 }
 

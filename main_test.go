@@ -697,11 +697,21 @@ func TestPruneNamesAWorkspaceWhoseCheckoutHasVanished(t *testing.T) {
 	}
 }
 
-// finishedGhostSession is the factory's ordinary finish as herdr and gh see it:
-// a workspace held open on a deleted checkout, whose worker's last report is
-// `done` with PR #240, and an agent in it doing agentStatus. gh answers
-// `pr view` with prState.
-func finishedGhostSession(t *testing.T, agentStatus, prState string) *herdrtest.Server {
+// ghostSetup is the factory's ordinary finish as herdr and gh see it, with one
+// field per thing that can spoil it: a workspace held open on a deleted
+// checkout, whose worker in w35:p1 last reported `done` with PR #240.
+type ghostSetup struct {
+	agent  string // the worker's agent status; "" for no agent
+	pr     string // the state gh reports for #240
+	head   string // the branch gh reports #240 was opened from
+	second string // a second pane: "" none, "shell", "agent", "garbled"
+}
+
+func finishedGhost() ghostSetup {
+	return ghostSetup{agent: "done", pr: "MERGED", head: "vanished"}
+}
+
+func (g ghostSetup) session(t *testing.T) *herdrtest.Server {
 	t.Helper()
 	repo := herdrtest.NewRepo(t)
 	gone := filepath.Join(repo.Root, "..", "vanished")
@@ -714,29 +724,48 @@ func finishedGhostSession(t *testing.T, agentStatus, prState string) *herdrtest.
 		"worktrees": []map[string]any{},
 	})
 	server.HandleResult("workspace.list", workspaceListReply(repo, gone, "w35"))
-	server.HandleResult("agent.list", map[string]any{"type": "agent_list", "agents": []map[string]any{{
-		"pane_id": "w35:p1", "agent_status": agentStatus, "agent_name": "worker",
-	}}})
-	server.HandleResult("pane.list", map[string]any{"type": "pane_list",
-		"panes": []map[string]any{{"pane_id": "w35:p1"}}})
+
+	agents := []map[string]any{}
+	if g.agent != "" {
+		agents = append(agents, map[string]any{"pane_id": "w35:p1", "agent_status": g.agent, "agent_name": "worker"})
+	}
+	panes := []map[string]any{{"pane_id": "w35:p1"}}
+	if g.second != "" {
+		panes = append(panes, map[string]any{"pane_id": "w35:p2"})
+	}
+	if g.second == "agent" {
+		agents = append(agents, map[string]any{"pane_id": "w35:p2", "agent_status": "idle", "agent_name": "other"})
+	}
+	server.HandleResult("agent.list", map[string]any{"type": "agent_list", "agents": agents})
+	server.HandleResult("pane.list", map[string]any{"type": "pane_list", "panes": panes})
 
 	encoded, err := encodeReport(report{status: "done", pr: 240, note: "x"}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tokens := map[string]string{}
+	worker := map[string]string{}
 	for k, v := range encoded {
 		if text, ok := v.(string); ok {
-			tokens[k] = text
+			worker[k] = text
 		}
 	}
-	server.HandleResult("pane.get", map[string]any{"type": "pane_info", "pane": map[string]any{
-		"pane_id": "w35:p1", "workspace_id": "w35", "tab_id": "t1", "terminal_id": "term_1",
-		"agent_status": agentStatus, "focused": false, "revision": 1, "tokens": tokens,
-	}})
+	server.Handle("pane.get", func(params map[string]any) (any, error) {
+		pane, _ := params["pane_id"].(string)
+		tokens := map[string]string{}
+		switch {
+		case pane == "w35:p1":
+			tokens = worker
+		case g.second == "garbled":
+			tokens = map[string]string{"worktender_v": "1", "worktender_status": "done"}
+		}
+		return map[string]any{"type": "pane_info", "pane": map[string]any{
+			"pane_id": pane, "workspace_id": "w35", "tab_id": "t1", "terminal_id": "term_1",
+			"agent_status": "idle", "focused": false, "revision": 1, "tokens": tokens,
+		}}, nil
+	})
 	server.HandleResult("workspace.close", map[string]any{"type": "ok"})
 
-	view := herdrtest.CatScript(t, `{"state":"`+prState+`"}`)
+	view := herdrtest.CatScript(t, `{"state":"`+g.pr+`","headRefName":"`+g.head+`"}`)
 	herdrtest.FakeGh(t, `if [ "$1 $2" = "pr view" ]; then `+view+`; else echo '[]'; fi`)
 	return server
 }
@@ -754,10 +783,10 @@ func closed(server *herdrtest.Server) []string {
 
 // prune lists a finished ghost as one it would close, and closes nothing.
 func TestPruneListsAFinishedGhostAsOneItWouldClose(t *testing.T) {
-	server := finishedGhostSession(t, "idle", "MERGED")
+	server := finishedGhost().session(t)
 
 	var out strings.Builder
-	if err := pruneCommand(nil, &out, false); err != nil {
+	if err := pruneCommand([]string{"--release-agents"}, &out, false); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 	got := out.String()
@@ -771,38 +800,68 @@ func TestPruneListsAFinishedGhostAsOneItWouldClose(t *testing.T) {
 
 // prune-apply closes it via workspace.close and says which.
 func TestPruneApplyClosesAFinishedGhost(t *testing.T) {
-	server := finishedGhostSession(t, "done", "MERGED")
+	for name, g := range map[string]ghostSetup{
+		"finished agent":       finishedGhost(),
+		"beside a plain shell": func() ghostSetup { g := finishedGhost(); g.second = "shell"; return g }(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := g.session(t)
+
+			var out strings.Builder
+			if err := pruneCommand([]string{"--release-agents"}, &out, true); err != nil {
+				t.Fatalf("prune-apply: %v", err)
+			}
+			if ids := closed(server); len(ids) != 1 || ids[0] != "w35" {
+				t.Errorf("prune-apply should close w35 and nothing else, closed %v", ids)
+			}
+			if got := out.String(); !strings.Contains(got, "closed workspace w35") {
+				t.Errorf("prune-apply should say which workspace it closed, got:\n%s", got)
+			}
+			for _, call := range server.Calls() {
+				if call.Method == "worktree.remove" {
+					t.Errorf("closing a ghost has no worktree to remove; called %+v", call)
+				}
+			}
+		})
+	}
+}
+
+// A finished agent still in the workspace is only taken under
+// --release-agents, the same authority a prune needs.
+func TestPruneApplyHoldsAFinishedGhostWithAnAgentWithoutReleaseAgents(t *testing.T) {
+	server := finishedGhost().session(t)
 
 	var out strings.Builder
 	if err := pruneCommand(nil, &out, true); err != nil {
 		t.Fatalf("prune-apply: %v", err)
 	}
-	if ids := closed(server); len(ids) != 1 || ids[0] != "w35" {
-		t.Errorf("prune-apply should close w35 and nothing else, closed %v", ids)
+	if ids := closed(server); len(ids) > 0 {
+		t.Errorf("prune-apply closed %v without --release-agents", ids)
 	}
-	if got := out.String(); !strings.Contains(got, "closed workspace w35") {
-		t.Errorf("prune-apply should say which workspace it closed, got:\n%s", got)
-	}
-	for _, call := range server.Calls() {
-		if call.Method == "worktree.remove" {
-			t.Errorf("closing a ghost has no worktree to remove; called %+v", call)
-		}
+	if got := out.String(); !strings.Contains(got, "--release-agents") {
+		t.Errorf("the ghost should name the flag that closes it, got:\n%s", got)
 	}
 }
 
 // The command-level half of the blocking conditions: what herdr and gh say
 // reaches the decision. The full set is in internal/reconcile.
 func TestPruneApplyLeavesAGhostOpenUnlessItsWorkFinished(t *testing.T) {
-	for _, tc := range []struct{ name, agent, pr string }{
-		{"PR still open", "idle", "OPEN"},
-		{"PR closed unmerged", "idle", "CLOSED"},
-		{"agent working", "working", "MERGED"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := finishedGhostSession(t, tc.agent, tc.pr)
+	spoil := map[string]func(*ghostSetup){
+		"PR still open":            func(g *ghostSetup) { g.pr = "OPEN" },
+		"PR closed unmerged":       func(g *ghostSetup) { g.pr = "CLOSED" },
+		"PR from another branch":   func(g *ghostSetup) { g.head = "someone-elses" },
+		"agent working":            func(g *ghostSetup) { g.agent = "working" },
+		"another agent beside it":  func(g *ghostSetup) { g.second = "agent" },
+		"a report that won't read": func(g *ghostSetup) { g.second = "garbled" },
+	}
+	for name, change := range spoil {
+		t.Run(name, func(t *testing.T) {
+			g := finishedGhost()
+			change(&g)
+			server := g.session(t)
 
 			var out strings.Builder
-			if err := pruneCommand(nil, &out, true); err != nil {
+			if err := pruneCommand([]string{"--release-agents"}, &out, true); err != nil {
 				t.Fatalf("prune-apply: %v", err)
 			}
 			if ids := closed(server); len(ids) > 0 {
