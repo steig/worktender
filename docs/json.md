@@ -681,8 +681,9 @@ $ worktender factory --repo . --json
 }
 ```
 
-- **`running`** is the busy workers — `working` or `blocked` — counted before
-  the pass started anything: the number `max` was measured against.
+- **`running`** is the slots held before the pass started anything: every live
+  worker whose last report is not `done`, `idle` ones included. It is the number
+  `max` was measured against.
 - **`issues`** is every issue the pass looked at, in the order it looked. Issues
   further down the queue than the free slots reached are not listed.
 - **`outcome`** is `started`, `would_start` (under `--dry-run`), `skipped` or

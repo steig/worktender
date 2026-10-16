@@ -75,7 +75,7 @@ func run(args []string, out io.Writer) error {
 		return startCommand(args[1:], out)
 	case "factory":
 		// One pass over the factory:ready queue, starting the oldest issues
-		// until --max workers are busy. Starts through `start`.
+		// until --max workers hold a slot. Starts through `start`.
 		return factoryCommand(args[1:], out)
 	case "sync":
 		// Adopt and staff. Finished worktrees are only listed.

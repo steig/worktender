@@ -210,7 +210,7 @@ so that it does not take the report's word, is a separate step.
 
 `worktender factory` takes the human out of picking each issue. One pass looks
 at the repository's open issues labelled **`factory:ready`**, and while fewer
-than `--max` workers (default 2) are busy, starts the oldest with `start` and
+than `--max` workers (default 2) hold a slot, starts the oldest with `start` and
 moves its label to **`factory:in-progress`**. Then it exits. It is not a daemon;
 run it from a loop or from cron.
 
@@ -231,11 +231,14 @@ create factory:ready` and `gh label create factory:in-progress`. Putting
 `factory:ready` on an issue is the decision that it is clear enough for an agent
 to take end to end; the factory does not second-guess it.
 
-- **Busy means `working` or `blocked`.** A worker that opened its pull request
-  and went `idle` or `done` is waiting on a reviewer, and counting it would stall
-  the queue until somebody pruned. `blocked` counts, because it is waiting on a
-  person, and that person is who the cap is for. herdr has to be running, even
-  for `--dry-run`: only herdr can say what an agent is doing.
+- **Every live worker holds a slot until it reports done.** `idle` counts: a
+  worker between turns is still mid-task, waiting on its checks, a review or a
+  `pr-feedback` notice, and it will spend again when it resumes. Without that,
+  every pass would start more workers while the earlier ones waited. A slot is
+  freed when the worker's last `report` says `done` (the same report
+  `ls --reports` shows), or when its agent is gone: the pane closed or the
+  worktree pruned. A report that cannot be read leaves the slot held. herdr has
+  to be running, even for `--dry-run`, because the count comes from herdr.
 - **Oldest first,** by issue number.
 - **Never twice.** An issue is skipped when any local or remote branch, or any
   checkout herdr knows, is named for its number the way `start` names branches

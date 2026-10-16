@@ -21,14 +21,14 @@ import (
 
 // factory takes the human out of the conveyor belt: issues labelled
 // factory:ready are started oldest first, until the repository has --max
-// workers busy.
+// live workers that have not reported done.
 //
 // It is one pass, not a loop, for the reason pr-feedback is: something else
 // decides how often to look — cron, a shell loop, a coordinator — so there is
 // no daemon to start, stop and keep alive. Everything a pass needs from the
 // last one is already in the world: which issues are labelled, which branches
-// exist, which agents herdr says are busy. Nothing is kept on disk, so nothing
-// on disk can disagree with it.
+// exist, which workers herdr still has and what each last reported. Nothing is
+// kept on disk, so nothing on disk can disagree with it.
 //
 // Starting is `start`, called through its own entry point with the same
 // arguments a person would type. The queue decides which issue and when; how an
@@ -59,7 +59,7 @@ const (
 func factoryCommand(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("factory", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	maxWorkers := fs.Int("max", factoryDefaultMax, "start issues until this many workers are busy")
+	maxWorkers := fs.Int("max", factoryDefaultMax, "start issues until this many workers hold a slot")
 	repo := fs.String("repo", "", "repository to act on, instead of the one herdr is currently in")
 	dryRun := fs.Bool("dry-run", false, "say which issues would be started, and start none")
 	asJSON := jsonFlag(fs)
@@ -74,9 +74,9 @@ func factoryCommand(args []string, out io.Writer) error {
 		return usagef("--max must be at least 1, got %d; %s", *maxWorkers, factoryUsage)
 	}
 
-	// Herdr is required even for a dry run: the cap is a count of busy agents,
-	// and only herdr can say what an agent is doing. A dry run with no herdr
-	// would have to guess the one number it exists to report.
+	// Herdr is required even for a dry run: the cap is a count of live agents,
+	// and only herdr can say which are alive and what they last reported. A dry
+	// run with no herdr would have to guess the one number it exists to report.
 	//
 	// The repository is resolved as start resolves it, because start is what
 	// runs. A dry run changes nothing and may fall back to the working
@@ -118,7 +118,7 @@ func factoryCommand(args []string, out io.Writer) error {
 		return fail(err)
 	}
 	doc.Running = busyWorkers(rows)
-	fmt.Fprintf(notes, "busy workers: %d of %d\n", doc.Running, *maxWorkers)
+	fmt.Fprintf(notes, "slots held: %d of %d\n", doc.Running, *maxWorkers)
 
 	free := *maxWorkers - doc.Running
 	if free <= 0 {
@@ -254,7 +254,13 @@ func runStart(root string, number int, asJSON bool, out io.Writer) (json.RawMess
 }
 
 // factoryRows is the repository's worktrees joined with herdr's workspaces,
-// which is the same join `ls` prints.
+// which is the same join `ls` prints, with each pane's last report: the
+// reading `ls --reports` gives.
+//
+// The report is read through the session's own client rather than through
+// paneReport, which dials HERDR_SOCKET_PATH. That is set only when herdr
+// started us, and from cron it is not — every lookup would fail, and every
+// worker would hold its slot whatever it had reported.
 func factoryRows(client *herdrapi.Client, root string) ([]wt.Row, error) {
 	worktrees, err := client.WorktreeList(root)
 	if err != nil {
@@ -264,22 +270,42 @@ func factoryRows(client *herdrapi.Client, root string) ([]wt.Row, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list workspaces: %w", err)
 	}
-	return wt.Rows(worktrees, workspaces), nil
+	rows := wt.Rows(worktrees, workspaces)
+	wt.WithPanes(client, rows)
+	wt.WithReports(rows, func(pane string) (wt.Report, error) {
+		info, err := client.PaneGet(pane)
+		if err != nil {
+			return wt.Report{}, err
+		}
+		r, _, ok := decodeReport(info.Pane.Tokens)
+		if !ok {
+			return wt.Report{}, nil
+		}
+		return wt.Report{Found: true, Status: r.status, PR: r.pr, Note: r.note}, nil
+	})
+	return rows, nil
 }
 
-// busyWorkers counts the agents the cap is about: those herdr reports working
-// or blocked, in any checkout of this repository but its main one.
+// busyWorkers counts the slots the cap is about: every live worker in a
+// checkout of this repository other than its main one, unless its last report
+// says done.
 //
-// Not every staffed worktree. A worker that has opened its pull request and
-// gone idle, or reported done, is waiting on a reviewer rather than spending
-// anything, and counting it would stall the queue until somebody pruned. The
-// cost is that a worker woken by review feedback is busy again on top of the
-// cap — briefly over it, not unbounded, since the next pass starts nothing
-// until the count is back under.
+// IDLE HOLDS A SLOT. A worker between turns is still mid-task — waiting on its
+// pull request's checks, on a review, on the pr-feedback notice that wakes it
+// — and spends again when it resumes. Counting only the agents working at this
+// instant would let every pass start more while the earlier ones waited, and
+// the number alive would grow without bound: the opposite of what the cap is
+// for, which is keeping spend small until the metrics justify more.
 //
-// `blocked` counts: it is an agent waiting on a person, and that person is the
-// one the cap protects. A ghost row counts too — its checkout is gone from git
-// but herdr still has an agent in it doing something.
+// A slot is freed by the worker reporting done, or by its agent going — the
+// pane closed, the worktree pruned, herdr seeing no agent there. A report that
+// could not be read leaves the slot held, because the side to err on is
+// starting too few. An open pull request would be a second signal, but it is a
+// gh call per branch on every pass; the done report is the worker's own word
+// that it has finished, and costs one herdr call.
+//
+// A ghost row counts too: its checkout is gone from git but herdr still has an
+// agent in it.
 func busyWorkers(rows []wt.Row) int {
 	n := 0
 	for _, row := range rows {
@@ -287,9 +313,13 @@ func busyWorkers(rows []wt.Row) int {
 			continue
 		}
 		switch herdrapi.AgentStatus(row.AgentStatus) {
-		case herdrapi.AgentStatusWorking, herdrapi.AgentStatusBlocked:
-			n++
+		case "", herdrapi.AgentStatusUnknown:
+			continue
 		}
+		if r := row.Report; r != nil && r.Err == nil && r.Found && r.Status == "done" {
+			continue
+		}
+		n++
 	}
 	return n
 }
@@ -413,7 +443,7 @@ func alreadyStarted(candidate issue, taken []string) string {
 type factoryJSON struct {
 	Repository string `json:"repository"`
 	Max        int    `json:"max"`
-	// Running is the busy workers counted before anything was started, the
+	// Running is the slots live workers held before anything was started: the
 	// number the cap was measured against.
 	Running int  `json:"running"`
 	DryRun  bool `json:"dry_run"`

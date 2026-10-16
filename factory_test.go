@@ -20,8 +20,8 @@ type queued struct {
 }
 
 // factoryFleet is a fake herdr with one workspace per entry of busy, each a
-// linked worktree whose agent reports that status, and a fake gh whose ready
-// queue is ready, listed in the order given.
+// linked worktree whose agent has that herdr status and, after a slash, that
+// last report. The fake gh's ready queue is ready, listed in the order given.
 //
 // worktree.create makes the branch for real, as herdr would, so a second pass
 // in the same test meets the branch the first one left behind. It returns the
@@ -44,9 +44,32 @@ func factoryFleet(t *testing.T, repo *herdrtest.Repo, busy []string, ready []que
 		}, nil
 	})
 
+	// Each workspace's pane is "<id>:p1", and its report is whatever followed
+	// the slash in its entry of busy: "idle/done" is an idle agent that has
+	// reported done.
+	reports := map[string]map[string]string{}
+	server.Handle("pane.list", func(params map[string]any) (any, error) {
+		ws, _ := params["workspace_id"].(string)
+		return map[string]any{"type": "pane_list", "panes": []map[string]any{
+			{"pane_id": ws + ":p1", "workspace_id": ws, "tab_id": "t1", "index": 0},
+		}}, nil
+	})
+	server.Handle("pane.get", func(params map[string]any) (any, error) {
+		pane, _ := params["pane_id"].(string)
+		return map[string]any{"type": "pane_info", "pane": map[string]any{
+			"pane_id": pane, "workspace_id": strings.TrimSuffix(pane, ":p1"), "tab_id": "t1",
+			"terminal_id": "term_1", "agent_status": "idle", "focused": false, "revision": 1,
+			"tokens": reports[pane],
+		}}, nil
+	})
+
 	var worktrees, workspaces []map[string]any
-	for i, status := range busy {
+	for i, entry := range busy {
 		id := fmt.Sprintf("b%d", i)
+		status, reported, _ := strings.Cut(entry, "/")
+		if reported != "" {
+			reports[id+":p1"] = reportTokens(t, reported)
+		}
 		checkout := filepath.Join(repo.Root, ".claude", "worktrees", "busy-"+id)
 		worktrees = append(worktrees, map[string]any{
 			"path": checkout, "label": "busy-" + id, "branch": "busy-" + id,
@@ -64,6 +87,23 @@ func factoryFleet(t *testing.T, repo *herdrtest.Repo, busy []string, ready []que
 	server.HandleResult("workspace.list", map[string]any{"type": "workspace_list", "workspaces": workspaces})
 
 	return server, fakeFactoryGh(t, ready)
+}
+
+// reportTokens is the pane metadata a worker's `report --status <status>`
+// leaves behind, in the layout report.go writes.
+func reportTokens(t *testing.T, status string) map[string]string {
+	t.Helper()
+	encoded, err := encodeReport(report{status: status, note: "x"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := map[string]string{}
+	for k, v := range encoded {
+		if s, ok := v.(string); ok {
+			tokens[k] = s
+		}
+	}
+	return tokens
 }
 
 // setFactoryWorktrees answers worktree.list with the main checkout plus the
@@ -160,17 +200,17 @@ func passFactory(t *testing.T, args ...string) string {
 	return out.String()
 }
 
-// One worker is busy and the cap is two, so one slot is free and one issue is
-// started — not the three that are ready. An idle and a done worker are not
-// busy: they are waiting on a reviewer, and counting them would stall the
-// queue until somebody pruned.
+// Two of four workers hold a slot and the cap is three, so one issue is
+// started — not the three that are ready. The worker that reported done has
+// freed its slot, and so has the workspace herdr sees no agent in; the
+// working one and the blocked one that reported only a plan have not.
 func TestFactoryStartsOnlyUpToTheCap(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
-	server, edits := factoryFleet(t, repo, []string{"working", "idle", "done"}, []queued{
+	server, edits := factoryFleet(t, repo, []string{"working", "idle/done", "unknown", "blocked/planned"}, []queued{
 		{5, "Five", nil}, {6, "Six", nil}, {7, "Seven", nil},
 	})
 
-	out := passFactory(t, "--max", "2")
+	out := passFactory(t, "--max", "3")
 
 	if got := createdBranches(server); len(got) != 1 || got[0] != "5-five" {
 		t.Errorf("started %v, want only 5-five:\n%s", got, out)
@@ -181,11 +221,13 @@ func TestFactoryStartsOnlyUpToTheCap(t *testing.T) {
 	}
 }
 
-// A blocked worker is waiting on a person, and that person is who the cap is
-// for. At the cap, nothing is started and the pass still succeeds.
+// An idle worker is between turns, not finished: waiting on its checks, a
+// review or a feedback notice. Two of them fill the default cap whether or not
+// they have reported anything yet, and only a done report would free one. If
+// idle freed a slot, every pass would start more while these waited.
 func TestFactoryAtTheCapStartsNothing(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
-	server, edits := factoryFleet(t, repo, []string{"working", "blocked"}, []queued{{5, "Five", nil}})
+	server, edits := factoryFleet(t, repo, []string{"idle", "idle/planned"}, []queued{{5, "Five", nil}})
 
 	out := passFactory(t)
 
