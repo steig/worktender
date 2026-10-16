@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
@@ -124,6 +125,9 @@ type ghAuthor struct {
 type ghReview struct {
 	ID     string   `json:"id"`
 	Author ghAuthor `json:"author"`
+	// Association is GitHub's authorAssociation: OWNER, MEMBER, COLLABORATOR
+	// and the rest. gh sends it on reviews and comments alike.
+	Association string `json:"authorAssociation"`
 }
 
 // prCheck is a statusCheckRollup entry, which is one of two shapes: a check
@@ -133,12 +137,34 @@ type prCheck struct {
 	Conclusion string `json:"conclusion"`
 	Context    string `json:"context"`
 	State      string `json:"state"`
+	// Both shapes carry startedAt; only a check run has completedAt, and gh
+	// sends it as the zero time ("0001-01-01T00:00:00Z") while the run is
+	// still going. Checked against live gh output for both shapes.
+	StartedAt   time.Time `json:"startedAt"`
+	CompletedAt time.Time `json:"completedAt"`
 }
 
 // prItem is one review or comment by id and author.
 type prItem struct {
 	ID     string
 	Author string
+	// Trusted is an author with a hand in the repository — see trustedAuthor.
+	Trusted bool
+}
+
+// trustedAuthor is whether an authorAssociation names someone the owner let
+// into the repository. On a public repository anyone can comment on a PR, and
+// a login is only as trustworthy as whoever picked it: a stranger called
+// `steig-bot` is not the owner. So only these are named in a notice.
+// Everyone else is still counted, without a name, because review bots usually
+// arrive as NONE and their findings are worth a look; but the count is all
+// they get, and the notice says it is from outside.
+func trustedAuthor(association string) bool {
+	switch association {
+	case "OWNER", "MEMBER", "COLLABORATOR":
+		return true
+	}
+	return false
 }
 
 // failing reports whether a check has finished and not passed. Cancelled and
@@ -152,6 +178,14 @@ func (c prCheck) failing() bool {
 	return false
 }
 
+// when is when the entry last moved: finished, or failing that, started.
+func (c prCheck) when() time.Time {
+	if !c.CompletedAt.IsZero() {
+		return c.CompletedAt
+	}
+	return c.StartedAt
+}
+
 func (c prCheck) name() string {
 	if c.Name != "" {
 		return c.Name
@@ -159,18 +193,29 @@ func (c prCheck) name() string {
 	return c.Context
 }
 
-// failingChecks is the sorted, de-duplicated names of the failing checks. A
-// matrix job reports one name per leg, and a notice naming `test` four times
-// says nothing the first did not.
+// failingChecks is the sorted names of the checks whose latest run failed.
+//
+// The rollup keeps superseded runs: a re-run, or the same workflow triggered
+// by both push and pull_request, leaves an old entry beside the new one under
+// the same name. Seen live, two `test (ubuntu-latest)` entries on one PR. Only
+// the latest per name counts, or a failure fixed an hour ago is reported for
+// as long as the PR is open. A tie keeps the later entry in gh's order.
 func (p *prFeedback) failingChecks() []string {
-	var names []string
+	latest := map[string]prCheck{}
 	for _, c := range p.Checks {
+		if prev, ok := latest[c.name()]; ok && prev.when().After(c.when()) {
+			continue
+		}
+		latest[c.name()] = c
+	}
+	var names []string
+	for name, c := range latest {
 		if c.failing() {
-			names = append(names, c.name())
+			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
-	return slices.Compact(names)
+	return names
 }
 
 // ghPRFeedback asks gh for the branch's open pull request.
@@ -199,7 +244,7 @@ func ghPRFeedback(root, branch string) (*prFeedback, error) {
 	}
 	pr := &prs[0]
 	for _, r := range append(pr.Rev, pr.Com...) {
-		pr.Items = append(pr.Items, prItem{ID: r.ID, Author: r.Author.Login})
+		pr.Items = append(pr.Items, prItem{ID: r.ID, Author: r.Author.Login, Trusted: trustedAuthor(r.Association)})
 	}
 	return pr, nil
 }
@@ -280,13 +325,15 @@ func runPRFeedback(client *herdrapi.Client, root string, rows []wt.Row,
 
 // prNews is what changed since the last notice.
 type prNews struct {
-	// byAuthor counts new reviews and comments per login.
+	// byAuthor counts new reviews and comments per trusted login.
 	byAuthor map[string]int
+	// outside counts the new ones by everyone else, who are not named.
+	outside int
 	// failing is the checks failing now that were not when last said.
 	failing []string
 }
 
-func (n prNews) empty() bool { return len(n.byAuthor) == 0 && len(n.failing) == 0 }
+func (n prNews) empty() bool { return len(n.byAuthor) == 0 && n.outside == 0 && len(n.failing) == 0 }
 
 func newsFor(pr *prFeedback, seen prSeen) prNews {
 	news := prNews{byAuthor: map[string]int{}}
@@ -295,9 +342,18 @@ func newsFor(pr *prFeedback, seen prSeen) prNews {
 		known[id] = true
 	}
 	for _, it := range pr.Items {
-		// The PR's author is, near enough always, the worker itself: its own
-		// comments are not news to it.
-		if known[it.ID] || it.Author == pr.Author.Login {
+		// The PR's author is NOT skipped, though it is often the worker: a
+		// worker opens its PR with the owner's own gh login, so the owner's
+		// reviews arrive under that same login and are the ones that matter
+		// most. Telling a worker about a comment it wrote itself is the noise
+		// accepted for that. Skipping only what predates the last push would
+		// need the commits fetched per branch per poll, and a worker that
+		// pushes and then comments would still be told.
+		if known[it.ID] {
+			continue
+		}
+		if !it.Trusted {
+			news.outside++
 			continue
 		}
 		news.byAuthor[it.Author]++
@@ -315,8 +371,10 @@ func newsFor(pr *prFeedback, seen prSeen) prNews {
 // two hundred checks does not get two hundred chances at the prompt.
 const prNoticeMax = 3
 
-// prNotice is the one line typed at the worker. Everything in it is this
-// package's prose, a number, and identifiers passed through prIdent.
+// prNotice is the one line typed at the worker, and the only text pr-feedback
+// sends a pane. Everything in it is this package's prose, integers, and
+// logins and check names passed through prIdent. Nothing else gh returns —
+// not the PR title, not the branch, not a body — is read into it.
 func prNotice(number int, news prNews) string {
 	var parts []string
 
@@ -335,6 +393,10 @@ func prNotice(number int, news prNews) string {
 	}
 	if len(logins) > prNoticeMax {
 		who = append(who, fmt.Sprintf("more from %d others", len(logins)-prNoticeMax))
+	}
+	if news.outside > 0 {
+		total += news.outside
+		who = append(who, fmt.Sprintf("%d from people without write access", news.outside))
 	}
 	if total > 0 {
 		parts = append(parts, fmt.Sprintf("%d new review(s) or comment(s): %s", total, strings.Join(who, ", ")))

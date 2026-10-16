@@ -83,7 +83,16 @@ func openPR(reviews, comments []map[string]any, checks []map[string]any) []map[s
 }
 
 func review(id, login, body string) map[string]any {
-	return map[string]any{"id": id, "author": map[string]any{"login": login}, "body": body, "state": "COMMENTED"}
+	return map[string]any{"id": id, "author": map[string]any{"login": login}, "body": body,
+		"state": "COMMENTED", "authorAssociation": "OWNER"}
+}
+
+// stranger is a review by someone with no hand in the repository, which on a
+// public one is anyone.
+func stranger(id, login, body string) map[string]any {
+	r := review(id, login, body)
+	r["authorAssociation"] = "NONE"
+	return r
 }
 
 // The point of the whole design: a reviewer's words never reach the worker's
@@ -92,7 +101,7 @@ func TestPRFeedbackNeverCarriesReviewText(t *testing.T) {
 	var server *herdrtest.Server
 	server = prFeedbackFleet(t, openPR(
 		[]map[string]any{review("r1", "mallory", injection)},
-		[]map[string]any{review("c1", "mallory", injection), review("c2", "worker", "my own note")},
+		[]map[string]any{review("c1", "mallory", injection), stranger("c2", "steig-official", injection)},
 		[]map[string]any{
 			{"name": "test", "conclusion": "FAILURE", "status": "COMPLETED"},
 			{"name": "lint", "conclusion": "SUCCESS", "status": "COMPLETED"},
@@ -110,12 +119,12 @@ func TestPRFeedbackNeverCarriesReviewText(t *testing.T) {
 		t.Fatalf("want one notice, got %q", texts)
 	}
 	got := texts[0]
-	for _, want := range []string{"PR #42", "2 new review(s) or comment(s): 2 from @mallory", "`test`", "gh pr view 42 --comments"} {
+	for _, want := range []string{"PR #42", "3 new review(s) or comment(s): 2 from @mallory, 1 from people without write access", "`test`", "gh pr view 42 --comments"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("notice lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, injection) || strings.Contains(got, "my own note") {
+	if strings.Contains(got, injection) || strings.Contains(got, "steig-official") {
 		t.Errorf("notice carries reviewer prose:\n%s", got)
 	}
 	if strings.Contains(got, "\n") || strings.Count(got, "`")%2 != 0 {
@@ -221,5 +230,54 @@ func TestPRFeedbackIgnoresABranchWithNoOpenPR(t *testing.T) {
 	}
 	if texts := sentTexts(server); len(texts) != 0 {
 		t.Fatalf("sent %q for a branch with no PR", texts)
+	}
+}
+
+// A worker opens its PR with the owner's gh login, so the owner's review comes
+// from the PR's own author. That is the review this feature exists to route.
+func TestPRFeedbackRoutesAReviewByThePRAuthor(t *testing.T) {
+	var server *herdrtest.Server
+	server = prFeedbackFleet(t, openPR([]map[string]any{review("r1", "worker", "please rename")}, nil, nil),
+		idleUntilSubmitted(&server))
+	if err := prFeedbackCommand(nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if texts := sentTexts(server); len(texts) != 1 || !strings.Contains(texts[0], "1 from @worker") {
+		t.Fatalf("a review by the PR's author was not routed: %q", texts)
+	}
+}
+
+// A re-run that passed supersedes the failure before it. The rollup keeps
+// both under one name, and only the latest says what state the branch is in.
+func TestPRFeedbackReadsOnlyTheLatestRunOfACheck(t *testing.T) {
+	server := prFeedbackFleet(t, openPR(nil, nil, []map[string]any{
+		{"__typename": "CheckRun", "name": "test", "conclusion": "FAILURE", "status": "COMPLETED",
+			"startedAt": "2026-10-16T03:00:00Z", "completedAt": "2026-10-16T03:05:00Z"},
+		{"__typename": "CheckRun", "name": "test", "conclusion": "SUCCESS", "status": "COMPLETED",
+			"startedAt": "2026-10-16T04:00:00Z", "completedAt": "2026-10-16T04:05:00Z"},
+		// The newer listed first, so gh's order alone would get it wrong.
+		{"__typename": "StatusContext", "context": "deploy", "state": "SUCCESS", "startedAt": "2026-10-16T04:00:00Z"},
+		{"__typename": "StatusContext", "context": "deploy", "state": "FAILURE", "startedAt": "2026-10-16T03:00:00Z"},
+	}), func() string { return "idle" })
+
+	if err := prFeedbackCommand(nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if texts := sentTexts(server); len(texts) != 0 {
+		t.Fatalf("reported a failure a newer run has since passed: %q", texts)
+	}
+}
+
+// A run still going counts by when it started: gh sends its completedAt as
+// the zero time, and a newer run in progress supersedes an older failure.
+func TestPRFeedbackNewerRunInProgressSupersedesAFailure(t *testing.T) {
+	pr := &prFeedback{}
+	raw := `[{"name":"test","conclusion":"FAILURE","startedAt":"2026-10-16T03:00:00Z","completedAt":"2026-10-16T03:05:00Z"},
+		{"name":"test","conclusion":"","status":"IN_PROGRESS","startedAt":"2026-10-16T04:00:00Z","completedAt":"0001-01-01T00:00:00Z"}]`
+	if err := json.Unmarshal([]byte(raw), &pr.Checks); err != nil {
+		t.Fatal(err)
+	}
+	if got := pr.failingChecks(); len(got) != 0 {
+		t.Fatalf("failing = %q, want none while the newer run is in progress", got)
 	}
 }

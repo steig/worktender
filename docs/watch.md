@@ -56,8 +56,14 @@ worktender: PR #42: 2 new review(s) or comment(s): 2 from @alice; failing check(
   dropped.
 - **Said once.** What was already counted is kept in the plugin's state
   directory (`pr-feedback.json`), so the next look says only what is new. A
-  check that recovers and fails again is new again. The worker's own comments
-  on its PR are not counted.
+  check that recovers and fails again is new again. Only the latest run of each
+  check counts, so a failure a re-run has fixed is not reported.
+- **Named only if they can write.** A login is named only for an author GitHub
+  marks `OWNER`, `MEMBER` or `COLLABORATOR`. Anyone else, which on a public
+  repository is anyone, is counted as "from people without write access".
+  The PR's author is counted like anyone else: workers open PRs with your gh
+  login, so your own reviews arrive under it. A worker is sometimes told about
+  a comment it wrote itself.
 
 It is one `gh` call per branch each look, so it is off by default. It covers the
 session's repository even with `scope` set to `all`. `worktender pr-feedback`
