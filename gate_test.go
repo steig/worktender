@@ -1442,3 +1442,101 @@ func TestGateJSONExitCodeMatchesTheProcess(t *testing.T) {
 		t.Errorf("document says exit %d, process would exit %d", doc.ExitCode, exitCode(err))
 	}
 }
+
+// Every outcome says how it was established, and the answer has to be the true
+// one: a `done` is still the worker's word however carefully the gate read it,
+// and `worker_gone` is reached once by herdr saying so and once by a status that
+// only looks like it.
+func TestGateSaysHowEachOutcomeWasEstablished(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		act     func(*gateWorker)
+		outcome string
+		want    string
+	}{
+		{"a release is the worker's claim", func(w *gateWorker) {
+			w.prints(report{status: "done", pr: 12, note: "green"})
+		}, gateOutcomeReleased, gateEvidenceReported},
+
+		{"blocked is the worker's claim", func(w *gateWorker) {
+			w.prints(report{status: "blocked", note: "needs a decision"})
+		}, gateOutcomeBlocked, gateEvidenceReported},
+
+		{"a timeout is the gate's own clock", func(w *gateWorker) {}, gateOutcomeTimeout, gateEvidenceVerified},
+
+		{"a pane exiting is herdr saying so", func(w *gateWorker) {
+			w.paneEnds(herdrapi.StreamEventPaneExited)
+		}, gateOutcomeWorkerGone, gateEvidenceVerified},
+
+		{"a workspace closing is herdr saying so", func(w *gateWorker) {
+			w.workspaceCloses("w1")
+		}, gateOutcomeWorkerGone, gateEvidenceVerified},
+
+		{"an unknown agent status only looks like a death", func(w *gateWorker) {
+			w.becomes("unknown")
+		}, gateOutcomeWorkerGone, gateEvidenceInferred},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// JSON and the human line are two renderings of the same answer, so
+			// both are asked for and both have to give it.
+			for _, asJSON := range []bool{true, false} {
+				w := newGateWorker(t, "working", "")
+				go tc.act(w)
+
+				// Short only where expiry is the point; everywhere else the event
+				// has to win the race, and a loaded machine must not let it lose.
+				timeout := "10s"
+				if tc.outcome == gateOutcomeTimeout {
+					timeout = "400ms"
+				}
+				args := []string{"--target", "worker", "--timeout", timeout}
+				if asJSON {
+					args = append(args, "--json")
+				}
+				out, err, _ := w.gate(t, args...)
+
+				if asJSON {
+					doc := decodeGateJSON(t, out)
+					if doc.Outcome != tc.outcome {
+						t.Fatalf("outcome = %q, want %q", doc.Outcome, tc.outcome)
+					}
+					if doc.Evidence == nil || *doc.Evidence != tc.want {
+						t.Errorf("evidence = %v, want %q", doc.Evidence, tc.want)
+					}
+					continue
+				}
+
+				// A release says it on stdout; every failure says it in the one
+				// message a human is shown.
+				said := out
+				if err != nil {
+					said = err.Error()
+				}
+				if want := "(evidence: " + tc.want + ")"; !strings.Contains(said, want) {
+					t.Errorf("human output should carry %q:\n%s", want, said)
+				}
+			}
+		})
+	}
+}
+
+// `error` is the outcome that is not a verdict, so it carries no evidence rather
+// than borrowing one it did not establish.
+func TestGateJSONCarriesNoEvidenceWithoutAVerdict(t *testing.T) {
+	f := newGateWorkers(t, "a")
+
+	out, err, _ := f.gate(t, "--any", "a,ghost", "--json")
+	if err == nil {
+		t.Fatal("the gate waited on a target that cannot report")
+	}
+	doc := decodeGateJSON(t, out)
+	if doc.Outcome != gateOutcomeError {
+		t.Errorf("outcome = %q, want %q", doc.Outcome, gateOutcomeError)
+	}
+	if doc.Evidence != nil {
+		t.Errorf("evidence = %q, want null on an outcome that reached no verdict", *doc.Evidence)
+	}
+	if !strings.Contains(out, `"evidence": null`) {
+		t.Errorf("evidence should be written as null, not omitted:\n%s", out)
+	}
+}

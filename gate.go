@@ -202,22 +202,24 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 			// No targets resolved, so there is nothing to list as waiting — but
 			// the caller asked for a document and an empty stdout is the one
 			// answer it cannot parse.
-			return writeGateJSON(out, gateDocument(opts, nil, gateOutcomeError, -1, nil, time.Since(started), err), err)
+			return writeGateJSON(out, gateDocument(opts, nil, gateOutcomeError, "", -1, nil, time.Since(started), err), err)
 		}
 		return err
 	}
 
-	outcome, about, released, err := gateWait(client, opts, targets, notes, started)
+	outcome, evidence, about, released, err := gateWait(client, opts, targets, notes, started)
 	waited := time.Since(started)
 
 	if opts.asJSON {
-		return writeGateJSON(out, gateDocument(opts, targets, outcome, about, released, waited, err), err)
+		return writeGateJSON(out, gateDocument(opts, targets, outcome, evidence, about, released, waited, err), err)
 	}
 
 	if err == nil && released != nil {
 		// Which worker released is the whole answer when the gate covered
-		// several: it is what the caller drops before waiting on the rest.
-		fmt.Fprintf(out, "gate: %s released after %s\n", targets[about].name, waited.Round(time.Second))
+		// several: it is what the caller drops before waiting on the rest. The
+		// evidence rides on the same line so a release cannot be skimmed as
+		// something the gate checked.
+		fmt.Fprintf(out, "gate: %s released after %s (evidence: %s)\n", targets[about].name, waited.Round(time.Second), evidence)
 		fmt.Fprint(out, renderReport(*released))
 	}
 	if err != nil && outcome == gateOutcomeBlocked && released != nil {
@@ -242,14 +244,17 @@ func writeGateJSON(out io.Writer, doc gateJSON, gateErr error) error {
 // meaningless after the fact.
 //
 // about indexes targets, and is -1 for an outcome belonging to no single worker.
-func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, out io.Writer, started time.Time) (string, int, *report, error) {
+// evidence is empty only beside gateOutcomeError. A failure's message ends with
+// it too, because in human mode that message is the only place the outcome is
+// said at all.
+func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, out io.Writer, started time.Time) (string, string, int, *report, error) {
 	deadline := started.Add(opts.timeout)
 
 	// Subscribe BEFORE reading the baselines, or a report landing between the
 	// two is in neither.
 	stream, err := client.Subscribe(gateSubscriptions(targets), deadline)
 	if err != nil {
-		return gateOutcomeError, -1, nil, fmt.Errorf("gate %s: %w", opts.names(), err)
+		return gateOutcomeError, "", -1, nil, fmt.Errorf("gate %s: %w", opts.names(), err)
 	}
 	defer stream.Close()
 
@@ -269,19 +274,19 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 	for {
 		event, err := stream.Next()
 		if errors.Is(err, herdrapi.ErrStreamExpired) {
-			return gateOutcomeTimeout, -1, nil, gateExpired(opts, targets, time.Since(started))
+			return gateOutcomeTimeout, gateEvidenceVerified, -1, nil, gateExpired(opts, targets, time.Since(started))
 		}
 		if err != nil {
-			return gateOutcomeError, -1, nil, fmt.Errorf("gate %s: %w", opts.names(), err)
+			return gateOutcomeError, "", -1, nil, fmt.Errorf("gate %s: %w", opts.names(), err)
 		}
 
 		// Every target is asked what the frame means to it: herdr delivers some
 		// events regardless of the filter it was asked for, and one workspace
 		// closing ends every worker inside it.
 		var fresh []gateFresh
-		gone, goneWhy := -1, ""
+		gone, goneWhy, goneEvidence := -1, "", ""
 		for i := range targets {
-			verdict, why := gateVerdict(event, targets[i].pane, targets[i].workspace)
+			verdict, why, evidence := gateVerdict(event, targets[i].pane, targets[i].workspace)
 			if verdict == gateIgnore {
 				continue
 			}
@@ -291,7 +296,7 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 				fresh = append(fresh, gateFresh{target: i, report: r})
 			}
 			if verdict == gateGone && gone < 0 {
-				gone, goneWhy = i, why
+				gone, goneWhy, goneEvidence = i, why, evidence
 			}
 		}
 
@@ -301,15 +306,15 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 		// frame was about may decide the gate.
 		if i := slices.IndexFunc(fresh, func(f gateFresh) bool { return opts.satisfies(f.report) }); i >= 0 {
 			r := fresh[i].report
-			return gateOutcomeReleased, fresh[i].target, &r, nil
+			return gateOutcomeReleased, gateEvidenceReported, fresh[i].target, &r, nil
 		}
 		// A blocked worker does not reach `done` on its own, and the party that
 		// unblocks it is the coordinator sitting in this wait.
 		if i := slices.IndexFunc(fresh, func(f gateFresh) bool { return isBlocked(f.report) }); i >= 0 {
 			r := fresh[i].report
-			return gateOutcomeBlocked, fresh[i].target, &r, codef(exitNeedsHuman,
-				"gate %s: the worker reported blocked after %s; it will not reach %s without you",
-				targets[fresh[i].target].name, time.Since(started).Round(time.Second), strings.Join(opts.until, "|"))
+			return gateOutcomeBlocked, gateEvidenceReported, fresh[i].target, &r, codef(exitNeedsHuman,
+				"gate %s: the worker reported blocked after %s; it will not reach %s without you (evidence: %s)",
+				targets[fresh[i].target].name, time.Since(started).Round(time.Second), strings.Join(opts.until, "|"), gateEvidenceReported)
 		}
 		for _, f := range fresh {
 			fmt.Fprintf(out, "gate: %s reported %s; still waiting\n", targets[f.target].name, f.report.status)
@@ -322,8 +327,8 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 		// deadline, which is the failure the gate exists to convert into a fast
 		// one.
 		if gone >= 0 {
-			return gateOutcomeWorkerGone, gone, nil, codef(exitNoAnswer, "gate %s: %s before it reported %s",
-				targets[gone].name, goneWhy, strings.Join(opts.until, "|"))
+			return gateOutcomeWorkerGone, goneEvidence, gone, nil, codef(exitNoAnswer, "gate %s: %s before it reported %s (evidence: %s)",
+				targets[gone].name, goneWhy, strings.Join(opts.until, "|"), goneEvidence)
 		}
 	}
 }
@@ -425,46 +430,50 @@ const (
 // exiting would otherwise have ended the wait naming whichever worker was
 // checked first. Every one of these payloads carries `pane_id` as a required
 // field, so the id is always there to match on.
-func gateVerdict(event herdrapi.StreamEvent, pane, workspace string) (gateEventVerdict, string) {
+//
+// A gateGone verdict also says how it knows. A pane or workspace event is herdr
+// announcing the thing happened; an agent status of `unknown` is only what one
+// that went away looks like.
+func gateVerdict(event herdrapi.StreamEvent, pane, workspace string) (gateEventVerdict, string, string) {
 	switch event.Event {
 	case herdrapi.StreamEventPaneExited, herdrapi.StreamEventPaneClosed:
 		if event.PaneID() != pane {
-			return gateIgnore, ""
+			return gateIgnore, "", ""
 		}
-		return gateGone, "the worker's pane ended"
+		return gateGone, "the worker's pane ended", gateEvidenceVerified
 
 	case herdrapi.StreamEventPaneUpdated:
 		// Unfiltered and backlog-replayed. A frame is only ever a reason to go
 		// and look: the payload carries the pane's tokens as they were, so the
 		// report is read from herdr, never from the frame.
 		if event.PaneID() != pane {
-			return gateIgnore, ""
+			return gateIgnore, "", ""
 		}
-		return gateCheck, ""
+		return gateCheck, "", ""
 
 	case herdrapi.StreamEventWorkspaceClosed:
 		// Unfiltered and replayed, so the id has to be checked here.
 		if event.WorkspaceID() != workspace {
-			return gateIgnore, ""
+			return gateIgnore, "", ""
 		}
-		return gateGone, "the worker's workspace was closed"
+		return gateGone, "the worker's workspace was closed", gateEvidenceVerified
 
 	case herdrapi.StreamEventPaneAgentStatusChanged:
 		data, err := event.AgentStatus()
 		if err != nil {
 			// A frame we cannot read is not a frame we can act on.
-			return gateIgnore, ""
+			return gateIgnore, "", ""
 		}
 		if data.PaneID != pane {
-			return gateIgnore, ""
+			return gateIgnore, "", ""
 		}
 		// `unknown` is what an agent that has gone away looks like.
 		if data.AgentStatus == herdrapi.AgentStatusUnknown {
-			return gateGone, "herdr lost track of the agent"
+			return gateGone, "herdr lost track of the agent", gateEvidenceInferred
 		}
-		return gateCheck, ""
+		return gateCheck, "", ""
 	}
-	return gateIgnore, ""
+	return gateIgnore, "", ""
 }
 
 // gateExpired is the diagnosis a caller gets at the deadline. It names each
@@ -485,8 +494,8 @@ func gateExpired(opts gateOptions, targets []gateTarget, waited time.Duration) e
 		}
 		details = append(details, detail)
 	}
-	return codef(exitNoAnswer, "gate %s: no new report reached status %s within %s; %s",
-		opts.names(), strings.Join(opts.until, "|"), waited.Round(time.Second), strings.Join(details, "; "))
+	return codef(exitNoAnswer, "gate %s: no new report reached status %s within %s; %s (evidence: %s)",
+		opts.names(), strings.Join(opts.until, "|"), waited.Round(time.Second), strings.Join(details, "; "), gateEvidenceVerified)
 }
 
 // isBlocked is the one status that ends a wait without releasing it.

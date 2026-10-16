@@ -198,7 +198,7 @@ the predicate, naming it. Drop that one and gate again on the rest:
 ```sh
 "$worktender" gate --any 12-thing,13-other,14-third --until done --timeout 20m
 # gate: waiting on 12-thing (pane w1:p1), 13-other (pane w2:p1), 14-third (pane w3:p1) for status done, up to 20m
-# gate: 13-other released after 4m12s
+# gate: 13-other released after 4m12s (evidence: reported)
 "$worktender" gate --any 12-thing,14-third --until done --timeout 20m
 ```
 
@@ -330,6 +330,15 @@ worker's context beside the untrusted text, so anything that can talk the worker
 into faking a report can read the secret out of the same context and include it.
 
 Treat a `done` as a claim. Check the pull request it names.
+
+The gate says as much on every outcome, as **evidence**: the release line and
+every failure message end with it, and `--json` carries it as a field.
+
+| Evidence | Outcome | What it rests on |
+| --- | --- | --- |
+| `reported` | `released`, `blocked` | The worker's report. The gate checked its shape and that it is new, not that it is true. |
+| `verified` | `timeout`, and `worker_gone` when the pane exited or closed or its workspace closed | The gate's own clock, or herdr announcing the pane gone. Nothing the worker said. |
+| `inferred` | `worker_gone` when herdr's agent status went `unknown` | What an agent that has gone away looks like, which is not herdr saying it went. |
 
 ## How a report actually reaches a gate
 
