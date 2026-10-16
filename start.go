@@ -190,6 +190,13 @@ func startCommand(args []string, out io.Writer) error {
 		}
 	}
 
+	// The role's approved lessons go into the worktree beside the pinned issue,
+	// and the brief only points at them; see pinLessons.
+	lessonCount := 0
+	if launch != nil {
+		lessonCount = pinLessons(notes, s.root, branch, launch.Role, approved != nil)
+	}
+
 	// Recorded for `refocus --if-due`, which would otherwise time the worker by
 	// the role its labels pick even where --role chose another. Losing it costs
 	// only that, so it is a note and not a failed start.
@@ -230,7 +237,7 @@ func startCommand(args []string, out io.Writer) error {
 	if approved != nil {
 		checks = len(approved.Checks)
 	}
-	if err := deliverBrief(s.client, pane, briefWithChecks(number, branch, style, withDirs, checks)); err != nil {
+	if err := deliverBrief(s.client, pane, withLessons(notes, briefWithChecks(number, branch, style, withDirs, checks), lessonCount, approved != nil)); err != nil {
 		if wErr := emit(doc.finish(err)); wErr != nil {
 			return wErr
 		}

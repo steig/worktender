@@ -29,6 +29,7 @@ PAGES = [
     ("examples", "Examples", None, "Five fan-outs end to end — a Sentry backlog, an issue burn-down, a wide mechanical change, a flaky test, and the case for not fanning out at all."),
     ("dispatch", "Dispatch", "dispatch.md", "Handing a slice of work to another agent and knowing when it is done."),
     ("roles", "Roles", "roles.md", "Starting a worker as a Claude Code agent with a brief style: the configuration, label routing, and what a label can reach."),
+    ("lessons", "Lessons", "lessons.md", "Carrying what a failed-then-fixed pull request taught into a role's next brief: proposed from the ledger, written and approved by a person, expiring, removable."),
     ("watch", "Watch", "watch.md", "A Claude Code mod that tells the coordinating session when a worker reports, instead of it waiting in gate."),
     ("json", "JSON", "json.md", "The --json output every command takes, what each null means, and why absence and unanswered are different fields."),
     ("pruning", "Pruning", "pruning.md", "What authorises a removal, why git topology never does it alone, and the guards."),

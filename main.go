@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "approve", "start", "factory", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "refocus", "inbox", "stats", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "approve", "start", "factory", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "refocus", "inbox", "stats", "lessons", "on-event", "startup"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -114,6 +114,11 @@ func run(args []string, out io.Writer) error {
 		// Reads the dispatch ledger and asks gh about each pull request in it.
 		// Global across repositories, like the inbox, so it needs no session.
 		return statsCommand(args[1:], out)
+	case "lessons":
+		// Drafts lessons from failed-then-fixed dispatches in the ledger, and
+		// moves one a person has written and approved into the file start
+		// reads for that role. Reads the ledger and the user's config only.
+		return lessonsCommand(args[1:], out)
 	case "on-event":
 		// Invoked by herdr, never by hand. Off unless opted in.
 		return onEventCommand(args[1:], out)
