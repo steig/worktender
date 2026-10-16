@@ -22,8 +22,8 @@ import (
 // burning effort, because every one of these facts is otherwise gone the moment
 // the pane that produced it closes.
 //
-// It records only what worktender itself observes, at the three places it
-// already observes something:
+// It records only what worktender itself observes, at the places it already
+// observes something:
 //
 //   - start, when an agent has been briefed on an issue. The only place the
 //     issue, the role and the agent kind are all known at once.
@@ -31,6 +31,8 @@ import (
 //     own worktree, so the dispatch is found by repository and branch.
 //   - gate, when a coordinator opens a wait. A gate run is coordination, and
 //     counting them is half of what the ceremony ratio is made of.
+//   - pr-feedback, when it types a notice into a worker. A round of rework on
+//     a PR, by repository and branch like a report.
 //
 // The inbox is NOT appended to from here. It is already a durable,
 // timestamped, append-only log of its own, and `stats` reads its threads
@@ -72,7 +74,7 @@ type ledgerEvent struct {
 	AgentKind string `json:"agent_kind,omitempty"`
 	AgentName string `json:"agent_name,omitempty"`
 
-	// report only.
+	// report only, except that feedback carries PR too.
 	Status string `json:"status,omitempty"`
 	PR     int    `json:"pr,omitempty"`
 
@@ -93,6 +95,11 @@ const (
 	ledgerStart  = "start"
 	ledgerReport = "report"
 	ledgerGate   = "gate"
+	// ledgerFeedback is one pr-feedback notice typed at a worker: a round of
+	// rework on its PR that nobody had to ask for. It is a kind added within
+	// version 1, which is safe because readers dispatch on the kind and pass
+	// over one they do not know; the shape of a line did not change.
+	ledgerFeedback = "feedback"
 )
 
 // ledgerPath is where the ledger lives, or an error when no state directory can

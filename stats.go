@@ -41,6 +41,8 @@ type statsDispatch struct {
 	reports []ledgerEvent
 	gates   int
 	inbox   int
+	// feedback is the pr-feedback notices typed at its worker.
+	feedback int
 
 	pr     int
 	facts  *prFacts
@@ -56,12 +58,20 @@ type statsDispatch struct {
 // it. Gate runs are not counted here — a coordinator gating for `planned` and
 // then for `done` has made two waits and one attempt — and they are counted as
 // ceremony instead.
+//
+// A pr-feedback round is a retry too, one the worker was sent on rather than
+// claimed, so a dispatch with N rounds made at least N+1 attempts. It is a
+// floor rather than an addition: a worker that fixes what a round named
+// usually reports done again, and that is the same retry counted once.
 func (d *statsDispatch) attempts() int {
 	n := 0
 	for _, r := range d.reports {
 		if r.Status == "done" {
 			n++
 		}
+	}
+	if d.feedback > 0 && d.feedback+1 > n {
+		n = d.feedback + 1
 	}
 	return n
 }
@@ -214,6 +224,11 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 				if at, err := time.Parse(time.RFC3339Nano, e.At); err == nil {
 					d.doneAt = at
 				}
+			}
+
+		case ledgerFeedback:
+			if d := byBranch[branchKey(e.Repository, e.Branch)]; d != nil && e.Branch != "" {
+				d.feedback++
 			}
 
 		case ledgerGate:
@@ -437,6 +452,7 @@ type statsDispatchJSON struct {
 	StartedAt     string            `json:"started_at"`
 	Reports       []statsReportJSON `json:"reports"`
 	Attempts      int               `json:"attempts"`
+	Rounds        int               `json:"feedback_rounds"`
 	PR            *int              `json:"pr"`
 	Merged        *bool             `json:"merged"`
 	Additions     *int              `json:"additions"`
@@ -460,7 +476,7 @@ func statsDocument(path string, skipped int, dispatches []*statsDispatch) statsJ
 		j := statsDispatchJSON{
 			Issue: d.start.Issue, Repository: d.start.Repository, Branch: d.start.Branch,
 			AgentKind: d.start.AgentKind, AgentName: d.start.AgentName, PaneID: d.start.PaneID,
-			StartedAt: d.start.At, Reports: []statsReportJSON{}, Attempts: d.attempts(),
+			StartedAt: d.start.At, Reports: []statsReportJSON{}, Attempts: d.attempts(), Rounds: d.feedback,
 			Merged: d.merged(), InboxMessages: d.inbox, GateRuns: d.gates,
 		}
 		if d.start.Role != "" {

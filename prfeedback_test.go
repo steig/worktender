@@ -273,3 +273,128 @@ func TestPRFeedbackNewerRunInProgressSupersedesAFailure(t *testing.T) {
 		t.Fatalf("failing = %q, want none while the newer run is in progress", got)
 	}
 }
+
+// takesEachNoticeUp makes the worker idle at the start of every pass and
+// working the moment Enter is pressed, so every pass can deliver a notice. It
+// returns how many times agent.get has been asked, which is how a test sees
+// that a pass never looked at the pane at all.
+func takesEachNoticeUp(server *herdrtest.Server) *atomic.Int32 {
+	var mu sync.Mutex
+	var asked atomic.Int32
+	submitted := false
+	server.Handle("pane.send_keys", func(map[string]any) (any, error) {
+		mu.Lock()
+		submitted = true
+		mu.Unlock()
+		return map[string]any{"type": "ok"}, nil
+	})
+	server.Handle("agent.get", func(map[string]any) (any, error) {
+		asked.Add(1)
+		mu.Lock()
+		status := "idle"
+		if submitted {
+			status = "working"
+			submitted = false
+		}
+		mu.Unlock()
+		return map[string]any{"type": "agent_info", "agent": map[string]any{
+			"terminal_id": "term_1", "agent": "claude", "agent_status": status,
+			"workspace_id": "w2", "tab_id": "t1", "pane_id": "w2:p1", "focused": false, "revision": 1,
+		}}, nil
+	})
+	return &asked
+}
+
+func checkIs(conclusion string) []map[string]any {
+	return []map[string]any{{"name": "test", "conclusion": conclusion}}
+}
+
+// The cap (#199). A check that fails, recovers and fails again is a round each
+// time it fails, counted across passes through the state file. The second
+// round tells the worker it is the last; the third failure is not typed, the
+// pane is not even asked its status, and a CAPPED line says so for the human.
+// Each delivered round is in the ledger.
+func TestPRFeedbackStopsTypingAtTheCap(t *testing.T) {
+	server := prFeedbackFleet(t, openPR(nil, nil, checkIs("FAILURE")), func() string { return "idle" })
+	asked := takesEachNoticeUp(server)
+
+	passPRFeedback(t)
+	fakeGhAnswer(t, openPR(nil, nil, checkIs("SUCCESS")))
+	passPRFeedback(t)
+	fakeGhAnswer(t, openPR(nil, nil, checkIs("FAILURE")))
+	passPRFeedback(t)
+
+	texts := sentTexts(server)
+	if len(texts) != 2 {
+		t.Fatalf("a recovered-then-failing check should be a second round; sent %q", texts)
+	}
+	if strings.Contains(texts[0], "last automatic feedback round") || !strings.Contains(texts[1], "last automatic feedback round") {
+		t.Errorf("only the second notice should say it is the last:\n%s\n%s", texts[0], texts[1])
+	}
+
+	path, err := prFeedbackStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadPRFeedbackState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Branches) != 1 {
+		t.Fatalf("state = %+v, want one branch", state.Branches)
+	}
+	for _, seen := range state.Branches {
+		if seen.Rounds != 2 {
+			t.Errorf("rounds on disk = %d, want 2", seen.Rounds)
+		}
+	}
+
+	fakeGhAnswer(t, openPR(nil, nil, checkIs("SUCCESS")))
+	passPRFeedback(t)
+	fakeGhAnswer(t, openPR([]map[string]any{review("r1", "alice", "")}, nil, checkIs("FAILURE")))
+	before := asked.Load()
+	out := passPRFeedback(t)
+	if texts := sentTexts(server); len(texts) != 2 {
+		t.Fatalf("typed past the cap: %q", texts)
+	}
+	if asked.Load() != before {
+		t.Errorf("a capped pass asked the pane its status %d time(s); it should not touch the pane", asked.Load()-before)
+	}
+	if !strings.Contains(out, "wip: PR #42: CAPPED after 2 feedback round(s)") {
+		t.Errorf("no CAPPED line for the human:\n%s", out)
+	}
+
+	// Said once: the same held news is not raised again every pass.
+	if out := passPRFeedback(t); strings.Contains(out, "CAPPED") {
+		t.Errorf("the CAPPED line repeated with nothing new:\n%s", out)
+	}
+
+	path, err = ledgerPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rounds []ledgerEvent
+	for _, e := range ledgerEvents(t, path) {
+		if e.Event == ledgerFeedback {
+			rounds = append(rounds, e)
+		}
+	}
+	if len(rounds) != 2 || rounds[0].Branch != "wip" || rounds[0].PR != 42 || rounds[0].Repository == "" {
+		t.Errorf("feedback events = %+v, want two for wip, PR 42", rounds)
+	}
+}
+
+// --max-rounds 0 routes nothing to the worker: every piece of news is held.
+func TestPRFeedbackMaxRoundsZeroTypesNothing(t *testing.T) {
+	server := prFeedbackFleet(t, openPR(nil, nil, checkIs("FAILURE")), func() string { return "idle" })
+	var out strings.Builder
+	if err := prFeedbackCommand([]string{"--max-rounds", "0"}, &out); err != nil {
+		t.Fatalf("%v; it printed:\n%s", err, out.String())
+	}
+	if texts := sentTexts(server); len(texts) != 0 {
+		t.Fatalf("typed with a cap of 0: %q", texts)
+	}
+	if !strings.Contains(out.String(), "CAPPED after 0 feedback round(s)") {
+		t.Errorf("no CAPPED line:\n%s", out.String())
+	}
+}

@@ -97,6 +97,19 @@ export function signals(doc: LsDoc, self?: string): Signal[] {
   return out
 }
 
+// The PRs `worktender pr-feedback` held back from their workers this pass,
+// from its CAPPED lines: `<branch>: PR #<n>: CAPPED after <k> feedback
+// round(s); ...`. A git branch has no space or colon, so the first field is
+// the whole branch. Only the branch (cleaned) and the numbers are kept; the
+// rest of the line is worktender's own prose and is not shown.
+export function capped(stdout: string): { branch: string; pr: number; rounds: number }[] {
+  const out: { branch: string; pr: number; rounds: number }[] = []
+  for (const m of stdout.matchAll(/^(\S+): PR #(\d+): CAPPED after (\d+) feedback round/gm)) {
+    out.push({ branch: clean(m[1]), pr: Number(m[2]), rounds: Number(m[3]) })
+  }
+  return out
+}
+
 export function statusLine(s: Summary | null): string | undefined {
   if (!s || s.total === 0) return undefined
   const parts = [

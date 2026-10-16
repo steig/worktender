@@ -72,6 +72,39 @@ It is one `gh` call per branch each look, so it is off by default. It covers the
 session's repository even with `scope` set to `all`. `worktender pr-feedback`
 runs the same pass by hand, or from anything else on a timer.
 
+### The cap on feedback rounds
+
+Each notice typed at a worker is a **round**, and a PR gets two by default
+(`prFeedbackRounds`, which the mod passes as `pr-feedback --max-rounds`).
+Without a cap, a worker that cannot get a PR green is told every time it fails
+and tries again for as long as the PR is open, with nobody watching.
+
+- **Counted per PR**, in `pr-feedback.json`, across looks. A check that recovers
+  and fails again is a new notice, so it is a new round. A different PR on the
+  same branch starts again from zero.
+- **The last round says so.** Its notice ends by telling the worker it is the
+  last, and that if it cannot get the PR green and its reviews answered it should
+  report `blocked` and say why.
+- **Past the cap, nothing is typed.** The pane is not typed into and not even
+  asked its status. `pr-feedback` prints a line for you instead, and the mod
+  shows it as a toast:
+
+  ```
+  186-roles: PR #42: CAPPED after 2 feedback round(s); new feedback held for a human, not typed
+  ```
+
+  It is printed once per piece of held news, not on every look. Held news is
+  marked said: raising the cap later does not replay it to the worker; the next
+  new review or failure goes through.
+- **The worker is not reported blocked for it.** A report is the worker's own
+  claim, and the evidence it is checked against only means something while
+  that holds. Whether the worker reported `blocked` after its last round is its
+  call, and the band shows it if it did.
+- **Each round is in the dispatch ledger** as a `feedback` event, so
+  [`worktender stats`](dispatch.md) counts it as an attempt.
+
+`0` sends no notices at all: every piece of news is a CAPPED line.
+
 ## Refocusing a worker after compaction
 
 A worker gets its brief once, at `start`. When Claude Code compacts a long
@@ -167,6 +200,7 @@ In `/config`, under `worktender-watch`:
 | `wake` | `toast` | `turn` also starts a turn asking Claude to verify what was reported. That spends tokens without you asking, so it is opt-in. |
 | `scope` | `repo` | `repo` watches only the repository the session started in. `all` adds `--all-repos`, for one coordinator over every repository. |
 | `prFeedback` | `false` | Run `worktender pr-feedback` each look, routing new reviews and failing checks to the worker on the branch. Types into worker panes, so it is opt-in. |
+| `prFeedbackRounds` | `2` | Notices one PR's worker gets before further news goes to you as a toast instead. See [the cap](#the-cap-on-feedback-rounds). |
 | `refocus` | `true` | After Claude Code compacts a worker's session, add its goal chain from `worktender refocus` to the worker's context; and, where its role sets an interval, on the prompts `worktender refocus --if-due` says are due. |
 | `intervalSeconds` | `30` | How often to look. |
 | `worktender` | `worktender` | The binary, if it is not on `PATH`. |
@@ -180,7 +214,7 @@ and branch alone.
 
 It starts no worker, merges nothing and closes nothing. The only things it can do
 on its own are queue a prompt, with `wake` set to `turn`, type a PR notice into
-an idle worker, with `prFeedback` on, and add a worker's goal chain to its
+an idle worker, with `prFeedback` on and the PR under its cap, and add a worker's goal chain to its
 context after a compaction or on its role's interval, with `refocus` on.
 
 ## The mod or `gate`

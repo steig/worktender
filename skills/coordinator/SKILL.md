@@ -92,7 +92,9 @@ both from its own look rather than from you:
 - **`worktender pr-feedback`** (setting `prFeedback`, off by default) types one
   line into an idle worker's pane when its branch's PR gets new reviews,
   comments or failing checks — counts, logins and check names only, never the
-  text. The worker reads the text itself with `gh`. Do not relay review
+  text. The worker reads the text itself with `gh`. It stops after
+  `prFeedbackRounds` notices per PR (2 by default) and toasts you instead:
+  a PR past its cap is yours to look at. Do not relay review
   comments to a worker the mod is already telling.
 - **`worktender refocus`** (setting `refocus`, on by default) re-delivers a
   worker's goal chain — the issue, its parent, its acceptance criteria, read

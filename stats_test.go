@@ -177,3 +177,31 @@ func TestStatsWithNoLedgerIsEmptyNotAnError(t *testing.T) {
 		t.Errorf("want an empty list and null figures:\n%s", out.String())
 	}
 }
+
+// A pr-feedback round is a retry the worker was sent on (#199): it counts as
+// an attempt, as a floor under the done reports rather than on top of them.
+func TestStatsCountsFeedbackRoundsAsAttempts(t *testing.T) {
+	path := withLedger(t)
+	herdrtest.FakeGh(t, "exit 1")
+	lines := []string{
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"42-a","issue":42}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:30:00Z","repository":"/r","branch":"42-a","status":"done"}`,
+		`{"v":1,"event":"feedback","at":"2026-10-01T10:40:00Z","repository":"/r","branch":"42-a","pr":7}`,
+		`{"v":1,"event":"feedback","at":"2026-10-01T10:50:00Z","repository":"/r","branch":"42-a","pr":7}`,
+		`{"v":1,"event":"feedback","at":"2026-10-01T10:55:00Z","repository":"/r","branch":"other","pr":8}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := statsCommand([]string{"--json"}, &out); err != nil {
+		t.Fatalf("stats --json: %v", err)
+	}
+	var doc statsJSON
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("not a document: %v\n%s", err, out.String())
+	}
+	if len(doc.Dispatches) != 1 || doc.Dispatches[0].Rounds != 2 || doc.Dispatches[0].Attempts != 3 {
+		t.Fatalf("got %+v, want one dispatch with 2 feedback rounds and 3 attempts", doc.Dispatches)
+	}
+}
