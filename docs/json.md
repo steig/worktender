@@ -511,6 +511,7 @@ $ worktender stats --json
         { "status": "done",    "at": "2026-10-01T11:00:00.3Z", "pr": 7 }
       ],
       "attempts": 2,
+      "feedback_rounds": 0,
       "pr": 7,
       "merged": true,
       "additions": 150,
@@ -539,6 +540,9 @@ $ worktender stats --json
   figure defined differently can be computed without a second ledger.
 - **`attempts`** counts `done` reports; **`wall_clock_seconds`** runs from
   `started_at` to the last of them, and is null until there is one.
+- **`feedback_rounds`** is the [PR feedback](watch.md#the-cap-on-feedback-rounds)
+  notices typed at the worker. Each is a retry, so `attempts` is never less
+  than `feedback_rounds` + 1 once there is one.
 - **`merged`**, **`additions`** and **`deletions`** are gh's answer. All three
   are null when there is no `pr`, or when gh could not answer — **`error`** then
   says why, and the command still exits 0: one pull request gh cannot see does

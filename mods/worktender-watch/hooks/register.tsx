@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Signal, Summary } from '../types'
-import { describe, fresh, isWorker, parse, signals, statusLine, summarise, wakePrompt } from './fleet'
+import { capped, describe, fresh, isWorker, parse, signals, statusLine, summarise, wakePrompt } from './fleet'
 
 const seen = atom({ plugin: 'worktender-watch', key: 'seen' } as const, null as string[] | null)
 const dismissed = atom({ plugin: 'worktender-watch', key: 'dismissed' } as const, [] as string[])
@@ -13,7 +13,12 @@ const BAND_LINES = 3
 
 // worker is this session's answer to "am I a worker?", kept once known: a
 // pane does not move between worktrees, and the interval asks on every prompt.
-type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; prFeedback: boolean; refocus: boolean; cwd?: string; worker?: boolean }
+type Config = { bin: string; wake: 'toast' | 'turn'; all: boolean; prFeedback: boolean; prFeedbackRounds: number; refocus: boolean; cwd?: string; worker?: boolean }
+
+// worktender's own default for --max-rounds. The flag is passed only when the
+// setting differs, so a mod newer than the binary it runs keeps working at the
+// default rather than failing every pass on a flag the binary does not know.
+const ROUNDS_DEFAULT = 2
 
 type Look = { counts: Summary; now: Signal[] } | 'worker' | null
 
@@ -67,9 +72,22 @@ async function poll($: EngineInterface, cfg: Config): Promise<Look> {
     // already said, so this is safe to run every poll. It is one gh call per
     // branch, so it runs last and its failure costs only itself. It covers
     // the session's repository, whatever `scope` says.
+    //
+    // A PR past its feedback cap is held back from its worker and printed as a
+    // CAPPED line; that is the human's to look at, so it becomes a toast.
+    // worktender prints it once per piece of held news, so it is not
+    // de-duplicated here. It is read even from a pass that exited non-zero:
+    // one branch gh could not answer for does not unsay another's.
     if (cfg.prFeedback) {
-      const fb = await $.process.run([cfg.bin, 'pr-feedback'], { cwd: cfg.cwd, timeoutMs: 120_000 })
+      const rounds = cfg.prFeedbackRounds === ROUNDS_DEFAULT ? [] : ['--max-rounds', String(cfg.prFeedbackRounds)]
+      const fb = await $.process.run([cfg.bin, 'pr-feedback', ...rounds], { cwd: cfg.cwd, timeoutMs: 120_000 })
       if (fb.exitCode !== 0) $.ui.log(`worktender-watch: pr-feedback exited ${fb.exitCode}`, { to: 'debug' })
+      const held = capped(fb.stdout)
+      if (held.length === 1) {
+        $.ui.toast(`worktender: ${held[0].branch} PR #${held[0].pr} hit its feedback cap (${held[0].rounds} rounds) — needs you`)
+      } else if (held.length > 1) {
+        $.ui.toast(`worktender: ${held.length} PRs hit their feedback cap — need you`)
+      }
     }
     return { counts, now }
   } catch (err) {
@@ -115,12 +133,20 @@ async function worker($: EngineInterface, cfg: Config, cwd: string | undefined):
   return cfg.worker
 }
 
+// The cap as a whole number of rounds, 0 or more; anything else is the default.
+function rounds(v: unknown): number {
+  if (v === undefined || v === null || v === '') return ROUNDS_DEFAULT
+  const n = Number(v)
+  return Number.isInteger(n) && n >= 0 ? n : ROUNDS_DEFAULT
+}
+
 export const register: Register = (on, options) => {
   const cfg: Config = {
     bin: String(options.worktender || 'worktender'),
     wake: options.wake === 'turn' ? 'turn' : 'toast',
     all: options.scope === 'all',
     prFeedback: options.prFeedback === true || options.prFeedback === 'true',
+    prFeedbackRounds: rounds(options.prFeedbackRounds),
     refocus: options.refocus !== false && options.refocus !== 'false',
   }
   const everyMs = Math.max(5, Number(options.intervalSeconds) || 30) * 1000

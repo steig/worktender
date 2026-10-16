@@ -36,6 +36,12 @@
       "description": "Each poll, run `worktender pr-feedback`: tell the idle worker on a branch about new reviews and failing checks on its open PR (counts, logins and check names only). One gh call per branch.",
       "default": false
     },
+    "prFeedbackRounds": {
+      "type": "number",
+      "title": "PR feedback rounds per PR",
+      "description": "How many notices one PR's worker gets before further reviews and failing checks go to you as a toast instead of to the worker. 0 sends none.",
+      "default": 2
+    },
     "refocus": {
       "type": "boolean",
       "title": "Refocus workers after compaction",

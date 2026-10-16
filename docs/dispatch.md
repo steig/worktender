@@ -270,7 +270,7 @@ ISSUE  BRANCH          ROLE  PR  MERGED  WALL     ATTEMPTS  INBOX  GATES  DIFF  
 per merged PR: median wall clock 37m30s, 1.50 attempts, rework rate 50%, 3.00 ceremony
 ```
 
-It reads a local ledger, `<plugin state dir>/ledger.jsonl`, that three commands
+It reads a local ledger, `<plugin state dir>/ledger.jsonl`, that four commands
 append one line to as they go:
 
 - **`start`** records the dispatch once its agent has the brief — issue, branch,
@@ -279,6 +279,8 @@ append one line to as they go:
 - **`report`** records each status a worker claims, with its time and pull
   request, keyed by the repository and branch it was made from.
 - **`gate`** records each wait a coordinator opens, against every worker it covers.
+- **`pr-feedback`** records each notice it types at a worker, by repository,
+  branch and pull request.
 
 The inbox is read where it already is: messages on the thread named for the
 issue number, posted after the dispatch started.
@@ -287,6 +289,8 @@ What the columns mean:
 
 - **`ATTEMPTS`** is the number of `done` reports. A second one means the first
   did not stick — review sent it back, a check failed, it was re-briefed.
+  A `pr-feedback` round is a retry too, so a dispatch with N rounds shows at
+  least N+1, however many times it reported done.
   **Rework rate** is the share of merged pull requests that needed more than one.
 - **`WALL`** is `start` to the *last* `done`, because a dispatch that went round
   again was not finished the first time it said so.

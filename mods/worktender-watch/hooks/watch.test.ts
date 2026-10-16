@@ -164,6 +164,22 @@ test('prFeedback runs one pr-feedback pass per look, in the session repository',
   expect(seen.runs[1].cwd).toBe('/r/wt')
 })
 
+test('a PR past its feedback cap toasts the human', { options: { prFeedback: true } }, async ($, on) => {
+  const out = 'other: PR #7: notified w3:p1\n186-roles: PR #42: CAPPED after 2 feedback round(s); new feedback held for a human, not typed\n'
+  const { seen, clock } = engine(on, [quiet, out])
+  await start($)
+  await clock.advance(0)
+  expect(seen.runs[1].argv).toEqual(['worktender', 'pr-feedback']) // the default cap is worktender's own
+  expect(seen.toasts).toEqual(['worktender: 186-roles PR #42 hit its feedback cap (2 rounds) — needs you'])
+})
+
+test('prFeedbackRounds is passed as --max-rounds', { options: { prFeedback: true, prFeedbackRounds: 0 } }, async ($, on) => {
+  const { seen, clock } = engine(on, [quiet])
+  await start($)
+  await clock.advance(0)
+  expect(seen.runs[1].argv).toEqual(['worktender', 'pr-feedback', '--max-rounds', '0'])
+})
+
 test('a worker session never runs pr-feedback', { options: { prFeedback: true } }, async ($, on) => {
   const { seen, clock } = engine(on, [quiet], 0, '186-roles:p1')
   await start($)
