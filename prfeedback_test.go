@@ -2,8 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,23 +49,16 @@ func passPRFeedback(t *testing.T) string {
 	return out.String()
 }
 
-// fakeGhAnswer makes gh print answer as JSON, whatever it is asked.
-//
-// The answer is a file the script cats, not an argument to echo. The fake
-// runs under /bin/sh, which on Ubuntu is dash, and dash's echo turns the
-// `\n` a JSON string escapes a newline as back into a raw newline: invalid
-// JSON, so the branch "could not be checked" in CI and nowhere with bash.
+// fakeGhAnswer makes gh print answer as JSON, whatever it is asked. The
+// answer goes through herdrtest.CatScript rather than echo, because the JSON
+// escapes newlines as `\n` and dash's echo would expand them (#211).
 func fakeGhAnswer(t *testing.T, answer any) {
 	t.Helper()
 	raw, err := json.Marshal(answer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "answer.json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	herdrtest.FakeGh(t, "cat '"+path+"'")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, string(raw)))
 }
 
 // idleUntilSubmitted answers idle until the notice has been submitted, then

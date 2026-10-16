@@ -82,7 +82,7 @@ func TestStartStartsTheAgentALabelChose(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
 	home := writeRoles(t, uxRoles, "ux-designer")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","labels":[{"name":"role:ux"}]}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","labels":[{"name":"role:ux"}]}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--model", "opus"}, &out); err != nil {
@@ -102,7 +102,7 @@ func TestStartJSONCarriesTheLaunch(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	fakeStart(t, repo, "w9", "w9:p1", "working")
 	writeRoles(t, uxRoles, "ux-designer")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","labels":[]}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","labels":[]}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--role", "ux", "--json"}, &out); err != nil {
@@ -120,7 +120,7 @@ func TestStartJSONCarriesTheLaunch(t *testing.T) {
 func TestStartWithoutRolesIsUnchanged(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	fakeStart(t, repo, "w9", "w9:p1", "working")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","labels":[{"name":"role:ux"}]}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","labels":[{"name":"role:ux"}]}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--json"}, &out); err != nil {
@@ -142,7 +142,7 @@ func TestStartRefusesAMissingAgentBeforeCreatingAnything(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
 	writeRoles(t, uxRoles) // no agent files
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing","labels":[{"name":"role:ux"}]}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","labels":[{"name":"role:ux"}]}`))
 
 	err := startCommand([]string{"42"}, &strings.Builder{})
 	if err == nil || !strings.Contains(err.Error(), `agent "ux-designer"`) {
@@ -160,7 +160,7 @@ func TestStartRefusesAnUnknownRole(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
 	writeRoles(t, uxRoles, "ux-designer")
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 
 	err := startCommand([]string{"42", "--role", "designer"}, &strings.Builder{})
 	if err == nil || exitCode(err) != exitUsage || !strings.Contains(err.Error(), "ux") {
@@ -175,7 +175,7 @@ func TestStartRefusesAConfigurationThatDoesNotParse(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
 	writeRoles(t, `{"roles": {"ux": {"agnet": "x"}}}`)
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 
 	err := startCommand([]string{"42"}, &strings.Builder{})
 	if err == nil || !strings.Contains(err.Error(), "agnet") || !strings.Contains(err.Error(), "config.json") {
@@ -304,7 +304,7 @@ func TestStartBriefsInTheRolesStyle(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "kb"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--role", "ux"}, &out); err != nil {
