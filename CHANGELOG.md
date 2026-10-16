@@ -6,6 +6,56 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.15.0] — 2026-10-16
+
+### Added
+
+- **`worktender approve`: an issue is cleared for an agent by hash.** (#217)
+  A `factory:ready` issue states its done as an `## Acceptance` list of
+  runnable checks (new `factory-ready` issue template). `approve <issue>` prints
+  the exact payload an agent will receive, raw and escaped, then posts its
+  sha256 as `worktender-approved: sha256=<hex>` and applies `factory:ready`.
+  `start` recomputes the hash and proceeds only when a comment from an account
+  with write access carries it, otherwise exit 3; the approved payload is
+  pinned to the worktree's git dir as `worktender/issue.md`.
+- **`worktender factory`: start approved issues from a queue under a cap.**
+  (#216) `factory [--max N] [--repo] [--dry-run] [--json]` starts
+  `factory:ready` issues through `start`, holding a slot for every live worker
+  until it reports `done` or its agent is gone, and swaps the label to
+  `factory:in-progress` only after the start succeeds. An issue `start` refuses
+  is skipped, not counted against the cap; the pass still exits 3.
+- **`worktender review`: check a worker's PR before a human does.** (#226)
+  `review <branch|pr>` binds to the PR's head commit, requires CI green for
+  that commit, and opens a restricted reviewer pane (read-only tools, no web,
+  inputs in a private state dir) against the approved issue and the diff. The
+  verdict is the first word of the reviewer's report, re-checked against the
+  head commit (`review_stale` if it moved). Advisory: a person still merges.
+  See [Review](docs/review.md).
+- **`worktender lessons`: failed-then-fixed dispatches become role lessons,
+  with a human in the loop.** (#228) `propose` drafts candidates from the
+  ledger with the PR as provenance; `approve` is the only way one goes live,
+  with your own text, an approver and a 60-day expiry. `start` hands a worker
+  up to 5 live lessons for its role as a file beside the approved issue and
+  points the brief at it. `list` and `remove` manage them; `doctor` warns on
+  expired ones.
+- **`stats` counts escapes and can alert.** (#227) A merged PR has escaped when
+  a later PR reverts it or a later issue blames it as a regression within
+  `--escape-window` (default 14d). `stats --check` exits 3 when ceremony runs
+  over 20 per 100 changed lines, a proof loop over 3 attempts, or the escape
+  rate over 0.2.
+- **pr-feedback caps automatic rounds per PR.** (#225) `--max-rounds` (default
+  2; the watch mod's new `prFeedbackRounds` setting). Past the cap the worker
+  is not typed into and a `CAPPED` line goes to you as a toast; the last round
+  tells the worker to report `blocked` if it cannot get the PR green.
+
+### Changed
+
+- **`refocus --if-due` uses the role `start` chose** (#224), recorded in the
+  git dir, rather than re-deriving it from labels. Refocus quotes acceptance
+  checks through the real parser and falls back to the section as written for
+  prose criteria.
+- watch mod 0.4.0 (new `prFeedbackRounds` setting).
+
 ## [0.14.0] — 2026-10-16
 
 ### Added
