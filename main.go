@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "approve", "start", "factory", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "review", "refocus", "inbox", "stats", "lessons", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "approve", "draft", "start", "factory", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "review", "refocus", "inbox", "stats", "lessons", "on-event", "startup"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -69,6 +69,11 @@ func run(args []string, out io.Writer) error {
 		// A person clearing an issue for an agent: shows the exact payload,
 		// then comments its hash and labels it, with their own gh auth.
 		return approveCommand(args[1:], out)
+	case "draft":
+		// A read-only agent proposing an issue's acceptance checks, vetted
+		// against an allow-list. Prints them, or with --write puts them on the
+		// issue; never labels or approves.
+		return draftCommand(args[1:], out)
 	case "start":
 		// Issue number in, agent working on it out. Creates a worktree, so it
 		// must be told which repository.

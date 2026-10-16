@@ -131,6 +131,59 @@ Approval is.
 The [`factory-ready` issue template](https://github.com/steig/worktender/blob/main/.github/ISSUE_TEMPLATE/factory-ready.md)
 lays this out.
 
+### Drafting checks
+
+Most issues are written as prose. `worktender draft` proposes an Acceptance
+section for one, for a person to read and approve:
+
+```sh
+worktender draft 42 --repo .            # print a proposed section
+worktender draft 42 --repo . --write    # put it on the issue
+```
+
+The drafter is `claude -p`, headless, in the repository, launched with
+`--restricted --strict-mcp-config --tools Read,Grep,Glob` and
+`--permission-mode dontAsk`: it can read files and nothing else. No shell,
+no editing, no network, no MCP. It gets the issue framed exactly as `approve`
+frames it, every line prefixed `| ` and said to be untrusted, and the
+repository's test, build and lint entry points.
+
+**Its answer is untrusted too.** Every line it proposes is parsed with the
+grammar above, and a line that does not parse is dropped. So is any command
+outside the allow-list. The list is of exact argument shapes, not command
+names, because a runner's own flags can run anything (`go test -exec`,
+`make SHELL=`, `npm exec`, `grep -f /etc/...`):
+
+- the repository's own runners, detected from its files. `go test`, `go vet`
+  and `go build` (from `go.mod`) take only `./` package patterns and the
+  flags `-run <name pattern>`, `-count=N`, `-race`, `-v` and `-short`. The
+  others take no argument beyond their name: `npm test` and
+  `npm run <script>` for each script in `package.json` (`pnpm` or `yarn` when
+  their lockfile is there), `make <target>` for each Makefile target,
+  `just <recipe>` for each justfile recipe, and `cargo test`, `cargo build`
+  and `cargo clippy`;
+- `test -f|-d|-e <path>` and `grep [-q|-qE|-qF] <pattern> <path>`, where the
+  path is relative to the repository root and has no `..`;
+- `worktender doctor` and `worktender ls`, with no argument.
+
+A command is one simple command. Any shell character, wherever it is (a pipe,
+`;`, `&&`, `$(`, a backtick, a redirect, a glob, `~`), drops it, so nothing
+can chain from an allowed command to another. Every drop is printed with its
+reason, the drafter's line quoted beside it and never run. At most six checks
+are kept. If none survive, `draft` exits **3**.
+
+**`draft` never labels and never approves.** Without `--write` it only prints.
+`--write` edits the issue body with your own `gh` auth, putting the section at
+the top. It refuses an issue that already has an Acceptance section unless you
+pass `--replace`, and refuses one edited while the drafter ran. The next step
+is still `worktender approve`. The approval covers the drafted checks byte for
+byte, like any others, and it is still the control: the allow-list keeps the
+obvious out of the proposal, and the approver reads what is left.
+
+Each draft is recorded in the [ledger](#what-a-merged-pull-request-cost) as a
+`draft` event, with how many checks were kept and dropped and whether they
+were written.
+
 ### Approving the raw bytes, not the page
 
 An agent runs these commands, so a person with write access has to approve them
@@ -336,7 +389,7 @@ escapes: 1 of 2 merged PRs (50%) reverted or blamed for a regression within 14d 
 `--since 168h` keeps only dispatches started in the last week; the default is
 all of history.
 
-It reads a local ledger, `<plugin state dir>/ledger.jsonl`, that four commands
+It reads a local ledger, `<plugin state dir>/ledger.jsonl`, that five commands
 append one line to as they go:
 
 - **`start`** records the dispatch once its agent has the brief — issue, branch,
@@ -347,6 +400,9 @@ append one line to as they go:
 - **`gate`** records each wait a coordinator opens, against every worker it covers.
 - **`pr-feedback`** records each notice it types at a worker, by repository,
   branch and pull request.
+- **`draft`** records each section its drafter proposed for an issue: how many
+  checks it kept and dropped, and whether `--write` put them on the issue.
+  `stats` does not read it yet.
 
 The inbox is read where it already is: messages on the thread named for the
 issue number, posted after the dispatch started.
