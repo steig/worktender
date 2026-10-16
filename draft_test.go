@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/steig/worktender/internal/herdrtest"
 )
@@ -515,5 +517,56 @@ func TestDraftWriteYesSkipsTheQuestion(t *testing.T) {
 	}
 	if err := draftCommand([]string{"42", "--yes", "--repo", repo.Root}, &strings.Builder{}); exitCode(err) != exitUsage {
 		t.Errorf("--yes without --write: %v; want a usage error", err)
+	}
+}
+
+// SIGINT or SIGTERM during the drafter run stops the drafter, removes the
+// export and fails with the status a shell gives a command the signal killed,
+// rather than killing draft and leaving the export behind.
+func TestDraftInterruptedRemovesTheExport(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			repo := draftRepo(t)
+			fake := newFakeDraft(t, "## Problem\nBroken.\n", draftAnswer)
+			// The fake records where it runs, then hangs the way a slow drafter
+			// does; exec, so that killing it leaves no sleep holding its output.
+			bin := t.TempDir()
+			script := "#!/bin/sh\npwd -P > \"$FAKE_GH_DIR/claude-cwd.tmp\"\n" +
+				"mv \"$FAKE_GH_DIR/claude-cwd.tmp\" \"$FAKE_GH_DIR/claude-cwd\"\nexec sleep 60\n"
+			if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			done := make(chan error, 1)
+			go func() { done <- draftCommand([]string{"42", "--repo", repo.Root}, &strings.Builder{}) }()
+
+			// The handler is installed before the drafter starts, so once the
+			// fake has written its directory the signal is draft's to catch.
+			deadline := time.Now().Add(10 * time.Second)
+			for fake.read("claude-cwd") == "" {
+				if time.Now().After(deadline) {
+					t.Fatal("the fake drafter never started")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if err := syscall.Kill(syscall.Getpid(), sig); err != nil {
+				t.Fatal(err)
+			}
+
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("draft did not return after the signal")
+			}
+			if want := 128 + int(sig); exitCode(err) != want {
+				t.Errorf("exit %d (%v); want %d", exitCode(err), err, want)
+			}
+			cwd := strings.TrimSpace(fake.read("claude-cwd"))
+			if _, err := os.Stat(cwd); !os.IsNotExist(err) {
+				t.Errorf("the export %s is still there after the interrupt: %v", cwd, err)
+			}
+		})
 	}
 }
