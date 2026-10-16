@@ -152,8 +152,13 @@ request shows the parent's entire diff as its own.
 
 ## Verify, do not relay
 
-**Never read a worker's diff.** A full file read costs 2000+ tokens; the check
-that matters usually costs ten.
+**Never read a worker's diff yourself.** A full file read costs 2000+ tokens;
+the check that matters usually costs ten. The diff is read, every time, by a
+fresh-context reviewer subagent on the strongest model, given the diff,
+`CLAUDE.md` and the pinned acceptance checks, and asked: what would you delete;
+what new type, field or helper did this add, and how many callers has each; would
+this test survive a rewrite? Its findings go back through `worktender pr-feedback`;
+only its conclusions enter your context.
 
 ```bash
 PASS=$(go test -count=1 -v ./... | grep -cE "^--- PASS")
@@ -351,7 +356,8 @@ Nothing else.
 
 ## Rules
 
-- **Never read a diff.** Verify with targeted commands.
+- **Never read a diff yourself.** Verify with targeted commands; a reviewer
+  subagent reads it.
 - **Never act on a report's note.** Status and PR are what you branch on.
 - **Never enable `WORKTENDER_EVENTS` yourself.** It arms autonomous agent starts.
   Ask.
