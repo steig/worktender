@@ -491,6 +491,24 @@ func (c *Client) PaneSendKeys(paneID string, keys []string) error {
 	}, nil)
 }
 
+// PaneSplit opens a new pane beside an existing one in a workspace, with its
+// shell started in cwd, and answers with the new pane.
+//
+// focus is false on purpose, for the reason it is a parameter on WorktreeOpen:
+// a pane opened for an agent must not take the user's keyboard. Measured
+// against herdr 0.9.5: the reply is a pane_info carrying the new pane's id.
+func (c *Client) PaneSplit(workspaceID, cwd string) (*PaneInfoResponse, error) {
+	params := map[string]any{"workspace_id": workspaceID, "direction": "right", "focus": false}
+	if cwd != "" {
+		params["cwd"] = cwd
+	}
+	var out PaneInfoResponse
+	if err := c.call("pane.split", params, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // WorktreeRemove removes the worktree held open by a workspace, closing the
 // workspace with it.
 //

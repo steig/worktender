@@ -647,6 +647,7 @@ thread, with five worked examples — which has no markdown source here.
 | | |
 | --- | --- |
 | [Dispatching a worker](docs/dispatch.md) | `dispatch`, `report` and `gate` — handing a slice to another agent and waiting for it, and why the report has fixed slots. |
+| [Reviewing a PR](docs/review.md) | `review` — green CI, then a second agent judging the diff against the issue's acceptance checks; `verified` only when both pass. |
 | [Roles](docs/roles.md) | Starting a worker as a Claude Code agent with a brief style — design, analysis or code — chosen by flag or issue label. |
 | [Watching the fleet](docs/watch.md) | A Claude Code mod: a status line count, a band and a toast when a worker reports done or blocked; `pr-feedback` routing a PR's new reviews and failing checks to its worker; `refocus` re-delivering a worker's goal chain after compaction. |
 | [How removal is decided](docs/pruning.md) | What authorises a removal, why git topology never does it alone, and the guards. |
