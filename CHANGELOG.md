@@ -6,6 +6,55 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.14.0] — 2026-10-16
+
+### Added
+
+- **`gate` says how it knows.** (#209) Every outcome carries `evidence`:
+  `verified` (the gate's own clock, or herdr announcing the pane or workspace
+  gone), `reported` (the worker's word — every `released` and `blocked`), or
+  `inferred` (the agent status went `unknown`). It ends the human line and the
+  failure message, and is `evidence` in `--json`, `null` on `error`. Scripts
+  matching a gate error's full text will see the new suffix.
+- **`ls` shows how long since each agent last did anything.** (#212) An `AGE`
+  column beside `SEQ`, and `agent_last_active` (RFC 3339, or `null`) in
+  `--json`, read from the mtime of the agent's own session log — Claude's
+  `~/.claude/projects/*/<session>.jsonl`, Codex's dated rollout files. Only the
+  mtime is read, never the content; an agent whose log cannot be found gets
+  nothing rather than a guess.
+- **`worktender pr-feedback`: a PR's failing checks and new reviews reach the
+  worker that owns the branch.** (#211) One fixed-format line, typed only into
+  an idle worker and never twice: counts per author, failing check names, and
+  where to read them. No review or comment text is ever sent; logins are named
+  only for people with write access, check names are reduced to a safe
+  alphabet, and only the latest run of each check counts. Opt-in through the
+  watch mod's `prFeedback` setting.
+- **`worktender refocus`: a worker gets its goal chain back.** (#215, #221)
+  Tracking issue → issue and its acceptance lines → brief, quoted and bounded
+  as untrusted text. The watch mod delivers it to a worker after Claude Code
+  compacts its context (on by default), and every N turns or minutes for a role
+  that sets `"refocus": {"turns": N, "minutes": M}` (off unless set).
+- **`worktender stats`: what the dispatches cost.** (#219) `start`, `report`
+  and `gate` append to a local ledger; `stats` derives wall clock to `done`,
+  attempts, merged or not, and a ceremony count — inbox messages and gate runs
+  per 100 changed lines — per dispatch, with a summary. Tokens, escapes and
+  alerts are not in it yet.
+- **`gate --dagr`: watch a dispatch in herdr-dagr.** (#220) Keeps
+  `.dagr/run.json` current while the gate waits, one task per worker, with the
+  gate's evidence mapped onto dagr's tiers. Never overwrites a run file another
+  producer wrote.
+
+### Fixed
+
+- **`start` could answer Claude's trust screen with the brief's Enter.** (#213)
+  It now reads the pane before typing and before every Enter, and on the folder
+  trust, hooks review or managed-settings approval screen presses nothing and
+  exits 3 naming the screen.
+
+### Changed
+
+- **The watch mod is 0.3.0**, for `prFeedback` and refocus.
+
 ## [0.13.1] — 2026-10-13
 
 ### Fixed
