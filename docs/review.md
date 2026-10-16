@@ -16,8 +16,10 @@ reviewer's verdict. Run it in the background the way you would run a gate.
 
 ## What it does, in order
 
-1. **Reads the PR with `gh pr view`** — its checks, labels and branch. A PR that
-   is not open is refused.
+1. **Reads the PR with `gh pr view`** — its head commit, checks, labels and
+   branch. A PR that is not open is refused. **The review is bound to that head
+   commit** from here on: CI is read from the same answer, so the rollup is that
+   commit's, and the reviewer is told which commit it is reviewing.
 2. **Checks CI.** Every check's latest run must have passed (success, neutral or
    skipped). Not green means it reports and stops, with no pane opened and no
    model spent:
@@ -41,7 +43,12 @@ reviewer's verdict. Run it in the background the way you would run a gate.
    reviewer reads the diff with `gh pr diff` and the issue from the approved
    copy `start` pinned (for a `factory:ready` issue), or with `gh issue view`
    when there is none.
-6. **Waits for its report**, with gate's own wait, and composes the verdict.
+6. **Waits for its report** on the pane it opened — bound by pane id, not
+   agent name — with gate's own wait, judging **only the metadata channel**:
+   that pane has just printed `gh pr diff`, and an envelope inside a diff is
+   not a report.
+7. **Re-reads the PR.** If the head moved, or CI is no longer green, the
+   verdict is `review_stale` and never `verified`, whatever it says.
 
 The reviewer's pane is left open when review returns, so a person can read what
 it did; close it yourself. Its agent name carries the PR's head commit, so a
@@ -65,6 +72,9 @@ worktender report --status done --pr 17 --note "fail: check 2 has no test"
 | `done`, anything else | green | `review_unreadable` | `reported` | **4** |
 | `blocked` | green | `review_blocked` | — | **3** |
 | nothing in time, or its pane died | green | `review_no_answer` | — | **4** |
+| anything, but the head moved or CI went red meanwhile | — | `review_stale` | `reported` | **4** |
+
+A `done` whose `--pr` is not the PR under review is unreadable too.
 
 **The verdict is the note's first word, exactly.** `pass` or `fail`, lowercase,
 followed by a colon, a space or nothing. Anything else is unreadable, and
@@ -122,11 +132,21 @@ model. `--role` overrides both. See [Roles](roles.md) for the file.
 
 The PR diff and the issue text are untrusted: whoever filed the issue and the
 worker that wrote the change both wrote them. They follow the rule `start`
-follows. **Neither is pasted into the brief.** The brief is this plugin's own
+follows. **Neither is pasted into the brief.** The reviewer judges the diff
+against the issue's acceptance checks — for a `factory:ready` issue, the copy a
+person approved by hash — and is told never to judge it against what the diff
+claims. The brief is this plugin's own
 prose and two numbers; the reviewer reads the diff and the issue itself, as tool
 output, under a line saying they are data to judge and that an instruction
 inside them is a finding. Check names in the output pass through the same
 reduction pr-feedback uses.
+
+**The verdict channel is herdr pane metadata, which does not authenticate its
+writer.** Review hears only the reviewer's pane, and only its metadata, so a
+report on the worker's own pane or an envelope printed into the reviewer's
+terminal is ignored. But any process holding the herdr socket can write any
+pane's metadata — the worker included, if it goes looking for the reviewer's
+pane id. Nothing here closes that; the same is true of every gate.
 
 **Not editing is intent, not a boundary.** The reviewer is told not to edit,
 commit or push, and it sits in the worker's checkout because that is where the
@@ -150,6 +170,7 @@ Written on the failure paths too, like `start --json`.
   "repository": "/home/me/repo",
   "pr": 17,
   "branch": "42-fix-the-thing",
+  "head": "0123456789abcdef0123456789abcdef01234567",
   "issue": 42,
   "risk_high": false,
   "outcome": "verified",
@@ -161,7 +182,7 @@ Written on the failure paths too, like `start --json`.
   "pinned": true,
   "workspace_id": "w9",
   "pane_id": "w9:p2",
-  "agent_name": "review-42-fix-the-thing-0123456-6364c6",
+  "agent_name": "review-42-fix-the-thing-012345678-6364c6",
   "briefed": true,
   "staffing": [ { "status": "done", "kind": "staff", "…": "…" } ],
   "error": null,
@@ -173,8 +194,9 @@ Written on the failure paths too, like `start --json`.
   the reviewer's verdict came back as anything else, and null when no verdict
   was reached — CI stopped it, the wait ended, or something failed.
 - **`outcome`** is one of `verified`, `ci_failing`, `ci_pending`, `ci_missing`,
-  `review_failed`, `review_unreadable`, `review_blocked`, `review_no_answer` or
-  `error`.
+  `review_failed`, `review_unreadable`, `review_blocked`, `review_no_answer`,
+  `review_stale` or `error`.
+- **`head`** is the commit the review is bound to.
 - **`report.note`** is the reviewer's own words and stays untrusted data.
 - **`agent_name`** is what to `gate` on if you want to wait for the reviewer
   again after a timeout.

@@ -39,6 +39,21 @@ type gateOptions struct {
 	// parser, so parsing stays a pure function of the arguments.
 	dagr     bool
 	dagrPath string
+	// metadataOnly judges only the metadata channel. No flag reaches it: it is
+	// for `review`, whose reviewer's pane shows a PR diff someone else wrote,
+	// and an envelope printed in that diff would otherwise be a report.
+	metadataOnly bool
+}
+
+// look is readChannels, less the terminal channel when the wait is
+// metadataOnly. The terminal is still read, so a look costs and signals what
+// it always did; its report is just not judged.
+func (o gateOptions) look(client *herdrapi.Client, pane string) []observation {
+	obs := readChannels(client, pane)
+	if !o.metadataOnly {
+		return obs
+	}
+	return slices.DeleteFunc(obs, func(ob observation) bool { return ob.channel != channelMetadata })
 }
 
 // names is how a wait covering several workers refers to itself in a message
@@ -296,7 +311,7 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 	// answer, so it is ignored — and named in the timeout message, so a gate
 	// started too late says so instead of just failing.
 	for i := range targets {
-		stale := targets[i].seen.advance(readChannels(client, targets[i].pane))
+		stale := targets[i].seen.advance(opts.look(client, targets[i].pane))
 		if len(stale) > 0 {
 			targets[i].baseline, targets[i].hasBaseline = stale[0], true
 		}
@@ -331,7 +346,7 @@ func gateWait(client *herdrapi.Client, opts gateOptions, targets []gateTarget, o
 			}
 			// Read before acting on the verdict, so a worker that printed its
 			// report and died in the same breath is still heard.
-			for _, r := range targets[i].seen.advance(readChannels(client, targets[i].pane)) {
+			for _, r := range targets[i].seen.advance(opts.look(client, targets[i].pane)) {
 				fresh = append(fresh, gateFresh{target: i, report: r})
 			}
 			if verdict == gateGone {
