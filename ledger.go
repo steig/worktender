@@ -82,6 +82,11 @@ type ledgerEvent struct {
 	// herdr resolved it, because a coordinator may name a worker either way.
 	Targets []ledgerTarget `json:"targets,omitempty"`
 	Until   []string       `json:"until,omitempty"`
+
+	// draft only, beside Repository, Origin and Issue.
+	Drafted int  `json:"drafted,omitempty"`
+	Dropped int  `json:"dropped,omitempty"`
+	Written bool `json:"written,omitempty"`
 }
 
 type ledgerTarget struct {
@@ -100,6 +105,11 @@ const (
 	// version 1, which is safe because readers dispatch on the kind and pass
 	// over one they do not know; the shape of a line did not change.
 	ledgerFeedback = "feedback"
+	// ledgerDraft is one `worktender draft` that got an answer from its
+	// drafter: how many checks it kept and dropped, and whether they were
+	// written to the issue. Like feedback, a kind added within version 1. It
+	// is what lets stats tell drafted checks from hand-written ones later.
+	ledgerDraft = "draft"
 )
 
 // ledgerPath is where the ledger lives, or an error when no state directory can

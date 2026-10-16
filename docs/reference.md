@@ -167,8 +167,8 @@ matching on the message.
 | **0** | It happened. | Proceed. |
 | **1** | Usage: an unknown flag, a missing argument, a repository you declined to name, a target that cannot report. | Fix the invocation. Retrying unchanged fails identically. |
 | **2** | Environment: herdr's socket unreachable, git failing, `gh` unauthenticated. **Also every unclassified failure.** | Fix the machine, then retry. |
-| **3** | Needs a human: a worker reported `blocked`, or `start` briefed an agent that never took it up, or found Claude Code's folder-trust, hooks-review or managed-settings approval screen where the brief was due, or was given a `factory:ready` issue whose payload nobody with write access approved, or that changed since, or without [acceptance checks](dispatch.md#acceptance-checks) it can parse. | Escalate. No retry clears it. |
-| **4** | No answer arrived: a gate timed out, a pane died before reporting. | The work may simply be unfinished; redispatching is reasonable. |
+| **3** | Needs a human: a worker reported `blocked`, or `start` briefed an agent that never took it up, or found Claude Code's folder-trust, hooks-review or managed-settings approval screen where the brief was due, or was given a `factory:ready` issue whose payload nobody with write access approved, or that changed since, or without [acceptance checks](dispatch.md#acceptance-checks) it can parse; or `draft` kept no proposed check, or found the issue edited while its drafter ran. | Escalate. No retry clears it. |
+| **4** | No answer arrived: a gate timed out, a pane died before reporting, `draft`'s drafter did not answer. | The work may simply be unfinished; redispatching is reasonable. |
 
 **2 is the catch-all on purpose.** The alternatives are worse: defaulting to
 **1** tells a coordinator to rewrite a correct invocation, and defaulting to
@@ -221,6 +221,14 @@ Errors you are most likely to meet:
   unresolvable ref prints no fork point rather than a guess — the worktree
   create reports that failure better than this line could. See
   [Stacking on a branch that is still in review](dispatch.md#stacking-on-a-branch-that-is-still-in-review).
+- **`worktender draft <issue>` proposes acceptance checks; it does not approve
+  them.** A read-only agent drafts the section, every line is held to the
+  grammar and an allow-list of the repository's own runners, and what fails is
+  printed and dropped. `--write` puts the rest on the issue (`--replace` to
+  overwrite an existing section); it never labels or approves. Exits **3** when
+  no proposed check survives or the issue was edited while it ran, **4** when
+  the drafter does not answer in ten minutes. See
+  [Drafting checks](dispatch.md#drafting-checks).
 - **`list` is an alias for `ls`.**
 - **`pr-feedback` and `refocus` are the watch mod's.** It runs them for you, and
   either runs by hand: `pr-feedback` in a repository, `refocus` inside a
