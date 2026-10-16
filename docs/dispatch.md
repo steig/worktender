@@ -97,6 +97,71 @@ role: ux (label role:ux) · agent: ux-designer (user) · brief: design · dirs: 
 The configuration, how a role is chosen, the brief styles and what a label can
 and cannot reach are in [Roles](roles.md).
 
+## Acceptance checks
+
+A gate can only check what an issue states mechanically. An issue whose "done"
+is prose gets verified against whoever is reading it. So an issue **cleared for
+an agent** — one carrying the `factory:ready` label — states its done as checks
+a machine can run, in a section of its own:
+
+```markdown
+## Acceptance
+
+- [ ] `go test ./...` exits 0
+- [ ] `test -f docs/acceptance.md` exits 0
+- [ ] `worktender version` prints `0.14.0`
+```
+
+The format is one check per line:
+
+- a list item (`-`, `*` or `+`), with or without a task box (`[ ]` or `[x]`);
+- then the **command**, as the line's first inline code span;
+- then the **outcome** it should give: an exit code, output, a file present.
+
+The command goes in backticks because commands contain spaces, pipes and the
+word "and", and a code span is the one delimiter markdown keeps intact. The
+section is the level-2 heading `## Acceptance`, in any case, and it runs to the
+next heading. Blank lines and HTML comments are skipped. Any other line in it
+is an error, never skipped silently, because a skipped check is a check nobody
+runs. A second `## Acceptance` section is an error too. A heading inside a code
+fence or an HTML comment is not a heading.
+
+The [`factory-ready` issue template](https://github.com/steig/worktender/blob/main/.github/ISSUE_TEMPLATE/factory-ready.md)
+lays this out. Filing it does not apply the label. Apply `factory:ready` once
+somebody has read the checks.
+
+**`start` refuses a `factory:ready` issue without runnable checks.** That means
+the section is missing, empty, or has a line it cannot read. The refusal exits
+**3**, needs a human, and it happens before any worktree exists:
+
+```
+worktender: issue #42 is labelled factory:ready but has an Acceptance section a gate cannot run: line 14 is not a check: want - [ ] `command` expected outcome; …
+```
+
+The code is 3 rather than 1 because no change to the invocation fixes it. The
+repair is to the issue. Writing what "done" means is the judgment the label
+certifies a person made, so a coordinator that wrote the checks itself would be
+clearing its own work. The message names lines by number and never quotes
+them, because the issue body is untrusted and the message reaches a
+coordinating agent.
+
+An issue **without** the label is read exactly as before. `start` asks `gh` for
+the same fields, never fetches the body, and types the same brief, even when
+that issue has an Acceptance section.
+
+**The brief counts the checks. It does not carry them.** For a ready issue the
+brief says how many checks `start` parsed. It tells the worker to run them and
+say in its `done` note which pass, for example `acceptance 3/4 pass, #2 fails`.
+The commands themselves stay in the issue, where the worker reads them through
+`gh issue view` as tool output. They are not pasted into the prompt. A command
+is the most instruction-shaped text an issue can hold, and keeping untrusted
+text out of the brief is the rule the brief is built on. The count is
+`start`'s own number, so a worker that reads the section differently has
+something to disagree with.
+
+The worker's report is a claim, not proof. Re-running the checks at the gate,
+so that it does not take the report's word, is a separate step.
+
 ## A durable, global inbox for agent-to-agent messages
 
 `report` and `gate` are a live handshake between one worker and the coordinator
