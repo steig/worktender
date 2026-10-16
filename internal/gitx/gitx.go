@@ -120,6 +120,18 @@ func Commit(root, ref string) string {
 	return out
 }
 
+// Branch is the branch checked out in dir, or empty when HEAD is detached or
+// dir is not a checkout at all. Empty rather than an error for the reason Commit
+// is: its one caller is annotating something that already happened, and has
+// nothing better to do with a failure than record the absence.
+func Branch(dir string) string {
+	out, err := run(dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 // IsDirty reports whether a checkout has uncommitted changes, including
 // untracked files. Work that exists nowhere else must never be pruned.
 func IsDirty(checkout string) bool {

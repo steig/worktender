@@ -185,6 +185,7 @@ func startCommand(args []string, out io.Writer) error {
 		return err
 	}
 	doc.Briefed = true
+	recordStart(s.root, number, branch, launch, agent, pane)
 
 	gate := fmt.Sprintf("%s gate --target %s --until done --require-pr", selfPath(), agent)
 	doc.GateCommand = jsonout.String(gate)

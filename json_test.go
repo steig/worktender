@@ -14,7 +14,7 @@ import (
 func TestEveryJSONCommandAcceptsTheFlag(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 
-	for _, command := range []string{"ls", "doctor", "sync", "prune", "prune-apply"} {
+	for _, command := range []string{"ls", "doctor", "sync", "prune", "prune-apply", "stats"} {
 		t.Run(command, func(t *testing.T) {
 			// Pinned to a fixture repository, not just to an absent herdr. The
 			// degraded path falls back to the process working directory, so

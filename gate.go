@@ -206,6 +206,7 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 		}
 		return err
 	}
+	recordGate(opts, targets)
 
 	outcome, evidence, about, released, err := gateWait(client, opts, targets, notes, started)
 	waited := time.Since(started)

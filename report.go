@@ -81,6 +81,9 @@ func reportCommand(args []string, out io.Writer) error {
 	fmt.Fprint(envelope, renderReport(r))
 
 	missingEnv, delivered := deliverReport(r)
+	// Recorded whether or not delivery worked: the worker did report, and the
+	// ledger is counting what workers claimed, not what a gate happened to hear.
+	recordReport(r)
 	pane := os.Getenv(paneEnv)
 	if asJSON {
 		doc := newReportEnvelopeJSON(r, pane, delivered == nil && missingEnv == "", noteLimit)
