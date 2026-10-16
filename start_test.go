@@ -191,6 +191,7 @@ func fakeStart(t *testing.T, repo *herdrtest.Repo, workspace, pane, status strin
 		{"pane_id": pane, "workspace_id": workspace, "tab_id": "t1", "index": 0},
 	}})
 	server.HandleResult("agent.start", map[string]any{"type": "agent_started"})
+	showScreen(server, workspace, pane, composerScreen)
 	server.HandleResult("pane.send_text", map[string]any{"type": "ok"})
 	server.HandleResult("pane.send_keys", map[string]any{"type": "ok"})
 	server.HandleResult("agent.get", map[string]any{
@@ -565,6 +566,207 @@ func TestStartAcceptsAnAgentThatWentStraightToBlocked(t *testing.T) {
 
 	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
 		t.Fatalf("start: %v", err)
+	}
+}
+
+// composerScreen is a Claude Code that has started and is waiting for input:
+// the screen every other start test assumes.
+const composerScreen = "╭──────────────────────────────╮\n│ >                            │\n╰──────────────────────────────╯\n  ? for shortcuts\n"
+
+// trustScreen is Claude Code 2.1.300's folder-trust dialog as its source text
+// puts it together, wrapped and boxed the way a visible read returns it — the
+// sentence the dialog opens with deliberately split across lines.
+const trustScreen = `╭──────────────────────────────────────────────────────────────╮
+│ Accessing workspace:                                         │
+│                                                              │
+│ /home/me/repo/.worktrees/42-fix-the-thing                    │
+│                                                              │
+│ Quick safety check: Is this a project you created or one you │
+│ trust? (Like your own code, a well-known open source         │
+│ project, or work from your team). If not, take a moment to   │
+│ review what's in this folder first.                          │
+│                                                              │
+│ Claude Code'll be able to read, edit, and execute files here.│
+│                                                              │
+│ ❯ 1. Yes, I trust this folder                                │
+│   2. No, exit                                                │
+╰──────────────────────────────────────────────────────────────╯
+`
+
+// showScreen makes pane.read answer with screen.
+func showScreen(server *herdrtest.Server, workspace, pane, screen string) {
+	showScreens(server, workspace, pane, func(int) string { return screen })
+}
+
+// showScreens makes pane.read answer with screen(n) on its nth call, counted
+// from one, so a test can draw a dialog after start has already looked once.
+func showScreens(server *herdrtest.Server, workspace, pane string, screen func(n int) string) {
+	var mu sync.Mutex
+	reads := 0
+
+	server.Handle("pane.read", func(map[string]any) (any, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reads++
+		return map[string]any{
+			"type": "pane_read",
+			"read": map[string]any{
+				"pane_id": pane, "workspace_id": workspace, "tab_id": "t1",
+				"source": "visible", "format": "text", "text": screen(reads),
+				"revision": reads, "truncated": false,
+			},
+		}, nil
+	})
+}
+
+// keystrokes is every call that put input into a pane.
+func keystrokes(server *herdrtest.Server) []string {
+	var sent []string
+	for _, call := range server.Calls() {
+		if call.Method == "pane.send_text" || call.Method == "pane.send_keys" {
+			sent = append(sent, call.Method)
+		}
+	}
+	return sent
+}
+
+// #196: a fresh worktree is a folder Claude Code has never seen, and the first
+// thing it may draw there is the trust dialog. The Enter meant for the brief
+// would accept it, permanently and unseen, and herdr's `blocked` for the dialog
+// would then read as the brief having landed. Nothing may be typed or pressed,
+// and the stop is a person's to clear.
+func TestStartTypesNothingOnTheFolderTrustScreen(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
+	showScreen(server, "w9", "w9:p1", trustScreen)
+	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	briefConfirmWithin(t, 0)
+
+	err := startCommand([]string{"42"}, &strings.Builder{})
+	if err == nil {
+		t.Fatal("start must fail on the trust screen, not report the brief delivered")
+	}
+	if code := exitCode(err); code != exitNeedsHuman {
+		t.Errorf("exit code = %d, want %d (needs a human): %v", code, exitNeedsHuman, err)
+	}
+	if !strings.Contains(err.Error(), "folder-trust") {
+		t.Errorf("the error should name the screen, got %v", err)
+	}
+	if sent := keystrokes(server); len(sent) != 0 {
+		t.Errorf("sent %v to a pane showing the trust screen, want nothing", sent)
+	}
+}
+
+// The same for the hooks-review screen, whose wording comes from #196 rather
+// than from any Claude Code build — see gatekeeperScreens.
+func TestStartTypesNothingOnTheHooksReviewScreen(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
+	showScreen(server, "w9", "w9:p1", "│ Hooks need review │\n│ ❯ 1. Accept │\n")
+	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	briefConfirmWithin(t, 0)
+
+	err := startCommand([]string{"42"}, &strings.Builder{})
+	if code := exitCode(err); code != exitNeedsHuman {
+		t.Fatalf("exit code = %d, want %d (needs a human): %v", code, exitNeedsHuman, err)
+	}
+	if !strings.Contains(err.Error(), "hooks-review") {
+		t.Errorf("the error should name the screen, got %v", err)
+	}
+	if sent := keystrokes(server); len(sent) != 0 {
+		t.Errorf("sent %v to a pane showing the hooks-review screen, want nothing", sent)
+	}
+}
+
+// And for the managed-settings approval dialog, where an Enter approves what an
+// organization pushed — the trust screen's harm, aimed at settings.
+func TestStartTypesNothingOnTheManagedSettingsScreen(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
+	showScreen(server, "w9", "w9:p1",
+		"│ Managed settings require approval │\n│ Settings requiring approval: │\n│ ❯ 1. Yes, I trust these settings │\n│   2. No, exit Claude Code │\n")
+	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	briefConfirmWithin(t, 0)
+
+	err := startCommand([]string{"42"}, &strings.Builder{})
+	if code := exitCode(err); code != exitNeedsHuman {
+		t.Fatalf("exit code = %d, want %d (needs a human): %v", code, exitNeedsHuman, err)
+	}
+	if !strings.Contains(err.Error(), "managed-settings") {
+		t.Errorf("the error should name the screen, got %v", err)
+	}
+	if sent := keystrokes(server); len(sent) != 0 {
+		t.Errorf("sent %v to a pane showing the managed-settings screen, want nothing", sent)
+	}
+}
+
+// The dialog may be drawn after the first look: the brief is typed into what
+// was a composer, and by the time Enter is due the trust screen is up. The Enter
+// is the key that would accept it, so it is the one that must not be sent.
+func TestStartDoesNotPressEnterOnATrustScreenDrawnAfterTyping(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "blocked")
+	showScreens(server, "w9", "w9:p1", func(n int) string {
+		if n == 1 {
+			return composerScreen
+		}
+		return trustScreen
+	})
+	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+	briefConfirmWithin(t, 0)
+
+	err := startCommand([]string{"42"}, &strings.Builder{})
+	if code := exitCode(err); code != exitNeedsHuman {
+		t.Fatalf("exit code = %d, want %d (needs a human): %v", code, exitNeedsHuman, err)
+	}
+	if presses := pressCount(server); presses != 0 {
+		t.Errorf("pressed enter %d time(s) on the trust screen, want none", presses)
+	}
+}
+
+// And the ordinary path still briefs: the pane is read before anything is
+// typed into it, and a composer is typed into and submitted as before.
+func TestStartReadsThePaneBeforeTypingIntoIt(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, `echo '{"number":42,"title":"Fix the thing"}'`)
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	var order []string
+	for _, call := range server.Calls() {
+		switch call.Method {
+		case "pane.read", "pane.send_text", "pane.send_keys":
+			order = append(order, call.Method)
+			if call.Method == "pane.read" && call.Params["source"] != "visible" {
+				t.Errorf("read the pane from %v, want the visible screen", call.Params["source"])
+			}
+		}
+	}
+	want := []string{"pane.read", "pane.send_text", "pane.read", "pane.send_keys"}
+	if strings.Join(order, " ") != strings.Join(want, " ") {
+		t.Errorf("pane calls = %v, want %v", order, want)
+	}
+}
+
+// The matcher survives the wrapping a visible read has, and does not fire on a
+// screen that merely mentions trust.
+func TestGatekeeperScreen(t *testing.T) {
+	cases := []struct {
+		text, want string
+	}{
+		{trustScreen, "folder-trust"},
+		{"│ Do you trust the files in this folder? │", "folder-trust"},
+		{"│ Hooks   need\n review │", "hooks-review"},
+		{composerScreen, ""},
+		{"> I trust this approach to the folder layout", ""},
+	}
+	for _, c := range cases {
+		if got := gatekeeperScreen(c.text); got != c.want {
+			t.Errorf("gatekeeperScreen(%q) = %q, want %q", c.text, got, c.want)
+		}
 	}
 }
 

@@ -38,7 +38,21 @@ stays idle; `start` waits for herdr to report the agent working before it says
 "briefed". herdr answering ok means it delivered keystrokes, not that an agent
 received a prompt — and an agent herdr calls started is not yet an agent reading
 its keys, so the first Enter is routinely dropped. A brief left sitting in a
-composer is a worker with nothing to do that a listing reports as `idle`. The brief names the issue rather than carrying it — the worker runs `gh
+composer is a worker with nothing to do that a listing reports as `idle`.
+
+**`start` never types on a trust screen.** A new worktree is a folder Claude Code
+has not seen, so it may open on its folder-trust dialog, a hooks-review screen,
+or the dialog asking you to approve managed settings, instead of its composer —
+and there the Enter meant for the brief would accept the dialog on your behalf.
+Before typing the brief, and again before every Enter, `start` reads the visible
+pane; if it shows any of these it sends nothing, exits **3** naming the screen,
+and leaves the worktree and the agent for you. Answer the dialog in the pane,
+then brief the agent yourself. The match is on the dialog's text, taken from
+Claude Code 2.1.300's source for the trust and managed-settings dialogs and from
+#196 for the hooks screen, so a Claude Code release that rewords any of them can
+slip past it.
+
+The brief names the issue rather than carrying it — the worker runs `gh
 issue view` itself, which keeps it short enough to arrive in one piece and keeps
 untrusted prose out of the prompt entirely.
 It exists because the pane id the middle step needs came from
