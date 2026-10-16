@@ -54,8 +54,9 @@ type startJSON struct {
 	// Staffing is the staff action's own result, in the shape `sync --json` and
 	// `prune --json` use.
 	Staffing []execute.ResultJSON `json:"staffing"`
-	// GateCommand is the wait this start earned, ready to run. Carried because
-	// the agent name is a digest nobody should be retyping.
+	// GateCommand is the wait this start earned, ready to run. It targets the
+	// pane, which outlives the agent name: herdr can stop resolving the name
+	// while the worker is still running.
 	GateCommand *string `json:"gate_command"`
 	Error       *string `json:"error"`
 	ExitCode    int     `json:"exit_code"`
@@ -75,7 +76,7 @@ func (d *startJSON) finish(err error) *startJSON {
 // dispatchJSON is `dispatch --json`.
 //
 // Small on purpose: dispatch staffs one named pane and has nothing else to say.
-// The agent name is the field worth having, because it is what a gate takes.
+// The pane is what the gate command takes; the agent name is kept beside it.
 type dispatchJSON struct {
 	PaneID      string               `json:"pane_id"`
 	WorkspaceID *string              `json:"workspace_id"`

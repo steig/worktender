@@ -162,8 +162,8 @@ JSON`)
 	if !doc.Briefed {
 		t.Error("briefed = false, but the agent took the brief up")
 	}
-	if doc.GateCommand == nil || !strings.Contains(*doc.GateCommand, "gate --target "+want) {
-		t.Errorf("gate_command = %v, should be the wait this start earned", doc.GateCommand)
+	if doc.GateCommand == nil || !strings.Contains(*doc.GateCommand, "gate --target w9:p1 ") {
+		t.Errorf("gate_command = %v, should wait on the pane this start staffed", doc.GateCommand)
 	}
 	if doc.ForkPoint == nil || *doc.ForkPoint == "" {
 		t.Error("fork_point is null; a ref moves and the commit is what does not")
@@ -198,7 +198,8 @@ JSON`)
 }
 
 // `dispatch --json` is small because dispatch is: it staffs one named pane. The
-// agent name is the field worth having, because it is what a gate takes.
+// gate it hands back names that pane, not --name, which herdr can stop resolving
+// while the agent runs.
 func TestDispatchJSONNamesTheAgentAndPane(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
@@ -223,8 +224,8 @@ func TestDispatchJSONNamesTheAgentAndPane(t *testing.T) {
 	if doc.AgentName != "worker-one" {
 		t.Errorf("agent_name = %q, want worker-one", doc.AgentName)
 	}
-	if doc.GateCommand == nil || !strings.Contains(*doc.GateCommand, "gate --target worker-one") {
-		t.Errorf("gate_command = %v, should wait on the agent just dispatched", doc.GateCommand)
+	if doc.GateCommand == nil || !strings.Contains(*doc.GateCommand, "gate --target w9:p1 ") {
+		t.Errorf("gate_command = %v, should wait on the pane just dispatched to", doc.GateCommand)
 	}
 	if len(doc.Staffing) == 0 {
 		t.Error("staffing should carry the action's own result")

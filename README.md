@@ -218,21 +218,23 @@ worktree: 42-fix-the-thing on origin/main (workspace w9, pane w9:p1)
 fork point: origin/main is 31db5d1c9b7e4a02f6c1d8e5a3b90f2c4d6e8a10
 done  staff  42-fix-the-thing  started claude as wt-42-fix-the-thing-016aab in w9:p1
 
-briefed wt-42-fix-the-thing-016aab on #42; wait for it with:
-  worktender gate --target wt-42-fix-the-thing-016aab --until done --require-pr
+briefed wt-42-fix-the-thing-016aab (pane w9:p1) on #42; wait for it with:
+  worktender gate --target w9:p1 --until done --require-pr
 ```
 
-The agent name is not the branch name: herdr's agent namespace spans every
-repository at once, so the name carries a digest of the repository. Copy the
-line `start` prints rather than retyping it.
+The gate line names the pane, not the agent: herdr can stop resolving an agent
+name while the agent still runs (seen after Claude Code retitled its terminal),
+and the pane lasts as long as the worker. The agent name is not the branch name
+either — herdr's agent namespace spans every repository at once, so it carries a
+digest of the repository. Copy the line `start` prints rather than retyping it.
 
 With several running, wait on all of them at once — the first to report releases
 the gate and it says which one:
 
 ```sh
-$ worktender gate --any wt-42-fix-the-thing-016aab,wt-43-other-9c21f4 --until done
-gate: waiting on wt-42-fix-the-thing-016aab (pane w9:p1), wt-43-other-9c21f4 (pane w10:p1) for status done, up to 15m
-gate: wt-43-other-9c21f4 released after 4m12s (evidence: reported)
+$ worktender gate --any w9:p1,w10:p1 --until done
+gate: waiting on w9:p1 (pane w9:p1), w10:p1 (pane w10:p1) for status done, up to 15m
+gate: w10:p1 released after 4m12s (evidence: reported)
 ```
 
 One command from an issue number to an agent working on it: it reads the issue

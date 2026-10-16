@@ -25,14 +25,15 @@ worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
 "$worktender" start 13 --repo . --role ux    # or name one
 
 # 2. Wait on the report, not on a clock. Start them all, then wait on them all.
-"$worktender" gate --any wt-12-the-thing-3f9a1c,wt-13-other-8b40de --until done --timeout 20m
-# gate: wt-13-other-8b40de released after 4m12s (evidence: reported)   <- drop it and gate on the rest
+"$worktender" gate --any w9:p1,w10:p1 --until done --timeout 20m
+# gate: w10:p1 released after 4m12s (evidence: reported)   <- drop it and gate on the rest
 ```
 
-`start` prints the exact `gate` line for what it just started, agent name
-included — do not guess the name. **It is not the branch name.** herdr's agent
-namespace spans every repository at once and refuses a duplicate, so the name
-carries a digest of the repository that you cannot derive by eye.
+`start` prints the exact `gate` line for what it just started — copy it. It
+targets the **pane**, not the agent name: herdr can stop resolving a name while
+the agent still runs (seen after Claude Code retitled its terminal), and a gate on
+it then fails `agent_not_found`. The pane lasts as long as the worker. The agent
+name is not the branch name either — it carries a digest of the repository.
 
 **`start` exiting 3 with a screen named means a human must look.** A new
 worktree can open Claude Code on its folder-trust dialog, a hooks-review screen

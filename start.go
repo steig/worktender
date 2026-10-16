@@ -246,9 +246,18 @@ func startCommand(args []string, out io.Writer) error {
 	doc.Briefed = true
 	recordStart(s.root, number, branch, launch, agent, pane)
 
-	gate := fmt.Sprintf("%s gate --target %s --until done --require-pr", selfPath(), agent)
+	// The gate is bound to the pane, not the agent name, for the reason review
+	// binds its own: the name is something herdr resolves, and herdr has been
+	// seen to stop resolving it a minute in — after Claude Code retitled its
+	// terminal, `agent list` showed the worker with no name at all, and a gate
+	// on it failed agent_not_found while the worker was still at work. Whether
+	// the retitle is the cause is unconfirmed (#243); it does not matter here.
+	// The pane is the thing start made, and it lasts as long as the worker
+	// does. The name is still what herdr was asked for, and still printed
+	// beside it.
+	gate := fmt.Sprintf("%s gate --target %s --until done --require-pr", selfPath(), pane)
 	doc.GateCommand = jsonout.String(gate)
-	fmt.Fprintf(notes, "\nbriefed %s on #%d; wait for it with:\n  %s\n", agent, number, gate)
+	fmt.Fprintf(notes, "\nbriefed %s (pane %s) on #%d; wait for it with:\n  %s\n", agent, pane, number, gate)
 	return emit(doc.finish(nil))
 }
 

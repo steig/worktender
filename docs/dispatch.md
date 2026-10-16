@@ -15,17 +15,17 @@ worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
 # --repo because start creates a checkout and is not a herdr action, so nothing
 # tells it which repository unless you do. Flags go on either side of the number.
 "$worktender" start 42 --repo . --model sonnet
-# The agent name is not the branch: it carries a digest of the repository,
-# because herdr's agent namespace is global. `start` prints this exact line.
-"$worktender" gate --target wt-42-fix-the-thing-016aab --until done --require-pr --timeout 20m
+# `start` prints this exact line. It names the pane, not the agent: herdr can
+# stop resolving an agent name while it runs, and the pane lasts as long as it.
+"$worktender" gate --target w9:p1 --until done --require-pr --timeout 20m
 
 # ...and with several running, wait on all of them at once. The first to report
 # releases, and the gate says which one it was.
-"$worktender" gate --any 42-fix-the-thing,43-other,44-third --until done --timeout 20m
+"$worktender" gate --any w9:p1,w10:p1,w11:p1 --until done --timeout 20m
 
 # ...and when it is not, the pieces are still separate. Dispatch, then wait.
 "$worktender" dispatch --pane w22:p1 --name reconcile-split --model sonnet
-"$worktender" gate --target reconcile-split --until done --require-pr --timeout 20m
+"$worktender" gate --target w22:p1 --until done --require-pr --timeout 20m
 
 # WORKER — from inside its own pane:
 "$worktender" report --status done --pr 42 --note "landed the reconcile split"
