@@ -521,6 +521,13 @@ func (c *Client) WorktreeRemove(workspaceID string, force bool) error {
 	}, nil)
 }
 
+// WorkspaceClose closes a workspace and every pane in it, ending whatever
+// agent those panes hold. It touches no files: a checkout the workspace was
+// open on is left where it is.
+func (c *Client) WorkspaceClose(workspaceID string) error {
+	return c.call("workspace.close", map[string]any{"workspace_id": workspaceID}, nil)
+}
+
 // AgentGet resolves one agent target — a name or a pane id, whichever the
 // caller has — to the agent herdr is tracking. It fails with agent_not_found
 // when the target names nothing, which is also what a pane whose agent has

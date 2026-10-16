@@ -117,7 +117,34 @@ type State struct {
 	// agent. Off by default, and it never reaches an agent that is still
 	// working — see prune.
 	ReleaseAgents bool
+	// PaneReports holds what each pane of a ghost workspace last reported,
+	// keyed by pane id, with the reported pull request's state already asked
+	// of gh. Only ghosts' panes are read, because a ghost is the only verdict
+	// a report can change. A pane absent from the map was not asked.
+	PaneReports map[string]PaneReport
 }
+
+// PaneReport is a worker's last worktender report, as far as closing a ghost
+// needs it.
+type PaneReport struct {
+	// Found is false for a pane that carries no report at all.
+	Found  bool
+	Status string
+	// PR is 0 when the report named none.
+	PR int
+	// PRState is what gh says of PR, PRNone when it was not asked or could
+	// not answer.
+	PRState PRState
+	// Unreadable records that the pane could not be asked. It is not the same
+	// fact as Found being false, and a pane that might hold a report saying
+	// otherwise must stop a close rather than be skipped over.
+	Unreadable bool
+}
+
+// reportDone is the report status a worker gives once its work is finished.
+// Spelled here rather than imported because the envelope belongs to the main
+// package and the reconciler reads facts, not formats.
+const reportDone = "done"
 
 // Kind is what an Action asks the executor to do.
 type Kind string
@@ -140,9 +167,21 @@ const (
 	// there is no checkout left to test for uncommitted work, so the strongest
 	// guard this plugin has is not merely unsatisfied but unavailable. A ghost
 	// can also still host a live agent, and closing its workspace destroys that
-	// conversation. If a removal is ever added it wants its own command rather
-	// than a widening of prune-apply.
+	// conversation.
+	//
+	// The one exception is KindCloseGhost, which is a narrower case with its
+	// own evidence rather than a loosening of this one.
 	KindGhost Kind = "ghost"
+	// KindCloseGhost closes a ghost's workspace, and only under prune-apply.
+	//
+	// It is the factory's ordinary finish: a worker's PR merges, its checkout
+	// is deleted, and herdr keeps the workspace open on nothing. Here the guard
+	// a ghost lacks — is there uncommitted work? — is answered by something
+	// other than the checkout: the worker itself said `done` and named a pull
+	// request, and gh says that pull request merged. Work that landed is work
+	// that exists somewhere else. What is left is the live conversation, and
+	// an agent that is doing anything keeps it — see closable.
+	KindCloseGhost Kind = "close-ghost"
 )
 
 // Action is one decision. Reason is human-facing and always populated.
@@ -170,7 +209,8 @@ type Action struct {
 }
 
 // Reconcile returns everything the repository needs, in execution order:
-// adoptions, then staffing, then prunes. Ghosts come last and execute nothing.
+// adoptions, then staffing, then prunes. Ghosts come last, and execute nothing
+// unless one is a KindCloseGhost.
 func Reconcile(state State) []Action {
 	var actions []Action
 	actions = append(actions, adopt(state)...)
@@ -343,13 +383,25 @@ func prune(state State) []Action {
 // The mirror of the workspace that vanished underneath the collector: this one
 // stayed while its checkout went.
 //
-// The verdict is diagnosis, never removal — see KindGhost.
+// The verdict is diagnosis, never removal — see KindGhost — unless the ghost
+// is the factory's finish and closable says so.
 func ghosts(state State) []Action {
 	byPath := worktreesByPath(state)
 
 	var actions []Action
 	for _, ws := range state.Workspaces {
 		if _, live := byPath[pathKey(ws.CheckoutPath)]; live {
+			continue
+		}
+		if reason, ok := closable(state, ws); ok {
+			_, occupied := agentIn(state, ws)
+			actions = append(actions, Action{
+				Kind:           KindCloseGhost,
+				Path:           ws.CheckoutPath,
+				WorkspaceID:    ws.ID,
+				ReleasesAgents: occupied,
+				Reason:         reason,
+			})
 			continue
 		}
 		actions = append(actions, Action{
@@ -361,6 +413,47 @@ func ghosts(state State) []Action {
 		})
 	}
 	return actions
+}
+
+// closable decides whether a ghost's workspace may be closed, which takes all
+// of these:
+//
+//   - no agent in it is busy. Finished rather than "not working", because a
+//     blocked agent is waiting on a person and the conversation is the thing
+//     that person will come back to;
+//   - at least one pane last reported `done` with a pull request number;
+//   - every pane that reported did so, and gh says each of those merged.
+//
+// A pane with no report is passed over: a ghost's other panes are the shells a
+// person split beside the worker. A pane that could not be read is not passed
+// over, because it may be holding the report that says otherwise.
+func closable(state State, ws Workspace) (reason string, ok bool) {
+	if occupant, occupied := agentIn(state, ws); occupied && !occupant.Finished() {
+		return "", false
+	}
+
+	var merged []int
+	for _, pane := range ws.PaneIDs {
+		r, asked := state.PaneReports[pane]
+		if !asked {
+			continue
+		}
+		if r.Unreadable {
+			return "", false
+		}
+		if !r.Found {
+			continue
+		}
+		if r.Status != reportDone || r.PR == 0 || r.PRState != PRMerged {
+			return "", false
+		}
+		merged = append(merged, r.PR)
+	}
+	if len(merged) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("herdr holds this workspace open on a checkout git no longer has, "+
+		"and its worker reported done with PR #%d, which merged", merged[0]), true
 }
 
 // verdict decides whether a branch's work has landed, and always explains

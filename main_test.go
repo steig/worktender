@@ -697,6 +697,124 @@ func TestPruneNamesAWorkspaceWhoseCheckoutHasVanished(t *testing.T) {
 	}
 }
 
+// finishedGhostSession is the factory's ordinary finish as herdr and gh see it:
+// a workspace held open on a deleted checkout, whose worker's last report is
+// `done` with PR #240, and an agent in it doing agentStatus. gh answers
+// `pr view` with prState.
+func finishedGhostSession(t *testing.T, agentStatus, prState string) *herdrtest.Server {
+	t.Helper()
+	repo := herdrtest.NewRepo(t)
+	gone := filepath.Join(repo.Root, "..", "vanished")
+
+	server := fakeSession(t, repo)
+	server.HandleResult("worktree.list", map[string]any{
+		"type": "worktree_list",
+		"source": map[string]any{"repo_key": "k", "repo_name": "repo",
+			"repo_root": repo.Root, "source_checkout_path": repo.Root},
+		"worktrees": []map[string]any{},
+	})
+	server.HandleResult("workspace.list", workspaceListReply(repo, gone, "w35"))
+	server.HandleResult("agent.list", map[string]any{"type": "agent_list", "agents": []map[string]any{{
+		"pane_id": "w35:p1", "agent_status": agentStatus, "agent_name": "worker",
+	}}})
+	server.HandleResult("pane.list", map[string]any{"type": "pane_list",
+		"panes": []map[string]any{{"pane_id": "w35:p1"}}})
+
+	encoded, err := encodeReport(report{status: "done", pr: 240, note: "x"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := map[string]string{}
+	for k, v := range encoded {
+		if text, ok := v.(string); ok {
+			tokens[k] = text
+		}
+	}
+	server.HandleResult("pane.get", map[string]any{"type": "pane_info", "pane": map[string]any{
+		"pane_id": "w35:p1", "workspace_id": "w35", "tab_id": "t1", "terminal_id": "term_1",
+		"agent_status": agentStatus, "focused": false, "revision": 1, "tokens": tokens,
+	}})
+	server.HandleResult("workspace.close", map[string]any{"type": "ok"})
+
+	view := herdrtest.CatScript(t, `{"state":"`+prState+`"}`)
+	herdrtest.FakeGh(t, `if [ "$1 $2" = "pr view" ]; then `+view+`; else echo '[]'; fi`)
+	return server
+}
+
+func closed(server *herdrtest.Server) []string {
+	var ids []string
+	for _, call := range server.Calls() {
+		if call.Method == "workspace.close" {
+			id, _ := call.Params["workspace_id"].(string)
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// prune lists a finished ghost as one it would close, and closes nothing.
+func TestPruneListsAFinishedGhostAsOneItWouldClose(t *testing.T) {
+	server := finishedGhostSession(t, "idle", "MERGED")
+
+	var out strings.Builder
+	if err := pruneCommand(nil, &out, false); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "would close workspace w35") || !strings.Contains(got, "#240") {
+		t.Errorf("prune should say it would close the workspace and why, got:\n%s", got)
+	}
+	if ids := closed(server); len(ids) > 0 {
+		t.Errorf("prune is a dry run; it closed %v", ids)
+	}
+}
+
+// prune-apply closes it via workspace.close and says which.
+func TestPruneApplyClosesAFinishedGhost(t *testing.T) {
+	server := finishedGhostSession(t, "done", "MERGED")
+
+	var out strings.Builder
+	if err := pruneCommand(nil, &out, true); err != nil {
+		t.Fatalf("prune-apply: %v", err)
+	}
+	if ids := closed(server); len(ids) != 1 || ids[0] != "w35" {
+		t.Errorf("prune-apply should close w35 and nothing else, closed %v", ids)
+	}
+	if got := out.String(); !strings.Contains(got, "closed workspace w35") {
+		t.Errorf("prune-apply should say which workspace it closed, got:\n%s", got)
+	}
+	for _, call := range server.Calls() {
+		if call.Method == "worktree.remove" {
+			t.Errorf("closing a ghost has no worktree to remove; called %+v", call)
+		}
+	}
+}
+
+// The command-level half of the blocking conditions: what herdr and gh say
+// reaches the decision. The full set is in internal/reconcile.
+func TestPruneApplyLeavesAGhostOpenUnlessItsWorkFinished(t *testing.T) {
+	for _, tc := range []struct{ name, agent, pr string }{
+		{"PR still open", "idle", "OPEN"},
+		{"PR closed unmerged", "idle", "CLOSED"},
+		{"agent working", "working", "MERGED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := finishedGhostSession(t, tc.agent, tc.pr)
+
+			var out strings.Builder
+			if err := pruneCommand(nil, &out, true); err != nil {
+				t.Fatalf("prune-apply: %v", err)
+			}
+			if ids := closed(server); len(ids) > 0 {
+				t.Errorf("prune-apply closed %v", ids)
+			}
+			if got := out.String(); !strings.Contains(got, "ghost") || !strings.Contains(got, "vanished") {
+				t.Errorf("it should still be named as a ghost, got:\n%s", got)
+			}
+		})
+	}
+}
+
 // noHerdr puts the machine in the state the degraded path is for: no herdr
 // running.
 //

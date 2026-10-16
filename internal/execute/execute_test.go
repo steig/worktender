@@ -1129,3 +1129,48 @@ func TestPruneWithoutHerdrStillRefusesADirtyCheckout(t *testing.T) {
 		t.Fatal("uncommitted work was removed")
 	}
 }
+
+// A ghost's close re-reads what can change between the plan and the act: an
+// agent picking work back up, or a checkout reappearing at the path. Either
+// leaves the workspace open.
+func TestCloseGhostRechecksBeforeClosing(t *testing.T) {
+	for _, tc := range []struct {
+		name, agent string
+		reappear    bool
+		want        execute.Status
+	}{
+		{"finished agent", "idle", false, execute.StatusDone},
+		{"agent went back to work", "working", false, execute.StatusSkipped},
+		{"checkout reappeared", "idle", true, execute.StatusSkipped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := herdrtest.NewRepo(t)
+			path := filepath.Join(t.TempDir(), "gone")
+			if tc.reappear {
+				herdrtest.WriteFile(t, filepath.Join(path, "x"), "x")
+			}
+
+			exec, server := fixture(t, repo)
+			exec.ApplyPrune = true
+			occupy(server, tc.agent)
+			server.HandleResult("workspace.close", map[string]any{"type": "ok"})
+
+			action := reconcile.Action{Kind: reconcile.KindCloseGhost, Path: path,
+				WorkspaceID: "w2", ReleasesAgents: true, Reason: "PR #240 merged"}
+			result := only(t, exec.Run([]reconcile.Action{action}))
+			if result.Status != tc.want {
+				t.Fatalf("status = %q, want %q: %s", result.Status, tc.want, result.Detail)
+			}
+
+			var closes int
+			for _, call := range server.Calls() {
+				if call.Method == "workspace.close" {
+					closes++
+				}
+			}
+			if want := map[bool]int{true: 1, false: 0}[tc.want == execute.StatusDone]; closes != want {
+				t.Errorf("workspace.close called %d time(s), want %d", closes, want)
+			}
+		})
+	}
+}

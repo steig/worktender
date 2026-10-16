@@ -310,7 +310,26 @@ func newSessionIn(repo string, need herdrNeed) (*session, error) {
 
 // plan collects the current state and decides what the repository needs.
 func (s *session) plan(releaseAgents bool) ([]reconcile.Action, error) {
-	return s.planWith(reconcile.NewCollector(s.client, s.root), releaseAgents)
+	collector := reconcile.NewCollector(s.client, s.root)
+	// Only prune reads reports: a ghost is the one verdict a report can change,
+	// and closing one is a prune-apply step.
+	if s.client != nil {
+		collector.LookupReport = func(pane string) (reconcile.PaneReport, error) {
+			info, err := s.client.PaneGet(pane)
+			if err != nil {
+				return reconcile.PaneReport{}, err
+			}
+			r, _, ok := decodeReport(info.Pane.Tokens)
+			if !ok {
+				return reconcile.PaneReport{}, nil
+			}
+			return reconcile.PaneReport{Found: true, Status: r.status, PR: r.pr}, nil
+		}
+		collector.LookupPRNumber = func(number int) reconcile.PRState {
+			return reconcile.GhPRNumberState(s.root, number)
+		}
+	}
+	return s.planWith(collector, releaseAgents)
 }
 
 // planWith is plan against a collector the caller has adjusted, which is how
@@ -375,9 +394,9 @@ func (o *output) record(results []execute.Result) {
 // cannot be applied by one and must not point at it.
 func (o *output) applyHint() string {
 	if o.releaseAgents {
-		return "run `worktender prune-apply --release-agents` to remove the worktrees listed above"
+		return "run `worktender prune-apply --release-agents` to carry out what is planned above"
 	}
-	return "run the `Worktender: prune (apply)` action to remove the worktrees listed above"
+	return "run the `Worktender: prune (apply)` action to carry out what is planned above"
 }
 
 // reconcileJSON is what `sync`, `prune` and `prune-apply` write for a machine.
@@ -685,7 +704,7 @@ func pruneCommand(args []string, out io.Writer, apply bool) error {
 		if err != nil {
 			return err
 		}
-		_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), false)
+		_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost, reconcile.KindCloseGhost), false)
 		return firstError(err, o.flush(s.root))
 	}
 
@@ -705,7 +724,7 @@ func pruneCommand(args []string, out io.Writer, apply bool) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost), true)
+	_, err = s.perform(o, reconcile.Only(actions, reconcile.KindPrune, reconcile.KindKeep, reconcile.KindGhost, reconcile.KindCloseGhost), true)
 	return firstError(err, o.flush(s.root))
 }
 

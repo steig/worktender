@@ -128,6 +128,12 @@ strongest guard here is not unsatisfied but *unavailable*, and the workspace's
 panes may still hold a live agent whose conversation closing it would destroy.
 `prune` reports the same entry and removes nothing.
 
+Except one shape: a ghost whose pane last reported `done` with a PR number, whose
+PR gh says merged, and with no busy agent in it. `prune` reports that as an
+action of kind `close-ghost` with status `planned`, and `prune-apply` closes the
+workspace with herdr's `workspace.close` and reports it `done`. Anything short
+of all three is a plain ghost.
+
 Before this existed the state was in no listing at all. `Reconcile` walks
 worktrees to adopt and to prune, and walks workspaces only to read through to a
 worktree, so a workspace that outlived its checkout was visited by nothing —

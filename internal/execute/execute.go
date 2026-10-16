@@ -12,6 +12,7 @@ package execute
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,8 @@ func (e *Executor) Run(actions []reconcile.Action) []Result {
 			results = append(results, e.staff(action, busyUntil))
 		case reconcile.KindPrune:
 			results = append(results, e.prune(action))
+		case reconcile.KindCloseGhost:
+			results = append(results, e.closeGhost(action))
 		default:
 			results = append(results, Result{action, StatusFailed, "unknown action kind"})
 		}
@@ -265,6 +268,35 @@ func (e *Executor) prune(action reconcile.Action) Result {
 	}
 	return Result{action, StatusDone,
 		fmt.Sprintf("removed: %s%s%s", action.Reason, releaseNote(action), e.dropBranch(action.Branch))}
+}
+
+// closeGhost closes the workspace of a ghost whose worker reported its PR
+// merged. Under the same dry-run switch as a prune, because it ends whatever
+// conversation the workspace's panes still hold.
+//
+// The plan's evidence that the work landed does not go stale — a merged PR
+// stays merged — but the two facts around it can: an agent can pick work up
+// again, and a checkout can be recreated at the path. Either makes this
+// workspace something other than the finished ghost the plan saw.
+func (e *Executor) closeGhost(action reconcile.Action) Result {
+	if _, err := os.Stat(action.Path); err == nil {
+		return Result{action, StatusSkipped, "a checkout reappeared at " + action.Path + " since the plan was made"}
+	}
+	_, busy, err := e.workspaceOccupant(action.WorkspaceID)
+	switch {
+	case err != nil:
+		return Result{action, StatusSkipped, fmt.Sprintf("could not confirm the workspace is idle: %v", err)}
+	case busy:
+		return Result{action, StatusSkipped, "the agent here started working since the plan was made"}
+	}
+
+	if !e.ApplyPrune {
+		return Result{action, StatusPlanned, "would close workspace " + action.WorkspaceID + ": " + action.Reason}
+	}
+	if err := e.Client.WorkspaceClose(action.WorkspaceID); err != nil {
+		return Result{action, StatusFailed, fmt.Sprintf("close workspace %s: %v", action.WorkspaceID, err)}
+	}
+	return Result{action, StatusDone, "closed workspace " + action.WorkspaceID + ": " + action.Reason}
 }
 
 // releaseNote says when a removal also takes an agent's pane away. The reason

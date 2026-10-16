@@ -872,3 +872,99 @@ func TestGhostIsNeverStaffed(t *testing.T) {
 		t.Errorf("there is no directory to start an agent in, got %+v", a)
 	}
 }
+
+// finishedGhost is the factory's ordinary finish: the worker reported done
+// with its PR, the PR merged, the checkout was deleted, and the agent sits idle
+// in a workspace herdr still holds open.
+func finishedGhost() reconcile.State {
+	return reconcile.State{
+		Root: "/repo",
+		Base: "main",
+		Workspaces: []reconcile.Workspace{
+			{ID: "w35", CheckoutPath: "/repo/wt/gone", IsLinked: true, PaneIDs: []string{"w35:p1", "w35:p2"}},
+		},
+		AgentPanes: map[string]reconcile.AgentState{"w35:p1": reconcile.AgentIdle},
+		PaneReports: map[string]reconcile.PaneReport{
+			"w35:p1": {Found: true, Status: "done", PR: 240, PRState: reconcile.PRMerged},
+			// A shell split beside the worker, with nothing to say.
+			"w35:p2": {},
+		},
+	}
+}
+
+func TestGhostWhoseWorkerIsDoneAndWhosePRMergedIsClosed(t *testing.T) {
+	actions := reconcile.Reconcile(finishedGhost())
+
+	closing := find(actions, reconcile.KindCloseGhost, "/repo/wt/gone")
+	if closing == nil {
+		t.Fatalf("a finished ghost should be planned for closing, got %+v", actions)
+	}
+	if closing.WorkspaceID != "w35" {
+		t.Errorf("the close must name the workspace, got %q", closing.WorkspaceID)
+	}
+	if !strings.Contains(closing.Reason, "#240") {
+		t.Errorf("the reason should name the merged PR, got %q", closing.Reason)
+	}
+	if !closing.ReleasesAgents {
+		t.Error("closing a workspace with an agent in it ends that agent, and the action must say so")
+	}
+	if find(actions, reconcile.KindGhost, "/repo/wt/gone") != nil {
+		t.Error("a ghost planned for closing must not also be reported as one left for a person")
+	}
+}
+
+// Every condition that stops the close leaves a named ghost, as before.
+func TestGhostStaysAGhostUnlessEveryConditionHolds(t *testing.T) {
+	cases := map[string]func(*reconcile.State){
+		"agent working": func(s *reconcile.State) {
+			s.AgentPanes["w35:p1"] = reconcile.AgentWorking
+		},
+		"agent blocked on a person": func(s *reconcile.State) {
+			s.AgentPanes["w35:p1"] = reconcile.AgentBlocked
+		},
+		"a working agent in another pane": func(s *reconcile.State) {
+			s.AgentPanes["w35:p2"] = reconcile.AgentWorking
+		},
+		"no report": func(s *reconcile.State) {
+			s.PaneReports = nil
+		},
+		"last report planned": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "planned", PR: 240, PRState: reconcile.PRMerged}
+		},
+		"last report blocked": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "blocked", PR: 240, PRState: reconcile.PRMerged}
+		},
+		"done without a PR": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "done"}
+		},
+		"PR still open": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "done", PR: 240, PRState: reconcile.PROpen}
+		},
+		"PR closed unmerged": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "done", PR: 240, PRState: reconcile.PRClosed}
+		},
+		"gh could not answer": func(s *reconcile.State) {
+			s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "done", PR: 240}
+		},
+		"another pane unreadable": func(s *reconcile.State) {
+			s.PaneReports["w35:p2"] = reconcile.PaneReport{Unreadable: true}
+		},
+		"another pane reports unfinished work": func(s *reconcile.State) {
+			s.PaneReports["w35:p2"] = reconcile.PaneReport{Found: true, Status: "planned"}
+		},
+	}
+	for name, spoil := range cases {
+		t.Run(name, func(t *testing.T) {
+			state := finishedGhost()
+			spoil(&state)
+			actions := reconcile.Reconcile(state)
+
+			if a := find(actions, reconcile.KindCloseGhost, "/repo/wt/gone"); a != nil {
+				t.Errorf("the close must not be planned, got %+v", a)
+			}
+			if find(actions, reconcile.KindGhost, "/repo/wt/gone") == nil {
+				t.Error("it should still be named as a ghost")
+			}
+		})
+	}
+}
