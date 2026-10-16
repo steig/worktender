@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // run executes git in dir and returns trimmed stdout.
@@ -130,6 +131,23 @@ func Branch(dir string) string {
 		return ""
 	}
 	return out
+}
+
+// CommitTime is the committer date of the commit at the tip of a local branch,
+// and false when the branch cannot be read — deleted after its merge, or never
+// in this repository. The committer date rather than the author date because a
+// rebase or an amend is new work on the branch as far as anyone waiting on it is
+// concerned, and only the committer date moves for those.
+func CommitTime(root, branch string) (time.Time, bool) {
+	out, err := run(root, "log", "-1", "--format=%cI", "refs/heads/"+branch, "--")
+	if err != nil || out == "" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339, out)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
 }
 
 // IsDirty reports whether a checkout has uncommitted changes, including

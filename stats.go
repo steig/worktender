@@ -33,13 +33,14 @@ import (
 // and how big its diff was. That is not worktender's to observe — a merge
 // happens on GitHub, long after every pane involved has closed.
 
-const statsUsage = "usage: worktender stats [--json]"
+const statsUsage = "usage: worktender stats [--json] [--since DURATION] [--escape-window DURATION] [--check [--max-ceremony-ratio N] [--max-proof-loop N] [--max-escape-rate F]]"
 
 // statsDispatch is one `start`, and everything later attributed to it.
 type statsDispatch struct {
 	start   ledgerEvent
 	reports []ledgerEvent
 	gates   int
+	gateAts []time.Time
 	inbox   int
 	// feedback is the pr-feedback notices typed at its worker.
 	feedback int
@@ -48,6 +49,11 @@ type statsDispatch struct {
 	facts  *prFacts
 	ghErr  error
 	doneAt time.Time
+
+	// escape is nil both for "did not escape" and "could not tell";
+	// escapeKnown is what separates them.
+	escape      *escapeFinding
+	escapeKnown bool
 }
 
 // attempts is how many times the worker claimed it was finished.
@@ -85,6 +91,19 @@ func (d *statsDispatch) merged() *bool {
 	return &m
 }
 
+// mergedAt is when the pull request merged, and false when it has not or gh
+// did not say. An escape is measured from it.
+func (d *statsDispatch) mergedAt() (time.Time, bool) {
+	if m := d.merged(); m == nil || !*m {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339, d.facts.MergedAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
+}
+
 // wallClock is start to the LAST done report: a dispatch that had to go round
 // again was not finished the first time it said so.
 func (d *statsDispatch) wallClock() (time.Duration, bool) {
@@ -120,10 +139,26 @@ func (d *statsDispatch) ceremonyRatio() (float64, bool) {
 func round2(f float64) float64 { return math.Round(f*100) / 100 }
 
 // prFacts is what gh says about one pull request.
+//
+// The title, merge time and merge commit ride along on the same call for
+// escape detection: a revert names the commit or the title, and the window is
+// measured from the merge.
 type prFacts struct {
-	State     string `json:"state"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
+	State       string `json:"state"`
+	Additions   int    `json:"additions"`
+	Deletions   int    `json:"deletions"`
+	Title       string `json:"title"`
+	MergedAt    string `json:"mergedAt"`
+	MergeCommit *struct {
+		OID string `json:"oid"`
+	} `json:"mergeCommit"`
+}
+
+func (f *prFacts) mergeOID() string {
+	if f.MergeCommit == nil {
+		return ""
+	}
+	return f.MergeCommit.OID
 }
 
 // prLookup asks about one pull request. A var so a test can count the calls.
@@ -133,7 +168,18 @@ var prLookup = ghPRFacts
 // recorded. The origin recorded at start is preferred over the checkout's
 // current one, which may no longer exist.
 func ghPRFacts(start ledgerEvent, pr int) (*prFacts, error) {
-	args := []string{"pr", "view", strconv.Itoa(pr), "--json", "state,additions,deletions"}
+	var facts prFacts
+	if err := ghJSON(start, []string{"pr", "view", strconv.Itoa(pr), "--json", "state,additions,deletions,title,mergedAt,mergeCommit"}, &facts); err != nil {
+		return nil, err
+	}
+	return &facts, nil
+}
+
+// ghJSON runs one gh query about the dispatch's repository and decodes the
+// answer into v. Errors name the gh subcommand, and carry what gh said on
+// stderr when it said anything.
+func ghJSON(start ledgerEvent, args []string, v any) error {
+	what := "gh " + strings.Join(args[:min(3, len(args))], " ")
 	if start.Origin != "" {
 		args = append(args, "--repo", start.Origin)
 	}
@@ -145,26 +191,45 @@ func ghPRFacts(start ledgerEvent, pr int) (*prFacts, error) {
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
-			return nil, fmt.Errorf("gh pr view %d: %s", pr, strings.TrimSpace(string(exit.Stderr)))
+			return fmt.Errorf("%s: %s", what, strings.TrimSpace(string(exit.Stderr)))
 		}
-		return nil, fmt.Errorf("gh pr view %d: %w", pr, err)
+		return fmt.Errorf("%s: %w", what, err)
 	}
-	var facts prFacts
-	if err := json.Unmarshal(raw, &facts); err != nil {
-		return nil, fmt.Errorf("gh pr view %d: unreadable answer: %w", pr, err)
+	if err := json.Unmarshal(raw, v); err != nil {
+		return fmt.Errorf("%s: unreadable answer: %w", what, err)
 	}
-	return &facts, nil
+	return nil
 }
 
 func statsCommand(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	asJSON := jsonFlag(fs)
+	since := fs.Duration("since", 0, "only dispatches started within this long ago (default all; 720h under --check)")
+	window := fs.Duration("escape-window", defaultEscapeWindow, "how long after its merge a revert or blamed issue makes a pull request an escape")
+	check := fs.Bool("check", false, "print one line per alert and exit 3 when any threshold is crossed")
+	th := defaultThresholds
+	fs.Float64Var(&th.ceremonyRatio, "max-ceremony-ratio", th.ceremonyRatio, "alert on a dispatch with more ceremony than this per 100 changed lines")
+	fs.IntVar(&th.proofLoop, "max-proof-loop", th.proofLoop, "alert on a dispatch with more gate runs and reports than this since done with no new commit")
+	fs.Float64Var(&th.escapeRate, "max-escape-rate", th.escapeRate, "alert when more than this fraction of merged pull requests escaped")
 	if err := fs.Parse(args); err != nil {
 		return usagef("%v; %s", err, statsUsage)
 	}
 	if fs.NArg() > 0 {
 		return usagef("unexpected argument %q; %s", fs.Arg(0), statsUsage)
+	}
+	if *since < 0 || *window <= 0 || th.ceremonyRatio < 0 || th.proofLoop < 0 || th.escapeRate < 0 {
+		return usagef("--since and the thresholds must not be negative, and --escape-window must be positive; %s", statsUsage)
+	}
+	// A check run from cron every day over the whole unbounded ledger would
+	// re-raise a month-old dispatch forever, and the one alert nobody can clear
+	// teaches everyone to ignore the exit code. So --check looks back a month
+	// unless told otherwise; the report, which is read rather than acted on,
+	// keeps all of history.
+	sinceSet := false
+	fs.Visit(func(f *flag.Flag) { sinceSet = sinceSet || f.Name == "since" })
+	if *check && !sinceSet {
+		*since = defaultCheckSince
 	}
 
 	path, err := ledgerPath()
@@ -181,13 +246,48 @@ func statsCommand(args []string, out io.Writer) error {
 
 	dispatches := attribute(events)
 	countInbox(dispatches, filepath.Join(filepath.Dir(path), "inbox"))
+	// Filtered after the inbox is counted, not before: an issue's inbox window
+	// ends where its next dispatch starts, and that bound must not depend on
+	// which dispatches happen to be shown.
+	dispatches = startedWithin(dispatches, *since)
 	lookupPRs(dispatches)
+	findEscapes(dispatches, *window)
 
-	if *asJSON {
-		return jsonout.Write(out, statsDocument(path, skipped, dispatches))
+	var alerts []statsAlert
+	if *check {
+		alerts = checkStats(dispatches, th, *window)
 	}
-	renderStats(out, dispatches)
+	if *asJSON {
+		if err := jsonout.Write(out, statsDocument(path, skipped, dispatches, *window, alerts)); err != nil {
+			return err
+		}
+	} else if *check {
+		for _, a := range alerts {
+			fmt.Fprintln(out, "alert: "+a.Message)
+		}
+	} else {
+		renderStats(out, dispatches, *window)
+	}
+	if len(alerts) > 0 {
+		return codef(exitNeedsHuman, "%d stats alert(s) over threshold", len(alerts))
+	}
 	return nil
+}
+
+// startedWithin keeps the dispatches started no longer than since ago; zero
+// keeps every one.
+func startedWithin(dispatches []*statsDispatch, since time.Duration) []*statsDispatch {
+	if since == 0 {
+		return dispatches
+	}
+	cutoff := ledgerNow().Add(-since)
+	var kept []*statsDispatch
+	for _, d := range dispatches {
+		if at, err := time.Parse(time.RFC3339Nano, d.start.At); err == nil && !at.Before(cutoff) {
+			kept = append(kept, d)
+		}
+	}
+	return kept
 }
 
 // attribute walks the ledger in append order and hands each event to the
@@ -240,6 +340,9 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 				if d := latestFor(dispatches, t); d != nil && !counted[d] {
 					counted[d] = true
 					d.gates++
+					if at, err := time.Parse(time.RFC3339Nano, e.At); err == nil {
+						d.gateAts = append(d.gateAts, at)
+					}
 				}
 			}
 		}
@@ -335,12 +438,19 @@ type statsSummary struct {
 	AttemptsPerMergedPR *float64 `json:"attempts_per_merged_pr"`
 	ReworkRate          *float64 `json:"rework_rate"`
 	CeremonyPerMergedPR *float64 `json:"ceremony_per_merged_pr"`
+
+	// EscapesChecked is the merged dispatches gh could be asked about; the rate
+	// is over those, so a repository gh cannot search shrinks the denominator
+	// rather than passing as escape-free.
+	EscapesChecked int      `json:"escapes_checked"`
+	Escapes        *int     `json:"escapes"`
+	EscapeRate     *float64 `json:"escape_rate"`
 }
 
 func summarise(dispatches []*statsDispatch) statsSummary {
 	s := statsSummary{Dispatches: len(dispatches)}
 	var walls []time.Duration
-	attempts, reworked, ceremony := 0, 0, 0
+	attempts, reworked, ceremony, escaped := 0, 0, 0, 0
 	for _, d := range dispatches {
 		if d.pr > 0 {
 			s.WithPR++
@@ -357,6 +467,16 @@ func summarise(dispatches []*statsDispatch) statsSummary {
 		if w, ok := d.wallClock(); ok {
 			walls = append(walls, w)
 		}
+		if d.escapeKnown {
+			s.EscapesChecked++
+			if d.escape != nil {
+				escaped++
+			}
+		}
+	}
+	if s.EscapesChecked > 0 {
+		r := round2(float64(escaped) / float64(s.EscapesChecked))
+		s.Escapes, s.EscapeRate = &escaped, &r
 	}
 	if s.Merged > 0 {
 		a := round2(float64(attempts) / float64(s.Merged))
@@ -377,13 +497,13 @@ func summarise(dispatches []*statsDispatch) statsSummary {
 }
 
 // renderStats prints one row per dispatch, then the summary.
-func renderStats(out io.Writer, dispatches []*statsDispatch) {
+func renderStats(out io.Writer, dispatches []*statsDispatch, window time.Duration) {
 	if len(dispatches) == 0 {
-		fmt.Fprintln(out, "no dispatches recorded yet; `worktender start` records one")
+		fmt.Fprintln(out, "no dispatches recorded in range; `worktender start` records one")
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ISSUE\tBRANCH\tROLE\tPR\tMERGED\tWALL\tATTEMPTS\tINBOX\tGATES\tDIFF\tCEREMONY/100L")
+	fmt.Fprintln(tw, "ISSUE\tBRANCH\tROLE\tPR\tMERGED\tWALL\tATTEMPTS\tINBOX\tGATES\tDIFF\tCEREMONY/100L\tESCAPED")
 	unanswered := 0
 	for _, d := range dispatches {
 		if d.ghErr != nil {
@@ -411,9 +531,16 @@ func renderStats(out io.Writer, dispatches []*statsDispatch) {
 		if role == "" {
 			role = missing
 		}
-		fmt.Fprintf(tw, "#%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+		escaped := missing
+		if d.escapeKnown {
+			escaped = "no"
+			if e := d.escape; e != nil {
+				escaped = fmt.Sprintf("%s #%d", e.Kind, e.By)
+			}
+		}
+		fmt.Fprintf(tw, "#%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
 			d.start.Issue, safetext.Escape(d.start.Branch), safetext.Escape(role), pr, merged, wall,
-			d.attempts(), d.inbox, d.gates, diff, ratio)
+			d.attempts(), d.inbox, d.gates, diff, ratio, escaped)
 	}
 	tw.Flush()
 
@@ -427,6 +554,10 @@ func renderStats(out io.Writer, dispatches []*statsDispatch) {
 		fmt.Fprintf(out, "per merged PR: median wall clock %s, %.2f attempts, rework rate %.0f%%, %.2f ceremony\n",
 			wall, *s.AttemptsPerMergedPR, *s.ReworkRate*100, *s.CeremonyPerMergedPR)
 	}
+	if s.EscapeRate != nil {
+		fmt.Fprintf(out, "escapes: %d of %d merged PRs (%.0f%%) reverted or blamed for a regression within %s of merging\n",
+			*s.Escapes, s.EscapesChecked, *s.EscapeRate*100, days(window))
+	}
 	if unanswered > 0 {
 		fmt.Fprintf(out, "gh could not answer for %d pull request(s), so MERGED reads ? there; `worktender stats --json` carries why\n", unanswered)
 	}
@@ -434,10 +565,17 @@ func renderStats(out io.Writer, dispatches []*statsDispatch) {
 
 // statsJSON is `stats --json`.
 type statsJSON struct {
-	Ledger       string              `json:"ledger"`
-	SkippedLines int                 `json:"skipped_lines"`
+	Ledger       string `json:"ledger"`
+	SkippedLines int    `json:"skipped_lines"`
+	// EscapeWindow is the window the escape figures were judged over, so a
+	// reader comparing two runs can tell whether they asked the same question.
+	EscapeWindow int64               `json:"escape_window_seconds"`
 	Dispatches   []statsDispatchJSON `json:"dispatches"`
 	Summary      statsSummary        `json:"summary"`
+	// Alerts is null unless --check asked for them, and an empty list when it
+	// did and nothing crossed a threshold: "not checked" and "checked, quiet"
+	// are different answers.
+	Alerts []statsAlert `json:"alerts"`
 }
 
 type statsDispatchJSON struct {
@@ -461,6 +599,9 @@ type statsDispatchJSON struct {
 	InboxMessages int               `json:"inbox_messages"`
 	GateRuns      int               `json:"gate_runs"`
 	CeremonyRatio *float64          `json:"ceremony_ratio"`
+	MergedAt      *string           `json:"merged_at"`
+	Escaped       *bool             `json:"escaped"`
+	Escape        *escapeFinding    `json:"escape"`
 	Error         *string           `json:"error"`
 }
 
@@ -470,8 +611,11 @@ type statsReportJSON struct {
 	PR     *int   `json:"pr"`
 }
 
-func statsDocument(path string, skipped int, dispatches []*statsDispatch) statsJSON {
-	doc := statsJSON{Ledger: path, SkippedLines: skipped, Dispatches: []statsDispatchJSON{}, Summary: summarise(dispatches)}
+func statsDocument(path string, skipped int, dispatches []*statsDispatch, window time.Duration, alerts []statsAlert) statsJSON {
+	doc := statsJSON{
+		Ledger: path, SkippedLines: skipped, EscapeWindow: int64(window / time.Second),
+		Dispatches: []statsDispatchJSON{}, Summary: summarise(dispatches), Alerts: alerts,
+	}
 	for _, d := range dispatches {
 		j := statsDispatchJSON{
 			Issue: d.start.Issue, Repository: d.start.Repository, Branch: d.start.Branch,
@@ -507,6 +651,13 @@ func statsDocument(path string, skipped int, dispatches []*statsDispatch) statsJ
 		}
 		if r, ok := d.ceremonyRatio(); ok {
 			j.CeremonyRatio = &r
+		}
+		if _, ok := d.mergedAt(); ok {
+			j.MergedAt = jsonout.String(d.facts.MergedAt)
+		}
+		if d.escapeKnown {
+			escaped := d.escape != nil
+			j.Escaped, j.Escape = &escaped, d.escape
 		}
 		if d.ghErr != nil {
 			j.Error = jsonout.String(d.ghErr.Error())

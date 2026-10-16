@@ -3,10 +3,23 @@ package gitx_test
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrtest"
 )
+
+func TestCommitTimeReadsTheBranchTipAndNothingElse(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	repo.Git("branch", "feature")
+	at, ok := gitx.CommitTime(repo.Root, "feature")
+	if !ok || time.Since(at) > time.Minute {
+		t.Errorf("CommitTime = %v, %v; want the commit just made", at, ok)
+	}
+	if _, ok := gitx.CommitTime(repo.Root, "gone"); ok {
+		t.Error("a branch that does not exist has a commit time")
+	}
+}
 
 func TestRepoRootFromLinkedWorktree(t *testing.T) {
 	repo := herdrtest.NewRepo(t)

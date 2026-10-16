@@ -324,13 +324,17 @@ much coordination it took against how much it changed.
 
 ```sh
 $ "$worktender" stats
-ISSUE  BRANCH          ROLE  PR  MERGED  WALL     ATTEMPTS  INBOX  GATES  DIFF  CEREMONY/100L
-#42    42-fix-thing    eng   7   yes     1h0m0s   2         3      2      200   2.50
-#43    43-other-thing  -     8   yes     15m0s    1         0      1      10    10.00
+ISSUE  BRANCH          ROLE  PR  MERGED  WALL     ATTEMPTS  INBOX  GATES  DIFF  CEREMONY/100L  ESCAPED
+#42    42-fix-thing    eng   7   yes     1h0m0s   2         3      2      200   2.50           no
+#43    43-other-thing  -     8   yes     15m0s    1         0      1      10    10.00          revert #12
 
 2 dispatches, 2 with a pull request, 2 merged
 per merged PR: median wall clock 37m30s, 1.50 attempts, rework rate 50%, 3.00 ceremony
+escapes: 1 of 2 merged PRs (50%) reverted or blamed for a regression within 14d of merging
 ```
+
+`--since 168h` keeps only dispatches started in the last week; the default is
+all of history.
 
 It reads a local ledger, `<plugin state dir>/ledger.jsonl`, that four commands
 append one line to as they go:
@@ -362,6 +366,83 @@ What the columns mean:
   checks ran instead of moving the work.
 - **`MERGED`** and **`DIFF`** come from `gh pr view`, the one thing worktender
   cannot observe itself. `?` is gh failing to answer; `--json` says why.
+- **`ESCAPED`** is whether a merged pull request turned out not to be finished,
+  and what showed it; `-` when it has not merged or gh could not be searched.
+
+### Escapes
+
+A merged pull request has **escaped** when, within the escape window after it
+merged (`--escape-window`, 14 days by default), either:
+
+- **a later merged pull request reverts it.** Any one of: `This reverts commit
+  <sha>` in the body, where `<sha>` (7–40 hex digits) is a prefix of its merge
+  commit (what `git revert` writes); a title of exactly `Revert "<its title>"`
+  (what GitHub's revert button and `git revert` both write); or a body line
+  starting `Reverts #<n>` or `Reverts <owner>/<repo>#<n>` naming this
+  repository (GitHub's revert button). It counts when the revert merged.
+- **an issue blames it.** The issue was opened after the merge, was closed as
+  *completed* by a pull request other than this one, and its title or body
+  contains, case-insensitively, `regression` or `regressed`, optionally
+  `introduced` or `caused`, then `from`, `by`, `in` or `since`, then `#<n>` —
+  or `caused by #<n>` / `introduced by #<n>`. So "Fixes regression from #12",
+  "Regressed in #12" and "caused by #12" count; "Fixes #12" and "regression
+  test for #12" do not. It counts when the issue was opened.
+
+The issue rule is narrow on purpose: an escape rate that alarms on diligence
+gets ignored, and one that misses an oddly phrased issue still trends.
+
+gh is asked **twice per repository per run**, however many pull requests there
+are — one search for merged pull requests mentioning a revert, one for closed
+issues using the regression words — bounded below by the earliest merge being
+judged. The search is only a prefilter; the rules above decide. A search that
+fails leaves that repository's escapes unknown (`-`, null in JSON) rather than
+zero, and the rate is over the pull requests that could be checked. A pull
+request merged less than a window ago may still escape, so a recent rate reads
+low.
+
+### Alerts: `stats --check`
+
+```sh
+$ "$worktender" stats --check
+alert: ceremony #70 70-tiny-fix: 60.00 inbox messages and gate runs per 100 changed lines (6 over 10 lines), over 20
+alert: proof loop #60 60-thing: 4 gate runs and reports since it said done, with no new commit on the branch, over 3
+alert: escape rate: 3 of 9 merged PRs (33%) reverted or blamed for a regression within 14d, over 20%
+$ echo $?
+3
+```
+
+One line per alert on stdout and exit 3 (needs a human) when any threshold is
+crossed; no output and exit 0 when none is, so a cron job that mails its output
+mails only when something is wrong. `--json` carries the same alerts in
+`alerts`. It looks back 30 days unless `--since` says otherwise, so a long-past
+dispatch does not raise the same alert every day forever.
+
+| alert | fires when | flag (default) |
+|---|---|---|
+| `ceremony` | a dispatch's inbox messages + gate runs per 100 changed lines exceeds the threshold, and it had at least 5 of them | `--max-ceremony-ratio` (20) |
+| `proof_loop` | a dispatch that reported `done` has had more gate runs and reports than the threshold since its last progress — the first `done`, or a later commit on its branch — with nothing new committed | `--max-proof-loop` (3) |
+| `escape_rate` | more than this fraction of merged pull requests escaped, over at least 5 that could be checked | `--max-escape-rate` (0.2) |
+
+Every default is set to stay quiet on a healthy fleet and fire on one that
+plainly is not, because an alert that fires on ordinary work is switched off
+within a week and then catches nothing:
+
+- **Ceremony 20 per 100 lines** is one coordination event for every five lines
+  changed. An ordinary dispatch — a gate or two, a few inbox messages — over a
+  change of real size reads well under 5. The **floor of 5 events** keeps a
+  one-line fix gated once (100 per 100 lines, by arithmetic alone) quiet.
+- **Proof loop 3** leaves room for a coordinator gating once more for review,
+  the worker re-reporting, and a second look. A fourth round with nothing new
+  committed is the recursive proof loop: the gate already passed and everyone
+  is re-proving it. "New commits" are read from the local branch with `git
+  log`, not from gh — an unpushed commit is still the worker moving — and a
+  branch that can no longer be read (deleted after merge) is never alerted on,
+  because nothing can say it did not move.
+- **Escape rate 0.2**, one merged pull request in five, is past what published
+  change-failure-rate surveys put middling teams at. The **floor of 5** keeps
+  one revert in the first two merges from reading as 50%.
+
+The watch mod does not run `--check`; wire it into cron, or a mod, yourself.
 
 Recording is best effort: a ledger that cannot be written warns on stderr and
 the command carries on, because a report refused over a metrics file loses the
