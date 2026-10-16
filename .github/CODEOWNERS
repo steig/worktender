@@ -1,0 +1,24 @@
+# These paths decide what a worker is trusted with and how its work is judged:
+# CI, the toolchain pin, the instructions every worker reads, and the code that
+# approves an issue, fences a report, launches an agent, drafts its checks,
+# hands it feedback, gates on it and closes its workspace. A change here needs a
+# human owner's review, whoever opened the pull request.
+/.github/                @steig
+/go.mod                  @steig
+/scripts/                @steig
+/CLAUDE.md               @steig
+/claude_md_test.go       @steig
+/skills/                 @steig
+/.claude-plugin/         @steig
+/herdr-plugin.toml       @steig
+/acceptance.go           @steig
+/approval.go             @steig
+/report.go               @steig
+/start.go                @steig
+/dispatch.go             @steig
+/factory.go              @steig
+/draft.go                @steig
+/prfeedback.go           @steig
+/gate.go                 @steig
+/internal/reconcile/     @steig
+/internal/safetext/      @steig
