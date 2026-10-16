@@ -148,15 +148,16 @@ you do not see. Attaching it starts no turn; the prompt was starting one.
   the next prompt after they elapse; a worker in the middle of one long turn
   is not interrupted. Both start over when the block is delivered. Slash
   commands are not counted.
-- **The role** is the one the issue's labels pick, else `default_role`, read
-  once per worktree on its first prompt. `start` does not record the role it
-  chose, so a worker started with `--role` is timed by the role its labels
-  would have picked. The interval itself is read from the configuration every
-  time, so an edit takes effect without restarting anyone.
+- **The role** is the one `start` chose, `--role` included, which it records
+  in the worktree's git directory (`worktender/role`, beside the pinned issue;
+  never committed). A worktree with no record falls back to the role the
+  issue's labels pick, else `default_role`. Either is settled once per
+  worktree on its first prompt. The interval itself is read from the
+  configuration every time, so an edit takes effect without restarting anyone.
 - **Off unless a role sets one.** With no interval anywhere, `refocus --if-due`
   reads the configuration and prints nothing, without a `gh` call or a state
   file. With one, a worktree's first prompt costs one `gh` call (its labels)
-  and each delivery the usual two. Nothing is cached: the block says what the
+  unless `start` recorded the role, and each delivery the usual two. Nothing is cached: the block says what the
   issue says now.
 - **Workers only**, by the same test as after a compaction; the mod asks it
   once per session. The `refocus` setting turns this off too.

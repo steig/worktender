@@ -190,6 +190,15 @@ func startCommand(args []string, out io.Writer) error {
 		}
 	}
 
+	// Recorded for `refocus --if-due`, which would otherwise time the worker by
+	// the role its labels pick even where --role chose another. Losing it costs
+	// only that, so it is a note and not a failed start.
+	if launch != nil {
+		if err := recordRole(s.root, branch, launch.Role); err != nil {
+			fmt.Fprintf(notes, "role: not recorded for refocus (%v); its interval follows the issue's labels\n", err)
+		}
+	}
+
 	// The same KindStaff action `sync` and `dispatch` build, so the pane
 	// re-check in execute.staff() covers this path by construction too.
 	agent := reconcile.AgentName(s.root, branch)
