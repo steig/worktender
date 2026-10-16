@@ -27,7 +27,7 @@ describe('fleet', () => {
       row('e', null),
     ))
     expect(summarise(d)).toEqual({ working: 1, idle: 0, blocked: 2, done: 1, total: 4 })
-    expect(statusLine(summarise(d))).toBe('wt: 1 working · 2 blocked · 1 done')
+    expect(statusLine(summarise(d))).toBe('wt: 1 to review · 2 blocked · 1 working')
     expect(signals(d).map(s => `${s.branch}:${s.kind}`)).toEqual(['b:done', 'c:blocked', 'd:needs-you'])
   })
 
@@ -52,6 +52,10 @@ describe('fleet', () => {
 
   test('no agents means no status line', () => {
     expect(statusLine(summarise(JSON.parse(doc(row('x', null)))))).toBeUndefined()
+  })
+
+  test('idle agents alone mean no status line', () => {
+    expect(statusLine(summarise(JSON.parse(doc(row('x', 'idle'), row('y', 'idle')))))).toBeUndefined()
   })
 
   test('the wake prompt never carries a report note', () => {
@@ -127,7 +131,7 @@ test('a new done report toasts, and starts no turn by default', async ($, on) =>
 
   await clock.advance(30_000)
   expect(seen.toasts).toEqual(['worktender: worktender/186-roles reported done — PR #188'])
-  expect(seen.status.at(-1)).toBe('wt: 1 done · 1 idle')
+  expect(seen.status.at(-1)).toBe('wt: 1 to review')
   expect(seen.prompts).toHaveLength(0)
 
   await clock.advance(30_000)
@@ -260,7 +264,7 @@ test('/wt looks now and lists what needs someone', async ($, on) => {
   await clock.advance(0)
 
   const result = await $.command.run({ command: 'wt', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-  expect(result.text).toContain('wt: 1 done · 1 idle')
+  expect(result.text).toContain('wt: 1 to review')
   expect(result.text).toContain('worktender/186-roles reported done — PR #188')
   expect(result.text).not.toContain('IGNORE')
 })

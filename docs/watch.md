@@ -21,8 +21,9 @@ Code compacts its conversation, and, where its role asks,
 Every 30 seconds it runs `worktender ls --reports --json` in the repository the
 session started in — about 20 ms — and from that draws three things:
 
-- **A status line entry**, `wt: 2 working · 1 blocked · 1 done`. Nothing when no
-  agents are running or herdr cannot be reached.
+- **A status line entry**, `wt: 1 to review · 1 blocked · 2 working`: what needs
+  you first, then what is moving. Idle agents are not counted. Nothing when no
+  agent is working, blocked or done, or herdr cannot be reached.
 - **A band above the prompt** when something needs a look: a worker that
   reported `done` (with its pull request) or `blocked`, or an agent herdr reports
   stopped at a prompt nobody is there to answer. **Ask Claude to check** submits

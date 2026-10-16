@@ -110,15 +110,16 @@ export function capped(stdout: string): { branch: string; pr: number; rounds: nu
   return out
 }
 
+// What needs you first, then what is moving. Idle agents are left out: they
+// are mostly finished panes, and a count of them says nothing to act on.
 export function statusLine(s: Summary | null): string | undefined {
-  if (!s || s.total === 0) return undefined
+  if (!s) return undefined
   const parts = [
-    s.working && `${s.working} working`,
+    s.done && `${s.done} to review`,
     s.blocked && `${s.blocked} blocked`,
-    s.done && `${s.done} done`,
-    s.idle && `${s.idle} idle`,
+    s.working && `${s.working} working`,
   ].filter(Boolean)
-  return `wt: ${parts.join(' · ')}`
+  return parts.length ? `wt: ${parts.join(' · ')}` : undefined
 }
 
 export function describe(sig: Signal): string {

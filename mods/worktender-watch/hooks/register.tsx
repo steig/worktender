@@ -219,7 +219,7 @@ export const register: Register = (on, options) => {
     if (look === 'worker') return { text: 'This session is a worker (its pane is in a linked worktree), so the watch stays quiet here; it is for the coordinator.' }
     if (!look) return { text: `No fleet: \`${cfg.bin} ls${cfg.all ? ' --all-repos' : ''} --reports --json\` gave nothing (is herdr running? is this a git repository?), or a look was already in flight.` }
     const lines = look.now.map(s => `- ${describe(s)}`)
-    return { text: [statusLine(look.counts) ?? 'wt: no agents running', ...lines].join('\n') }
+    return { text: [statusLine(look.counts) ?? 'wt: nothing working, blocked or to review', ...lines].join('\n') }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
