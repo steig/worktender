@@ -26,7 +26,7 @@ worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
 
 # 2. Wait on the report, not on a clock. Start them all, then wait on them all.
 "$worktender" gate --any wt-12-the-thing-3f9a1c,wt-13-other-8b40de --until done --timeout 20m
-# gate: wt-13-other-8b40de released after 4m12s   <- drop it and gate on the rest
+# gate: wt-13-other-8b40de released after 4m12s (evidence: reported)   <- drop it and gate on the rest
 ```
 
 `start` prints the exact `gate` line for what it just started, agent name

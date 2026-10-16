@@ -463,6 +463,7 @@ know *which* worker released, and that is not a thing a number can say.
 $ worktender gate --any wt-42-a,wt-43-b --until done --json
 {
   "outcome": "released",
+  "evidence": "reported",
   "exit_code": 0,
   "target": {
     "name": "wt-43-b",
@@ -487,6 +488,14 @@ $ worktender gate --any wt-42-a,wt-43-b --until done --json
   Finer than the exit code on purpose: `timeout` and `worker_gone` are both
   exit 4, and a coordinator deciding whether to redispatch may reasonably want
   to know a pane *died* rather than that nobody answered in time.
+- **`evidence`** is how the outcome was established: `reported` when it rests
+  on the worker's report (`released`, `blocked`), `verified` when the gate saw
+  it for itself (`timeout`, or `worker_gone` from herdr announcing the pane or
+  workspace closed), `inferred` when it is a reading of pane state
+  (`worker_gone` from the agent status going `unknown`). **Null on `error`**,
+  which is not a verdict. A `released` is never `verified`: the gate checks the
+  report's shape and freshness, not whether the pull request it names is any
+  good — see [Why the report has no free text](dispatch.md#why-the-report-has-no-free-text).
 - **`target`** is the worker the outcome is about — which one released, which
   reported blocked, which one's pane died. **Null on a timeout**, the one
   outcome belonging to no single worker.

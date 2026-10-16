@@ -25,6 +25,30 @@ const (
 	gateOutcomeError = "error"
 )
 
+// How a gate came to its outcome. The gate checks a report rather than relaying
+// it, but what it checks is the report's shape and freshness, never its truth:
+// a `done` that released the gate is still the worker's word. A coordinator
+// scanning the output has to be able to tell that from something the gate saw
+// for itself, and from something it only guessed at.
+//
+// Each outcome carries the one that describes how it was actually reached, set
+// where it is decided rather than looked up from the outcome afterwards,
+// because `worker_gone` alone is reached two different ways.
+const (
+	// gateEvidenceVerified is the gate's own observation: its clock ran out with
+	// no fresh report on either channel, or herdr announced the pane or its
+	// workspace gone. Neither depends on anything the worker said.
+	gateEvidenceVerified = "verified"
+	// gateEvidenceReported is the worker's claim, relayed. `released` and
+	// `blocked` are both this: the gate proved a well-formed report appeared
+	// after it opened, and nothing about whether the work it describes is done.
+	gateEvidenceReported = "reported"
+	// gateEvidenceInferred is a reading of pane state. herdr's agent status
+	// going `unknown` is what an agent that has gone away looks like, which is
+	// not the same as herdr saying it went.
+	gateEvidenceInferred = "inferred"
+)
+
 // gateJSON is `gate --json`, written whether the gate released or failed.
 //
 // Written on failure too, for the reason `sync --json` is: a consumer that
@@ -42,6 +66,10 @@ type gateJSON struct {
 	// reported blocked, which one's pane died. Null on a timeout, which is the
 	// one outcome that belongs to no single worker.
 	Target *gateTargetJSON `json:"target"`
+	// Evidence is how the outcome was established, one of the constants above.
+	// Null on `error`, the outcome that is not a verdict: there is nothing for
+	// it to be evidence of.
+	Evidence *string `json:"evidence"`
 	// Report is the envelope that ended the wait, null when none did.
 	Report *reportJSON `json:"report"`
 	// Waited is how long the gate ran, in whole seconds. Seconds rather than a
@@ -109,9 +137,10 @@ func newGateTargetJSON(t gateTarget) gateTargetJSON {
 // gateDocument assembles the document. Callers pass the outcome and the error
 // it corresponds to; the exit code is read off that error so the two cannot
 // drift apart.
-func gateDocument(opts gateOptions, targets []gateTarget, outcome string, about int, r *report, waited time.Duration, err error) gateJSON {
+func gateDocument(opts gateOptions, targets []gateTarget, outcome, evidence string, about int, r *report, waited time.Duration, err error) gateJSON {
 	doc := gateJSON{
 		Outcome:        outcome,
+		Evidence:       jsonout.String(evidence),
 		ExitCode:       exitCode(err),
 		Report:         nil,
 		WaitedSeconds:  int(waited.Round(time.Second).Seconds()),

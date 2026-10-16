@@ -220,7 +220,7 @@ the gate and it says which one:
 ```sh
 $ worktender gate --any wt-42-fix-the-thing-016aab,wt-43-other-9c21f4 --until done
 gate: waiting on wt-42-fix-the-thing-016aab (pane w9:p1), wt-43-other-9c21f4 (pane w10:p1) for status done, up to 15m
-gate: wt-43-other-9c21f4 released after 4m12s
+gate: wt-43-other-9c21f4 released after 4m12s (evidence: reported)
 ```
 
 One command from an issue number to an agent working on it: it reads the issue
