@@ -79,14 +79,17 @@ func factoryCommand(args []string, out io.Writer) error {
 	// run with no herdr would have to guess the one number it exists to report.
 	//
 	// The repository is resolved as start resolves it, because start is what
-	// runs. A dry run changes nothing and may fall back to the working
-	// directory; a real pass creates checkouts and may not.
+	// runs — and a dry run resolves it the same way a real pass does. A dry run
+	// changes nothing, so it could safely fall back to the working directory,
+	// but then it would succeed exactly where the real pass refuses, planning
+	// against a repository the real pass would never act on. A rehearsal is
+	// only worth anything if it fails where the performance would.
 	var s *session
 	var err error
 	if *repo != "" {
 		s, err = newSessionIn(*repo, herdrRequired)
 	} else {
-		s, err = newSession(*dryRun, herdrRequired)
+		s, err = newSession(false, herdrRequired)
 		// From cron there is never a context. Say the way past it, as start
 		// does — this is the failure everyone scheduling it meets first.
 		if errors.Is(err, herdrapi.ErrNoContext) {

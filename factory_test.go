@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrtest"
 )
 
@@ -597,6 +598,54 @@ func TestFactoryRefusesACapBelowOne(t *testing.T) {
 		err := run([]string{"factory", "--max", max}, &strings.Builder{})
 		if got := exitCode(err); got != exitUsage {
 			t.Errorf("factory --max %s = exit %d (%v), want exitUsage", max, got, err)
+		}
+	}
+}
+
+// A dry run resolves the repository exactly as a real pass does. Outside a
+// plugin action there is no context, and a real pass refuses rather than guess
+// from the working directory; a dry run that guessed instead would report a
+// plan for a pass that cannot run. Both must refuse, with the same message.
+func TestFactoryDryRunRefusesWhereARealPassRefuses(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	factoryFleet(t, repo, []string{"working"}, []queued{{5, "Five", nil}})
+	t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", "")
+	// Standing in the repository, so a fallback to the working directory would
+	// find one and succeed.
+	t.Chdir(repo.Root)
+
+	var refusals []string
+	for _, args := range [][]string{{"--max", "1"}, {"--max", "1", "--dry-run"}} {
+		var out strings.Builder
+		err := factoryCommand(args, &out)
+		if err == nil {
+			t.Fatalf("factory %v with no context succeeded; it printed:\n%s", args, out.String())
+		}
+		if got := exitCode(err); got != exitUsage {
+			t.Errorf("factory %v = exit %d (%v), want exitUsage", args, got, err)
+		}
+		if !strings.Contains(err.Error(), "--repo <path>") {
+			t.Errorf("factory %v must name the way past the refusal, got %v", args, err)
+		}
+		refusals = append(refusals, err.Error())
+	}
+	if refusals[0] != refusals[1] {
+		t.Errorf("a dry run refused differently from a real pass:\n real: %s\n  dry: %s", refusals[0], refusals[1])
+	}
+}
+
+// Given --repo, both paths resolve it with no context at all, so the refusal
+// above is the only thing standing between a scheduler and a working pass.
+func TestFactoryDryRunAndRealPassResolveTheRepositoryTheyAreGiven(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	factoryFleet(t, repo, []string{"working"}, []queued{})
+	t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", "")
+	t.Chdir(t.TempDir())
+
+	root := gitx.Resolve(repo.Root)
+	for _, args := range [][]string{{"--repo", repo.Root}, {"--repo", repo.Root, "--dry-run"}} {
+		if out := passFactory(t, args...); !strings.Contains(out, "repository: "+root) {
+			t.Errorf("factory %v should act on the repository it was given (%s):\n%s", args, root, out)
 		}
 	}
 }
