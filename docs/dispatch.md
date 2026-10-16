@@ -138,15 +138,23 @@ section for one, for a person to read and approve:
 
 ```sh
 worktender draft 42 --repo .            # print a proposed section
-worktender draft 42 --repo . --write    # put it on the issue
+worktender draft 42 --repo . --write    # print it, ask, then put it on the issue
 ```
 
-The drafter is `claude -p`, headless, in the repository, launched with
+The drafter is `claude -p`, headless, launched with
 `--restricted --strict-mcp-config --tools Read,Grep,Glob` and
 `--permission-mode dontAsk`: it can read files and nothing else. No shell,
 no editing, no network, no MCP. It gets the issue framed exactly as `approve`
 frames it, every line prefixed `| ` and said to be untrusted, and the
 repository's test, build and lint entry points.
+
+**It does not run in your checkout.** It runs in a throwaway export of the
+files `HEAD` tracks (`git archive HEAD`, unpacked into a private temporary
+directory and removed once the drafter returns), so an untracked `.env`, an
+ignored key or build output is not there to read. Directories and regular
+files only: a tracked symlink is left out, so it cannot point outside. The
+runners below are detected from that export, so uncommitted changes to a
+Makefile or `package.json` do not count.
 
 **Its answer is untrusted too.** Every line it proposes is parsed with the
 grammar above, and a line that does not parse is dropped. So is any command
@@ -163,8 +171,18 @@ names, because a runner's own flags can run anything (`go test -exec`,
   `just <recipe>` for each justfile recipe, and `cargo test`, `cargo build`
   and `cargo clippy`;
 - `test -f|-d|-e <path>` and `grep [-q|-qE|-qF] <pattern> <path>`, where the
-  path is relative to the repository root and has no `..`;
+  path is relative to the repository root, has no `..`, and is at most 100 of
+  `A-Za-z0-9_./-`, and the pattern is at most 60 of `A-Za-z0-9 _.:/-`;
 - `worktender doctor` and `worktender ls`, with no argument.
+
+The expected outcome is one of `exits 0`, `exits 1`, `exits non-zero`,
+`prints nothing` or `prints <word>`, the word at most 40 of `A-Za-z0-9._-`.
+These limits are there because the section is published: a pattern, a path,
+a `-run` value (at most 60 characters) or an outcome is where an injected
+issue could have the drafter write something out, so none of them can hold
+much. They narrow the channel, they do not close it: what keeps secrets out is
+that the drafter never sees them, and that you read the section before it is
+written.
 
 A command is one simple command. Any shell character, wherever it is (a pipe,
 `;`, `&&`, `$(`, a backtick, a redirect, a glob, `~`), drops it, so nothing
@@ -173,8 +191,12 @@ reason, the drafter's line quoted beside it and never run. At most six checks
 are kept. If none survive, `draft` exits **3**.
 
 **`draft` never labels and never approves.** Without `--write` it only prints.
-`--write` edits the issue body with your own `gh` auth, putting the section at
-the top. It refuses an issue that already has an Acceptance section unless you
+`--write` prints the exact section, then asks you to type `yes`, as `approve`
+does; any other answer, or no terminal to answer from, writes nothing and
+exits **1**. Only then does it edit the issue body with your own `gh` auth,
+putting the section at the top. **`--yes` skips that question, and with it the
+human check before a model's output is published to the issue**; use it only
+where you would have typed yes without reading. It refuses an issue that already has an Acceptance section unless you
 pass `--replace`, and refuses one edited while the drafter ran. The next step
 is still `worktender approve`. The approval covers the drafted checks byte for
 byte, like any others, and it is still the control: the allow-list keeps the

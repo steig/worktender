@@ -224,8 +224,11 @@ Errors you are most likely to meet:
 - **`worktender draft <issue>` proposes acceptance checks; it does not approve
   them.** A read-only agent drafts the section, every line is held to the
   grammar and an allow-list of the repository's own runners, and what fails is
-  printed and dropped. `--write` puts the rest on the issue (`--replace` to
-  overwrite an existing section); it never labels or approves. Exits **3** when
+  printed and dropped. The drafter reads an export of the tracked files, not
+  the checkout. `--write` prints the rest, asks for `yes`, and puts it on the
+  issue (`--replace` to overwrite an existing section); `--yes` skips the
+  question, and so the human check before publishing. It never labels or
+  approves. Exits **1** when the answer is not yes, **3** when
   no proposed check survives or the issue was edited while it ran, **4** when
   the drafter does not answer in ten minutes. See
   [Drafting checks](dispatch.md#drafting-checks).

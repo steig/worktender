@@ -19,6 +19,8 @@ func draftRepo(t *testing.T) *herdrtest.Repo {
 	repo.Write("Makefile", "VERSION := 1\n.PHONY: lint\nlint:\n\tgolangci-lint run\nbuild: lint\n\tgo build ./...\n")
 	repo.Write("justfile", "set shell := [\"bash\", \"-c\"]\ncheck:\n\tgo vet ./...\n")
 	repo.Write("package.json", `{"scripts":{"test":"vitest","lint":"eslint ."}}`)
+	repo.Git("add", ".")
+	repo.Git("commit", "-m", "entry points")
 	return repo
 }
 
@@ -94,6 +96,17 @@ func TestDraftAllowListRejects(t *testing.T) {
 		"worktender factory",
 		"worktender version",
 		"worktender doctor --repo /",
+		// Words that could carry data out to the issue the section is written
+		// to: a grep pattern or path outside the short charset, or too long.
+		`grep -q "sk+live=abc" docs/a.md`,
+		`grep -q "AKIA,secret" docs/a.md`,
+		"grep -q " + strings.Repeat("a", 61) + " docs/a.md",
+		"grep -q x docs/a@b.md",
+		"grep -q x docs/" + strings.Repeat("a", 100),
+		"test -f docs/a%20b",
+		"test -f docs/k=v",
+		"go test -run " + strings.Repeat("a", 61) + " ./...",
+		"go test ./" + strings.Repeat("a", 100),
 	} {
 		if why := vetDraftedCommand(cmd, runners); why == "" {
 			t.Errorf("%q passed the allow-list", cmd)
@@ -118,6 +131,8 @@ func TestDraftAllowListAccepts(t *testing.T) {
 		"npm test",
 		"npm run lint",
 		"worktender doctor",
+		"grep -q " + strings.Repeat("a", 60) + " docs/a.md",
+		`grep -qF "draftUsage: worktender/draft" draft.go`,
 	} {
 		if why := vetDraftedCommand(cmd, runners); why != "" {
 			t.Errorf("%q refused: %s", cmd, why)
@@ -160,6 +175,32 @@ func TestDraftDropsWhatDoesNotParse(t *testing.T) {
 	}
 }
 
+// An outcome is one of a fixed few, or prints and one short word: free text
+// there would be a way to write anything at all onto the issue.
+func TestDraftOutcomes(t *testing.T) {
+	runners := draftRunners(draftRepo(t).Root)
+	for _, expect := range []string{"exits 0", "exits 1", "exits non-zero", "prints nothing", "prints ok", "prints v1.2_3-rc"} {
+		if kept, dropped := vetDraft("- [ ] `go test ./...` "+expect+"\n", runners); len(kept) != 1 {
+			t.Errorf("outcome %q refused: %+v", expect, dropped)
+		}
+	}
+	for _, expect := range []string{
+		"exits 2",
+		"exits 0 and prints the key",
+		"passes",
+		"prints",
+		"prints two words",
+		"prints sk+live=abc",
+		"prints " + strings.Repeat("a", 41),
+		"Exits 0",
+	} {
+		kept, dropped := vetDraft("- [ ] `go test ./...` "+expect+"\n", runners)
+		if len(kept) != 0 || len(dropped) != 1 || !strings.Contains(dropped[0].Reason, "outcome") {
+			t.Errorf("outcome %q: kept %+v, dropped %+v; want it dropped for its outcome", expect, kept, dropped)
+		}
+	}
+}
+
 // fakeDraft puts a gh answering for issue #42 and a claude printing answer on
 // PATH, and points the ledger somewhere disposable. gh records its calls and
 // keeps the body file it is given; claude records its arguments and stdin.
@@ -187,6 +228,7 @@ esac`)
 
 	bin := t.TempDir()
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_GH_DIR/claude-args\"\ncat > \"$FAKE_GH_DIR/claude-stdin\"\n" +
+		"pwd -P > \"$FAKE_GH_DIR/claude-cwd\"\nfind . > \"$FAKE_GH_DIR/claude-files\"\n" +
 		herdrtest.CatScript(t, answer) + "\n"
 	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -289,7 +331,7 @@ func TestDraftWriteReplacesTheSection(t *testing.T) {
 	repo := draftRepo(t)
 	fake := newFakeDraft(t, "## Problem\nBroken.\n\n## Acceptance\n\n- [ ] `go vet ./...` exits 0\n\n## Notes\nKeep me.\n", draftAnswer)
 
-	if err := draftCommand([]string{"42", "--write", "--replace", "--repo", repo.Root}, &strings.Builder{}); err != nil {
+	if err := draftCommand([]string{"42", "--write", "--replace", "--yes", "--repo", repo.Root}, &strings.Builder{}); err != nil {
 		t.Fatalf("draft: %v", err)
 	}
 	want := "## Problem\nBroken.\n\n## Acceptance\n\n- [ ] `go test ./...` exits 0\n- [ ] `make lint` exits 0\n\n## Notes\nKeep me.\n"
@@ -306,7 +348,7 @@ func TestDraftWriteInsertsAtTheTop(t *testing.T) {
 	repo := draftRepo(t)
 	fake := newFakeDraft(t, "## Problem\nBroken.\n", draftAnswer)
 
-	if err := draftCommand([]string{"42", "--write", "--repo", repo.Root}, &strings.Builder{}); err != nil {
+	if err := draftCommand([]string{"42", "--write", "--yes", "--repo", repo.Root}, &strings.Builder{}); err != nil {
 		t.Fatalf("draft: %v", err)
 	}
 	edited := fake.read("edited")
@@ -325,7 +367,7 @@ func TestDraftWriteRefusesAnIssueEditedMeanwhile(t *testing.T) {
 	fake := newFakeDraft(t, "## Problem\nBroken.\n", draftAnswer)
 	herdrtest.WriteFile(t, filepath.Join(fake.dir, "later.json"), snapshotJSON(t, readyTitle, "## Problem\nBroken, and more.\n"))
 
-	err := draftCommand([]string{"42", "--write", "--repo", repo.Root}, &strings.Builder{})
+	err := draftCommand([]string{"42", "--write", "--yes", "--repo", repo.Root}, &strings.Builder{})
 	if err == nil || exitCode(err) != exitNeedsHuman {
 		t.Fatalf("want a needs-human refusal; got %v", err)
 	}
@@ -354,5 +396,124 @@ func assertNotApproved(t *testing.T, calls string) {
 		if strings.Contains(calls, never) {
 			t.Errorf("draft called gh with %q, which only approve may:\n%s", never, calls)
 		}
+	}
+}
+
+// The drafter reads an export of what HEAD tracks, not the checkout: an
+// untracked .env and an ignored key are not there to be read, the runners
+// still come from the tracked files, and the export is gone afterwards.
+func TestDraftRunsInAnExportOfTrackedFiles(t *testing.T) {
+	repo := draftRepo(t)
+	repo.Write(".gitignore", "*.key\n")
+	repo.Git("add", ".gitignore")
+	repo.Git("commit", "-m", "ignore keys")
+	repo.Write(".env", "TOKEN=hunter2\n")
+	repo.Write("deploy.key", "-----BEGIN KEY-----\n")
+	repo.Write("docs/untracked.md", "draft\n")
+	fake := newFakeDraft(t, "## Problem\nBroken.\n", draftAnswer)
+
+	if err := draftCommand([]string{"42", "--repo", repo.Root}, &strings.Builder{}); err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	cwd := strings.TrimSpace(fake.read("claude-cwd"))
+	if cwd == "" || cwd == repo.RealRoot || strings.HasPrefix(cwd, repo.RealRoot+string(filepath.Separator)) {
+		t.Fatalf("the drafter ran in %q; want an export outside the repository %s", cwd, repo.RealRoot)
+	}
+	files := strings.Split(strings.TrimSpace(fake.read("claude-files")), "\n")
+	for _, want := range []string{"./go.mod", "./Makefile", "./README.md", "./.gitignore"} {
+		if !slices.Contains(files, want) {
+			t.Errorf("the export lacks the tracked %s: %q", want, files)
+		}
+	}
+	for _, never := range []string{"./.env", "./deploy.key", "./docs/untracked.md", "./.git"} {
+		if slices.Contains(files, never) {
+			t.Errorf("the export holds %s, which HEAD does not track: %q", never, files)
+		}
+	}
+	if _, err := os.Stat(cwd); !os.IsNotExist(err) {
+		t.Errorf("the export %s is still there after draft returned: %v", cwd, err)
+	}
+	if !strings.Contains(fake.read("claude-stdin"), "make lint") {
+		t.Error("the runners were not detected from the export")
+	}
+}
+
+// A tracked symlink is not recreated in the export, so it cannot point the
+// drafter at a file outside it.
+func TestDraftExportLeavesOutSymlinks(t *testing.T) {
+	repo := draftRepo(t)
+	outside := filepath.Join(t.TempDir(), "secret")
+	herdrtest.WriteFile(t, outside, "hunter2\n")
+	if err := os.Symlink(outside, filepath.Join(repo.Root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	repo.Git("add", "link")
+	repo.Git("commit", "-m", "link")
+
+	dir, cleanup, err := exportTracked(repo.Root)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	defer cleanup()
+	if _, err := os.Lstat(filepath.Join(dir, "link")); !os.IsNotExist(err) {
+		t.Errorf("the export holds the tracked symlink: %v", err)
+	}
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("the export is %v, %v; want a 0700 directory", info, err)
+	}
+	cleanup()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("cleanup left %s: %v", dir, err)
+	}
+}
+
+// --write asks, as approve does: anything but yes, end of input included,
+// writes nothing.
+func TestDraftWriteAsksFirst(t *testing.T) {
+	for answer, writes := range map[string]bool{"yes\n": true, "y\n": false, "\n": false, "": false} {
+		repo := draftRepo(t)
+		fake := newFakeDraft(t, "## Problem\nBroken.\n", draftAnswer)
+		previous := approveInput
+		approveInput = strings.NewReader(answer)
+
+		var out strings.Builder
+		err := draftCommand([]string{"42", "--write", "--repo", repo.Root}, &out)
+
+		approveInput = previous
+		edited := fake.read("edited") != "" || strings.Contains(fake.read("calls"), "issue edit")
+		if edited != writes || (err == nil) != writes {
+			t.Errorf("answer %q: edited %v, err %v; want written %v", answer, edited, err, writes)
+		}
+		if !writes && exitCode(err) != exitUsage {
+			t.Errorf("answer %q: exit %d; want %d", answer, exitCode(err), exitUsage)
+		}
+		got := out.String()
+		section := strings.Index(got, "## Acceptance\n\n- [ ] `go test ./...` exits 0\n- [ ] `make lint` exits 0\n")
+		if prompt := strings.Index(got, "Type yes"); section < 0 || prompt < section {
+			t.Errorf("answer %q: the section was not printed before the question:\n%s", answer, got)
+		}
+	}
+}
+
+// --yes writes without asking, and only means something with --write.
+func TestDraftWriteYesSkipsTheQuestion(t *testing.T) {
+	repo := draftRepo(t)
+	fake := newFakeDraft(t, "## Problem\nBroken.\n", draftAnswer)
+	previous := approveInput
+	approveInput = strings.NewReader("")
+	t.Cleanup(func() { approveInput = previous })
+
+	var out strings.Builder
+	if err := draftCommand([]string{"42", "--write", "--yes", "--repo", repo.Root}, &out); err != nil {
+		t.Fatalf("draft --write --yes: %v", err)
+	}
+	if fake.read("edited") == "" {
+		t.Error("draft --write --yes edited nothing")
+	}
+	if strings.Contains(out.String(), "Type yes") {
+		t.Errorf("draft --yes asked anyway:\n%s", out.String())
+	}
+	if err := draftCommand([]string{"42", "--yes", "--repo", repo.Root}, &strings.Builder{}); exitCode(err) != exitUsage {
+		t.Errorf("--yes without --write: %v; want a usage error", err)
 	}
 }
