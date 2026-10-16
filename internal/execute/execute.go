@@ -79,8 +79,10 @@ const agentBusyPoll = 500 * time.Millisecond
 // attempt cannot change.
 const agentPaneBusy = "agent_pane_busy"
 
-// agentKind is the herdr agent to start when staffing a worktree.
-const agentKind = "claude"
+// AgentKind is the herdr agent to start when staffing a worktree. Exported
+// because the dispatch ledger records it, and a second spelling of "claude"
+// there would drift from this one the day it changes.
+const AgentKind = "claude"
 
 // Executor performs actions against a live herdr and a real repository.
 type Executor struct {
@@ -186,11 +188,11 @@ func (e *Executor) staff(action reconcile.Action, busyUntil time.Time) Result {
 			}
 		}
 
-		err := e.Client.AgentStart(action.AgentName, agentKind, action.PaneID, args, agentStartTimeoutMS)
+		err := e.Client.AgentStart(action.AgentName, AgentKind, action.PaneID, args, agentStartTimeoutMS)
 		switch {
 		case err == nil:
 			return Result{action, StatusDone,
-				fmt.Sprintf("%s %s as %s in %s%s", mode, agentKind, action.AgentName, action.PaneID,
+				fmt.Sprintf("%s %s as %s in %s%s", mode, AgentKind, action.AgentName, action.PaneID,
 					waited(attempt, time.Since(started)))}
 		case !paneBusy(err):
 			return Result{action, StatusFailed, fmt.Sprintf("start agent in %s: %v", action.PaneID, err)}

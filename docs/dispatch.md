@@ -145,6 +145,55 @@ caller-supplied id can never resolve outside the inbox directory.
 than an oversight. Better to ship without a pruning story and add one once
 real growth is observed than to guess a TTL today.
 
+## What a merged pull request cost
+
+`worktender stats` answers whether the factory is helping: per dispatch, how
+long it took from `start` to its last `done`, how many tries it needed, and how
+much coordination it took against how much it changed.
+
+```sh
+$ "$worktender" stats
+ISSUE  BRANCH          ROLE  PR  MERGED  WALL     ATTEMPTS  INBOX  GATES  DIFF  CEREMONY/100L
+#42    42-fix-thing    eng   7   yes     1h0m0s   2         3      2      200   2.50
+#43    43-other-thing  -     8   yes     15m0s    1         0      1      10    10.00
+
+2 dispatches, 2 with a pull request, 2 merged
+per merged PR: median wall clock 37m30s, 1.50 attempts, rework rate 50%, 3.00 ceremony
+```
+
+It reads a local ledger, `<plugin state dir>/ledger.jsonl`, that three commands
+append one line to as they go:
+
+- **`start`** records the dispatch once its agent has the brief — issue, branch,
+  role, agent, agent kind and agent name. Only dispatches made by `start` are
+  counted: a worker staffed by `sync` or `dispatch` has no issue to count against.
+- **`report`** records each status a worker claims, with its time and pull
+  request, keyed by the repository and branch it was made from.
+- **`gate`** records each wait a coordinator opens, against every worker it covers.
+
+The inbox is read where it already is: messages on the thread named for the
+issue number, posted after the dispatch started.
+
+What the columns mean:
+
+- **`ATTEMPTS`** is the number of `done` reports. A second one means the first
+  did not stick — review sent it back, a check failed, it was re-briefed.
+  **Rework rate** is the share of merged pull requests that needed more than one.
+- **`WALL`** is `start` to the *last* `done`, because a dispatch that went round
+  again was not finished the first time it said so.
+- **`CEREMONY/100L`** is inbox messages plus gate runs, per hundred lines the
+  pull request changed (additions plus deletions, from gh). Ceremony rising while
+  the diff stays flat is the sign of agents proving to each other that earlier
+  checks ran instead of moving the work.
+- **`MERGED`** and **`DIFF`** come from `gh pr view`, the one thing worktender
+  cannot observe itself. `?` is gh failing to answer; `--json` says why.
+
+Recording is best effort: a ledger that cannot be written warns on stderr and
+the command carries on, because a report refused over a metrics file loses the
+report to save a statistic about it. Like the inbox, the ledger is append-only
+and unbounded for now. It records no tokens or cost — that would mean reading
+session-log content, a decision of its own.
+
 ## Stacking on a branch that is still in review
 
 `start --base <ref>` forks the new worktree from any ref, not just the trunk. So

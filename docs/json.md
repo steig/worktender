@@ -8,8 +8,8 @@ is a document nobody can parse.
 The commands split into two groups, and they behave differently in one way worth
 knowing up front:
 
-- **`ls`, `doctor`, `sync`, `prune`, `prune-apply`** — inspection and
-  reconciliation. Documented below.
+- **`ls`, `doctor`, `sync`, `prune`, `prune-apply`, `stats`** — inspection
+  and reconciliation. Documented below.
 - **`start`, `dispatch`, `report`, `gate`** — the four an agent orchestrates
   with. **These write their document on the failure paths too**, because the
   exit code alone cannot say *which* of five workers a `--any` gate was about,
@@ -486,6 +486,74 @@ $ worktender doctor --json
 - The scope is herdr's open worktree workspaces rather than wherever you are
   standing, so `doctor` answers from outside any repository at all — the same
   scope, and now the same read, that `ls --all-repos` lists in full.
+
+## `stats --json`
+
+```sh
+$ worktender stats --json
+{
+  "ledger": "/Users/you/.local/state/herdr/plugins/steig.worktender/ledger.jsonl",
+  "skipped_lines": 0,
+  "dispatches": [
+    {
+      "issue": 42,
+      "repository": "/Users/you/code/thing",
+      "branch": "42-fix-the-thing",
+      "role": "eng",
+      "agent": "builder",
+      "agent_kind": "claude",
+      "agent_name": "wt-42-fix-the-thing-016aab",
+      "pane_id": "w9:p1",
+      "started_at": "2026-10-01T10:00:00.12Z",
+      "reports": [
+        { "status": "planned", "at": "2026-10-01T10:10:00.5Z", "pr": null },
+        { "status": "done",    "at": "2026-10-01T10:30:00.1Z", "pr": 7 },
+        { "status": "done",    "at": "2026-10-01T11:00:00.3Z", "pr": 7 }
+      ],
+      "attempts": 2,
+      "pr": 7,
+      "merged": true,
+      "additions": 150,
+      "deletions": 50,
+      "wall_clock_seconds": 3600,
+      "inbox_messages": 3,
+      "gate_runs": 2,
+      "ceremony_ratio": 2.5,
+      "error": null
+    }
+  ],
+  "summary": {
+    "dispatches": 1,
+    "with_pr": 1,
+    "merged": 1,
+    "median_wall_clock_seconds": 3600,
+    "attempts_per_merged_pr": 2,
+    "rework_rate": 1,
+    "ceremony_per_merged_pr": 5
+  }
+}
+```
+
+- **`reports`** is every status the worker claimed, in order, with the time it
+  claimed it. It is the history the derived figures come from, carried so a
+  figure defined differently can be computed without a second ledger.
+- **`attempts`** counts `done` reports; **`wall_clock_seconds`** runs from
+  `started_at` to the last of them, and is null until there is one.
+- **`merged`**, **`additions`** and **`deletions`** are gh's answer. All three
+  are null when there is no `pr`, or when gh could not answer — **`error`** then
+  says why, and the command still exits 0: one pull request gh cannot see does
+  not make the others' figures wrong.
+- **`ceremony_ratio`** is `inbox_messages + gate_runs` per hundred changed lines.
+  Null when there is no diff to divide by, because a ratio over zero lines is
+  undefined, not small.
+- **`role`** and **`agent`** are null for a start that resolved no role.
+- **`summary`**'s per-merged-PR figures are null until something has merged; an
+  average over nothing is not zero. **`rework_rate`** is the share of merged pull
+  requests with more than one attempt, as a fraction.
+- **`skipped_lines`** counts ledger lines that did not decode — a torn write, or
+  a format this binary does not know. They are left out rather than failing the
+  read, and said on stderr.
+- An empty or missing ledger is `"dispatches": []`, not an error.
 
 ## `gate --json`
 

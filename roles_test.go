@@ -15,14 +15,25 @@ import (
 // TestMain points XDG_CONFIG_HOME at an empty directory for the whole package,
 // so no test ever reads the role configuration of whoever runs them. A test
 // that wants one writes it with writeRoles.
+//
+// XDG_STATE_HOME goes somewhere disposable for the same reason, in the other
+// direction: report, gate and start append to the dispatch ledger, and a test
+// that never set a state directory of its own would otherwise append to the
+// real one under ~/.local/state.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "worktender-config")
 	if err != nil {
 		panic(err)
 	}
+	state, err := os.MkdirTemp("", "worktender-state")
+	if err != nil {
+		panic(err)
+	}
 	os.Setenv("XDG_CONFIG_HOME", dir)
+	os.Setenv("XDG_STATE_HOME", state)
 	code := m.Run()
 	os.RemoveAll(dir)
+	os.RemoveAll(state)
 	os.Exit(code)
 }
 
