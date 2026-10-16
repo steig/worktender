@@ -20,7 +20,7 @@ read. One check per line, exactly like this:
 
 - [ ] `go test ./...` exits 0
 - [ ] `test -f docs/acceptance.md` exits 0
-- [ ] `worktender version` prints 0.14.0
+- [ ] `worktender doctor` exits 0
 
 That is "- [ ] " (or "- [x] "), the command in single backticks, a space, and
 the outcome it should give, in plain words. Use printable ASCII only, and no

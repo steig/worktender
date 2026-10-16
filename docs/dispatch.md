@@ -109,7 +109,7 @@ a machine can run, in a section of its own:
 
 - [ ] `go test ./...` exits 0
 - [ ] `test -f docs/acceptance.md` exits 0
-- [ ] `worktender version` prints 0.14.0
+- [ ] `worktender doctor` exits 0
 ```
 
 The grammar is strict:

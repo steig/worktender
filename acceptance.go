@@ -17,7 +17,7 @@ import (
 //
 //	- [ ] `go test ./...` exits 0
 //	- [ ] `test -f docs/acceptance.md` exits 0
-//	- [ ] `worktender version` prints 0.14.0
+//	- [ ] `worktender doctor` exits 0
 //
 // THE GRAMMAR IS A PARSER, NOT A SECURITY BOUNDARY. What makes the commands
 // safe to hand an agent is that a person approved them byte for byte with
