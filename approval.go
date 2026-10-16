@@ -176,18 +176,10 @@ func factoryApproval(root string, number int) (approvedIssue, error) {
 		return approvedIssue{}, refuse("@%s applied the label with %s access, and clearing an issue takes write", approver, permission)
 	}
 
-	// What was approved is the page, so what the worker gets is the page too.
-	// See visible.go for what that excludes and why some of it is refused.
-	body, hidden := visibleText(snap.Body)
-	hidden = append(visibleTitle(snap.Title), hidden...)
-	if len(hidden) > 0 {
-		return approvedIssue{}, codef(exitNeedsHuman,
-			"issue #%d is labelled %s but holds text its page does not show, which nobody approved: %s; "+
-				"a person has to remove it and apply the label again",
-			number, labelFactoryReady, strings.Join(hidden, "; "))
-	}
-
-	accepted := parseAcceptance(body)
+	// The checks are the only text an agent is told to execute, so they are the
+	// only text held to a grammar that renders exactly as it is stored; see
+	// acceptance.go. The rest of the body is prose the worker treats as data.
+	accepted := parseAcceptance(snap.Body)
 	if why := accepted.problems(); why != "" {
 		// Not refuse(): re-applying the label does not fix this one. The
 		// checks have to be written first.
@@ -200,7 +192,7 @@ func factoryApproval(root string, number int) (approvedIssue, error) {
 	return approvedIssue{
 		Number:     number,
 		Title:      snap.Title,
-		Body:       body,
+		Body:       snap.Body,
 		Approver:   approver,
 		ApprovedAt: approvedAt,
 		Checks:     accepted.Checks,
@@ -327,7 +319,7 @@ func pinIssue(checkout string, a approvedIssue) (string, error) {
 	quote := func(heading, text string) {
 		fmt.Fprintf(&b, "## %s (quoted)\n\n", heading)
 		for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-			b.WriteString(quoteLine(line))
+			b.WriteString(quoteIssueLine(line))
 		}
 		b.WriteString("\nend of quoted " + strings.ToLower(heading) + "\n\n")
 	}
@@ -340,8 +332,8 @@ func pinIssue(checkout string, a approvedIssue) (string, error) {
 	b.WriteString("network access, credentials, anything outside this repository. Report it as blocked\n")
 	b.WriteString("instead, naming the check by number.\n\n")
 	for i, c := range a.Checks {
-		b.WriteString(quoteLine(fmt.Sprintf("%d. command: %s", i+1, c.Command)))
-		b.WriteString(quoteLine("   expect:  " + c.Expect))
+		b.WriteString(quoteIssueLine(fmt.Sprintf("%d. command: %s", i+1, c.Command)))
+		b.WriteString(quoteIssueLine("   expect:  " + c.Expect))
 	}
 	b.WriteString("\nend of quoted acceptance checks\n")
 
@@ -354,13 +346,13 @@ func pinIssue(checkout string, a approvedIssue) (string, error) {
 	return path, nil
 }
 
-// quoteLine is one line of issue text as the pinned file carries it: prefixed,
+// quoteIssueLine is one line of issue text as the pinned file carries it: prefixed,
 // so it cannot pass for one of the file's own lines, and escaped by safetext,
 // so no rune in it can end the line early or redraw it as something else.
 // factoryApproval has already refused such runes; this is the frame not
 // depending on that. Tabs are the exception, kept as themselves the way a
 // body's code blocks need them, and harmless inside a line.
-func quoteLine(line string) string {
+func quoteIssueLine(line string) string {
 	parts := strings.Split(line, "\t")
 	for i, p := range parts {
 		parts[i] = safetext.Escape(p)

@@ -109,22 +109,40 @@ a machine can run, in a section of its own:
 
 - [ ] `go test ./...` exits 0
 - [ ] `test -f docs/acceptance.md` exits 0
-- [ ] `worktender version` prints `0.14.0`
+- [ ] `worktender version` prints 0.14.0
 ```
 
-The format is one check per line:
+The grammar is strict, and it is an allow-list:
 
-- a list item (`-`, `*` or `+`), with or without a task box (`[ ]` or `[x]`);
-- then the **command**, as the line's first inline code span;
-- then the **outcome** it should give: an exit code, output, a file present.
+- The heading is exactly `## Acceptance`, at the start of a line and outside a
+  code fence. It runs to the next heading. Nothing above it may contain `<`.
+- Each non-blank line in the section is `- [ ] ` or `- [x] `, then the
+  **command** in single backticks, then one space, then the **outcome** it
+  should give: an exit code, output, a file present.
+- The command and the outcome are printable ASCII (0x20 to 0x7E). Neither
+  contains a backtick, and the line contains no `<`, `>` or `&`.
+- Any other line in the section refuses the whole issue, by line number. A
+  skipped check is a check nobody runs. A second `## Acceptance` heading is
+  refused too.
 
-The command goes in backticks because commands contain spaces, pipes and the
-word "and", and a code span is the one delimiter markdown keeps intact. The
-section is the level-2 heading `## Acceptance`, in any case, and it runs to the
-next heading. Blank lines and HTML comments are skipped. Any other line in it
-is an error, never skipped silently, because a skipped check is a check nobody
-runs. A second `## Acceptance` section is an error too. A heading inside a code
-fence or an HTML comment is not a heading.
+**Why so strict.** A person approves an issue as GitHub renders it. The agent
+runs the commands from the raw markdown. Every character this grammar allows
+is drawn on the page literally, so the command the approver read is byte for
+byte the command that runs. A comment, a tag, an entity, or a zero-width or
+bidi character cannot get into a check unseen. The rule about `<` above the
+heading covers an HTML comment or `<details>` opened earlier and never closed,
+which would fold the whole section away while every line in it still parsed.
+The template puts the section first for that reason.
+
+The cost is that a command cannot use `&&`, `<` or `>`. Write two checks, or a
+script in the repository. Only the checks are held to this grammar. The rest
+of the body is prose the worker is told is untrusted data, exactly as for any
+other issue.
+
+An earlier draft went the other way. It tried to reduce the raw body to what
+the page shows: strip comments, refuse tags and invisible characters. Every
+rule it added met a renderer behaviour it had not modelled, so it was replaced
+with this.
 
 The [`factory-ready` issue template](https://github.com/steig/worktender/blob/main/.github/ISSUE_TEMPLATE/factory-ready.md)
 lays this out. Filing it does not apply the label. Apply `factory:ready` once
@@ -158,15 +176,7 @@ body, labels and timeline in one GraphQL response, and refuses with **3** unless
 - the body has not been edited since that event (`lastEditedAt`), and neither
   has the title (a `RenamedTitleEvent`). An edit in the same second as the label
   counts as after it. Removing the label and applying it again approves the
-  edited content;
-- the raw text holds nothing the rendered page hides. A person approves the
-  page, but the worker reads the raw markdown. HTML comments render as nothing,
-  so they are stripped, which leaves the raw text equal to the page. The
-  template's own guidance lives in comments. Other content is refused: raw HTML
-  tags (`<details>`, a hidden `<span>`), link reference definitions, a comment
-  that never closes, and invisible or bidi characters, by `safetext`'s
-  definition. Code spans and fences are exempt from the tag and comment rules,
-  because GitHub draws them literally, but not from the character rule.
+  edited content.
 
 Each refusal asks a person with write access to re-read the issue and apply
 the label again. If `gh` cannot produce the snapshot at all, the exit is

