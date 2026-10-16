@@ -12,12 +12,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	ossignal "os/signal"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/steig/worktender/internal/gitx"
@@ -609,30 +611,68 @@ func extractTar(r io.Reader, dir string) error {
 }
 
 // draftInExport exports the tracked files, detects the runners from them and
-// runs the drafter there. The export is gone by the time it returns.
+// runs the drafter there. The export is gone by the time it returns, an
+// interrupted run included.
+//
+// SIGINT and SIGTERM are caught for the whole of it, export and cleanup too,
+// rather than left to kill the process: the drafter can run for minutes, and
+// a Ctrl-C that killed us outright left the export in the temp directory for
+// good. A caught signal stops the drafter, the deferred cleanup removes the
+// export, and the run fails with 128 plus the signal's number, the status a
+// shell gives a command the signal killed. A second signal during that
+// cleanup is caught as well; cleanup is one RemoveAll, so it cannot hang.
 func draftInExport(root string, number int, snap issueSnapshot) (string, []draftRunner, error) {
+	signals := make(chan os.Signal, 1)
+	ossignal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer ossignal.Stop(signals)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var caught os.Signal
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		select {
+		case caught = <-signals:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	export, cleanup, err := exportTracked(root)
 	if err != nil {
 		return "", nil, err
 	}
 	defer cleanup()
 	runners := draftRunners(export)
-	output, err := runDrafter(export, draftPrompt(number, snap.Title, snap.Body, runners))
+	output, err := runDrafter(ctx, export, draftPrompt(number, snap.Title, snap.Body, runners))
+
+	cancel()
+	<-watched
+	if sig, ok := caught.(syscall.Signal); ok {
+		return "", nil, withCode(128+int(sig), fmt.Errorf("interrupted by %s; the drafter was stopped and its export removed", sig))
+	}
 	return output, runners, err
 }
 
 // runDrafter runs claude headless in root with prompt on stdin and returns
 // what it printed. claude is found on PATH, which is also how the suite puts a
-// fake in its place.
-func runDrafter(root, prompt string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), draftTimeout)
+// fake in its place. Cancelling ctx kills it; whether that was an interrupt is
+// the caller's to say.
+func runDrafter(ctx context.Context, root, prompt string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, draftTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "claude", drafterArgs()...)
 	cmd.Dir = root
 	cmd.Stdin = strings.NewReader(prompt)
+	// A child the drafter started can hold its output open after it is
+	// killed; stop waiting on that rather than on the child.
+	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return "", err
+		}
 		if ctx.Err() != nil {
 			return "", withCode(exitNoAnswer, fmt.Errorf("the drafter did not answer within %s", draftTimeout))
 		}
