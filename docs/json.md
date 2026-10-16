@@ -655,17 +655,18 @@ $ worktender start 42 --repo . --json
   "stacked": false,
   "briefed": true,
   "staffing": [ { "status": "done", "kind": "staff", "…": "…" } ],
-  "gate_command": "…/worktender gate --target wt-42-fix-the-thing-016aab --until done --require-pr",
+  "gate_command": "…/worktender gate --target w9:p1 --until done --require-pr",
   "error": null,
   "exit_code": 0
 }
 ```
 
 - **`agent_name`** is not the branch. herdr's agent namespace spans every
-  repository at once, so the name carries a digest of the repository — and it is
-  what `gate` takes.
-- **`gate_command`** is that wait, assembled. Carried because the digest is not
-  something anyone should be retyping.
+  repository at once, so the name carries a digest of the repository.
+- **`gate_command`** is the wait this start earned, assembled. It targets
+  `pane_id`, not `agent_name`: herdr can stop resolving the name while the
+  agent still runs (seen after Claude Code retitled its terminal), and the pane
+  lasts as long as the worker.
 - **`stacked`** is true when the fork point is not the base's own tip, so this
   branch sits on commits the base does not have — the case worth noticing before
   the base is squash-merged, which would land none of them. Same test the
@@ -737,7 +738,7 @@ $ worktender dispatch --pane w9:p1 --name worker-one --json
   "workspace_id": "w9",
   "agent_name": "worker-one",
   "staffing": [ { "status": "done", "kind": "staff", "…": "…" } ],
-  "gate_command": "…/worktender gate --target worker-one --until done",
+  "gate_command": "…/worktender gate --target w9:p1 --until done",
   "error": null,
   "exit_code": 0
 }

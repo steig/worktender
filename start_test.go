@@ -306,16 +306,21 @@ JSON`)
 	if strings.ContainsAny(text, "\n\r") {
 		t.Errorf("the brief must be one line; got %q", text)
 	}
-	// The gate line is the only handle a caller gets on what was started, so it
-	// has to name the agent herdr was actually asked for — the repository-scoped
-	// name, not the branch. The gate is the other half and start does not run
-	// it: a caller starting five issues wants five starts and then one wait.
+	// herdr is asked for the repository-scoped name, not the branch.
 	want := reconcile.AgentName(repo.Root, "42-fix-the-thing")
 	if started["name"] != want {
 		t.Errorf("agent.start name = %v, want %q", started["name"], want)
 	}
-	if !strings.Contains(out.String(), "gate --target "+want) {
-		t.Errorf("start should say how to wait for %s:\n%s", want, out.String())
+	// The gate line is the only handle a caller gets on what was started, so it
+	// names the pane: herdr has been seen to stop resolving the agent's name
+	// after Claude Code retitled its terminal, while the pane lasts as long as
+	// the worker. The gate is the other half and start does not run it: a
+	// caller starting five issues wants five starts and then one wait.
+	if !strings.Contains(out.String(), "gate --target w9:p1 ") {
+		t.Errorf("start should say how to wait for pane w9:p1:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "gate --target "+want) {
+		t.Errorf("start's gate line names the agent, which herdr can stop resolving:\n%s", out.String())
 	}
 }
 

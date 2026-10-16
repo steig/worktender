@@ -109,8 +109,9 @@ func dispatchCommand(args []string, out io.Writer) error {
 	} else {
 		// Only a dispatch that actually staffed earns a gate command; naming one
 		// for an agent that never started would be an instruction to wait for
-		// nothing.
-		doc.GateCommand = jsonout.String(fmt.Sprintf("%s gate --target %s --until done", selfPath(), *name))
+		// nothing. It names the pane rather than --name, which herdr can stop
+		// resolving while the agent still runs; see the gate line in start.
+		doc.GateCommand = jsonout.String(fmt.Sprintf("%s gate --target %s --until done", selfPath(), *pane))
 	}
 	if *asJSON {
 		if err := jsonout.Write(out, doc.finish(failed)); err != nil {

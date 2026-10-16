@@ -114,10 +114,11 @@ transcript under `~/.claude/projects` is picked up with `--continue`.
 
 **When the work is a GitHub issue, use `start`.** It reads the issue with `gh`,
 creates the worktree on a branch named `<number>-<title-slug>`, starts an agent in the
-new pane, and briefs it. It prints the `gate` line for what it started, agent name
-included — use that rather than guessing the name, which is **not** the branch name:
-herdr's agent namespace spans every repository, so the name carries a repository
-digest you cannot derive by eye.
+new pane, and briefs it. It prints the `gate` line for what it started — use that.
+It targets the **pane**, not the agent name: herdr can stop resolving a name while
+the agent still runs (seen after Claude Code retitled its terminal), and the pane
+lasts as long as the worker. The agent name is not the branch name either; it
+carries a repository digest you cannot derive by eye.
 
 ```bash
 "$worktender" start 42 [--role <role>] [--model sonnet] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
