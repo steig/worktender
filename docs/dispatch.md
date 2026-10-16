@@ -145,19 +145,49 @@ clearing its own work. The message names lines by number and never quotes
 them, because the issue body is untrusted and the message reaches a
 coordinating agent.
 
-An issue **without** the label is read exactly as before. `start` asks `gh` for
-the same fields, never fetches the body, and types the same brief, even when
-that issue has an Acceptance section.
+**The label is an approval, so `start` checks who gave it.** A worker is going
+to run the commands in a ready issue. The label is the only thing saying a
+person read them. Before anything is created, `start` reads the issue's title,
+body, labels and timeline in one GraphQL response, and refuses with **3** unless:
 
-**The brief counts the checks. It does not carry them.** For a ready issue the
-brief says how many checks `start` parsed. It tells the worker to run them and
-say in its `done` note which pass, for example `acceptance 3/4 pass, #2 fails`.
-The commands themselves stay in the issue, where the worker reads them through
-`gh issue view` as tool output. They are not pasted into the prompt. A command
-is the most instruction-shaped text an issue can hold, and keeping untrusted
-text out of the brief is the rule the brief is built on. The count is
-`start`'s own number, so a worker that reads the section differently has
-something to disagree with.
+- the actor of the latest event applying `factory:ready` has write or admin
+  access to the repository, according to
+  `gh api repos/{owner}/{repo}/collaborators/{login}/permission`. An app's bot
+  account, a deleted account, or one whose permission `gh` will not report all
+  fail closed;
+- the body has not been edited since that event (`lastEditedAt`), and neither
+  has the title (a `RenamedTitleEvent`). An edit in the same second as the label
+  counts as after it. Removing the label and applying it again approves the
+  edited content.
+
+Each refusal asks a person with write access to re-read the issue and apply
+the label again. If `gh` cannot produce the snapshot at all, the exit is
+**2**, the same as an unreadable issue, because that is the machine and not
+the issue.
+
+**The worker reads the copy that was approved, not the live issue.** `start`
+writes the verified title, body and numbered checks to
+`$(git rev-parse --git-path worktender/issue.md)` in the new worktree. That is
+inside the worktree's git dir, so it is never committed and goes away when the
+worktree does. Every line of issue text in it is quoted with `> ` between
+markers `start` writes. The file says that later edits to the live issue are
+unapproved. It also says not to run a check that reaches beyond checking the
+work (network access, credentials, anything outside the repository) and to
+report that check as blocked instead. That sentence is a second line of
+defence. The approval is the control.
+
+An issue **without** the label is read exactly as before. `start` asks `gh` for
+the same fields, never fetches the body or the approval, writes no file, and
+types the same brief, even when that issue has an Acceptance section.
+
+**The brief counts the checks. It does not carry them.** A ready issue's brief
+points at the pinned file instead of `gh issue view`, and says how many checks
+`start` parsed. The worker runs them and says in its `done` note which pass,
+for example `acceptance 3/4 pass, #2 fails`. The commands themselves are never
+pasted into the prompt. A command is the most instruction-shaped text an issue
+can hold, and keeping untrusted text out of the brief is the rule the brief is
+built on. The count is `start`'s own number, so a worker that reads the file
+differently has something to disagree with.
 
 The worker's report is a claim, not proof. Re-running the checks at the gate,
 so that it does not take the report's word, is a separate step.

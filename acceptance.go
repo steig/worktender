@@ -1,14 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
-
-	"github.com/steig/worktender/internal/gitx"
 )
 
 // An issue cleared for an agent states its "done" as checks a machine can run,
@@ -187,32 +182,6 @@ func (a acceptance) problems() string {
 	return ""
 }
 
-// readyChecks enforces the contract on an issue labelled factory:ready, and
-// returns how many checks it carries.
-//
-// The refusal is exitNeedsHuman, not exitUsage. exitUsage promises that a
-// changed invocation fixes it, and no flag here does: the repair is to the
-// issue, and writing what "done" means for a piece of work is the judgment the
-// label exists to certify a person has made. A coordinator, or a queue pulling
-// ready issues, that redispatched or wrote the checks itself would be clearing
-// its own work for itself. So it escalates.
-//
-// It runs before the worktree exists, so a refused issue leaves nothing behind.
-func readyChecks(root string, i issue) (int, error) {
-	body, err := issueBodyFor(root, i.Number)
-	if err != nil {
-		return 0, err
-	}
-	found := parseAcceptance(body)
-	if why := found.problems(); why != "" {
-		return 0, codef(exitNeedsHuman,
-			"issue #%d is labelled %s but %s; a person has to write its checks, one per line as "+
-				"- [ ] `command` expected outcome (see docs/dispatch.md), or take the label off",
-			i.Number, labelFactoryReady, why)
-	}
-	return len(found.Checks), nil
-}
-
 // hasLabel reports whether an issue carries a label, by exact name.
 func (i issue) hasLabel(name string) bool {
 	for _, l := range i.Labels {
@@ -221,34 +190,4 @@ func (i issue) hasLabel(name string) bool {
 		}
 	}
 	return false
-}
-
-// issueBodyFor reads only an issue's body through gh.
-//
-// A second call rather than a field on issueFor's, so that an issue without
-// factory:ready is read exactly as it was before the contract existed — the
-// same gh arguments, and no body anywhere in the process. The body has no
-// ceiling and no author anyone vetted; it is fetched only for an issue whose
-// label says it carries a contract worth reading.
-func issueBodyFor(root string, number int) (string, error) {
-	args := []string{"issue", "view", strconv.Itoa(number), "--json", "body"}
-	if origin := gitx.RemoteURL(root); origin != "" {
-		args = append(args, "--repo", origin)
-	}
-
-	cmd := exec.Command("gh", args...)
-	cmd.Dir = root
-
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("read the body of issue #%d with gh: %w; check `gh auth status`", number, err)
-	}
-
-	var found struct {
-		Body string `json:"body"`
-	}
-	if err := json.Unmarshal(out, &found); err != nil {
-		return "", fmt.Errorf("read the body of issue #%d: %w", number, err)
-	}
-	return found.Body, nil
 }
