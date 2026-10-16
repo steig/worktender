@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "approve", "start", "factory", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "refocus", "inbox", "stats", "lessons", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "approve", "start", "factory", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "review", "refocus", "inbox", "stats", "lessons", "on-event", "startup"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -100,6 +100,11 @@ func run(args []string, out io.Writer) error {
 		// One pass routing a pull request's failing checks and new reviews to
 		// the worker on its branch. Types into idle panes only.
 		return prFeedbackCommand(args[1:], out)
+	case "review":
+		// CI, then a second agent judging the PR against its issue's
+		// acceptance checks, before a human sees it. Opens a pane beside the
+		// worker and waits for the reviewer's verdict.
+		return reviewCommand(args[1:], out)
 	case "refocus":
 		// A worker's goal chain, read live from GitHub, for a hook to hand back
 		// to it after compaction, or with --if-due on its role's interval.

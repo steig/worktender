@@ -28,6 +28,7 @@ PAGES = [
     ("patterns", "Patterns", None, "Handing work to another agent and knowing whether it actually happened: verify don't relay, fixed-slot reports, and what stays in your own head."),
     ("examples", "Examples", None, "Five fan-outs end to end — a Sentry backlog, an issue burn-down, a wide mechanical change, a flaky test, and the case for not fanning out at all."),
     ("dispatch", "Dispatch", "dispatch.md", "Handing a slice of work to another agent and knowing when it is done."),
+    ("review", "Review", "review.md", "Checking a worker's PR against its issue's acceptance checks before a human sees it: CI, a reviewer agent, and when the result is verified."),
     ("roles", "Roles", "roles.md", "Starting a worker as a Claude Code agent with a brief style: the configuration, label routing, and what a label can reach."),
     ("lessons", "Lessons", "lessons.md", "Carrying what a failed-then-fixed pull request taught into a role's next brief: proposed from the ledger, written and approved by a person, expiring, removable."),
     ("watch", "Watch", "watch.md", "A Claude Code mod that tells the coordinating session when a worker reports, instead of it waiting in gate."),

@@ -15,7 +15,7 @@ knowing up front:
   exit code alone cannot say *which* of five workers a `--any` gate was about,
   and that is the whole answer. Everything they would have printed for a human
   goes to stderr instead. `factory`, which starts issues through `start`, behaves
-  the same way.
+  the same way, and so does `review`; its document is in [Review](review.md).
 
 Each of these also carries **`exit_code`**: the code the process is about to
 leave with. It is redundant with `$?` and deliberately so — a document read off
