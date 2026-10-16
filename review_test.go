@@ -783,10 +783,53 @@ func TestReviewPostsTheReviewOnlyAfterTheCommitIsReChecked(t *testing.T) {
 	}
 
 	body := gh.read("posted")
-	for _, want := range []string{"#17", headA[:12], "issue #42", reviewOutcomeFailed, "UNTRUSTED", "    fail: check 2 untested (at)someone 'rm -rf'"} {
+	for _, want := range []string{"#17", headA[:12], "issue #42", reviewOutcomeFailed, "2 approved acceptance check(s)", "findings.md"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the posted review should carry %q; got:\n%s", want, body)
 		}
+	}
+}
+
+// The posted review is public, so nothing the reviewer wrote reaches it: an
+// injected reviewer's note could carry anything it read. The note is kept
+// locally, 0600, framed as untrusted.
+func TestReviewerWrittenTextNeverReachesThePostedReview(t *testing.T) {
+	for _, note := range []string{
+		"pass: SECRET-TOKEN-abc123 from ~/.config/gh/hosts.yml",
+		"fail: SECRET-TOKEN-abc123 check 2 untested",
+	} {
+		t.Run(note[:4], func(t *testing.T) {
+			_, _, gh := fakeReview(t, greenPR)
+			stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: note}, nil)
+
+			var out strings.Builder
+			_ = reviewCommand([]string{"17", "--json"}, &out)
+			doc := reviewDoc(t, out.String())
+
+			body := gh.read("posted")
+			if body == "" {
+				t.Fatal("no review was posted")
+			}
+			for _, leaked := range []string{"SECRET-TOKEN", "hosts.yml", "check 2 untested", note} {
+				if strings.Contains(body, leaked) {
+					t.Errorf("reviewer-written %q reached the public review:\n%s", leaked, body)
+				}
+			}
+
+			if doc.Findings == nil {
+				t.Fatal("the document should name the local findings file")
+			}
+			findings, err := os.ReadFile(*doc.Findings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(findings), note) || !strings.Contains(string(findings), "UNTRUSTED") {
+				t.Errorf("the findings file should hold the note, framed; got:\n%s", findings)
+			}
+			if info, err := os.Stat(*doc.Findings); err != nil || info.Mode().Perm() != 0o600 {
+				t.Errorf("findings mode: %v, %v; want 0600", info, err)
+			}
+		})
 	}
 }
 

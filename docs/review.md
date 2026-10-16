@@ -112,13 +112,22 @@ the worker's.
 
 **Review, not the reviewer, posts one PR review**, with your gh, once the
 verdict is in and the commit and CI have been re-checked. Nothing is posted for
-a stale verdict, a blocked reviewer or one that never answered. The review is
-fixed text — PR, commit, issue, outcome, evidence — and the reviewer's note last,
-as an indented code block under a line saying it is untrusted, with backticks
-and `@` defused so it renders as text and pings nobody.
+a stale verdict, a blocked reviewer or one that never answered. **Every word of
+it is review's**: PR, commit, issue, outcome, evidence, how many approved
+acceptance checks the verdict covers, and where the note is kept. Nothing the
+reviewer wrote is posted — a PR review is public, and an injected reviewer's
+note could carry whatever it read.
+
+**The reviewer's note stays on your machine**, in `findings.md` (0600) in the
+review's inputs directory, under a line saying it is untrusted. The posted
+review names that directory by its base name; the JSON's `findings` field has
+the full path.
 
 There is no second feedback path. That review is a review like any other, and [`pr-feedback`](watch.md#routing-pr-feedback-to-workers) already
-counts reviews and tells the worker on that branch to read them. So with the
+counts reviews and tells the worker on that branch to read them. The worker
+learns the outcome from the review and, for the detail, reads `findings.md` —
+a person can hand it over, or the worker can read it if its own permissions
+reach the plugin state directory. So with the
 watch mod's `prFeedback` on, a failed review reaches the worker on its next
 look; without it, run `worktender pr-feedback` yourself. Then review again once
 the worker pushes.
@@ -240,6 +249,7 @@ Written on the failure paths too, like `start --json`.
   "agent_name": "review-42-fix-the-thing-012345678-6364c6",
   "briefed": true,
   "posted": true,
+  "findings": "/home/me/.local/state/herdr/plugins/steig.worktender/review/17-0123456789ab-2614553904/findings.md",
   "staffing": [ { "status": "done", "kind": "staff", "…": "…" } ],
   "error": null,
   "exit_code": 0
@@ -256,6 +266,8 @@ Written on the failure paths too, like `start --json`.
   False caps the evidence at `reported`.
 - **`inputs`** is the directory the reviewer was handed.
 - **`posted`** is whether review posted its PR review.
+- **`findings`** is the local file holding the reviewer's note, which is never
+  posted.
 - **`head`** is the commit the review is bound to.
 - **`report.note`** is the reviewer's own words and stays untrusted data.
 - **`agent_name`** is what to `gate` on if you want to wait for the reviewer
