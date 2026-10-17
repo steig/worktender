@@ -5,10 +5,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrtest"
 )
@@ -373,6 +375,37 @@ func TestSyncAdoptsAWorktreeOutsideTheRepoRoot(t *testing.T) {
 // else marks the repository dirty. Left alone, the worktree sits there as a
 // bare shell until sync is run a second time.
 func TestSyncStaffsAWorktreeItJustAdopted(t *testing.T) {
+	server, out := syncAdoptingOne(t)
+
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			return
+		}
+	}
+	t.Errorf("sync adopted a worktree and left it unstaffed; output:\n%s", out)
+}
+
+// The reconcile path staffs workers with no arguments of its own, and a worker
+// it restarts after herdr does must not come back on your token.
+func TestSyncGivesTheWorkerItsOwnToken(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	server, _ := syncAdoptingOne(t)
+
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			if args, _ := call.Params["args"].([]any); !slices.Contains(args, any("--settings")) {
+				t.Errorf("agent args = %v; want --settings carrying the worker's token", args)
+			}
+			return
+		}
+	}
+	t.Fatal("sync started no agent")
+}
+
+// syncAdoptingOne runs sync over one worktree with no workspace, which it adopts
+// and then staffs, and answers with the fake herdr and what sync printed.
+func syncAdoptingOne(t *testing.T) (*herdrtest.Server, string) {
+	t.Helper()
 	repo := herdrtest.NewRepo(t)
 	checkout := repo.AddWorktree("wip", "wip")
 
@@ -413,13 +446,7 @@ func TestSyncStaffsAWorktreeItJustAdopted(t *testing.T) {
 	if err := syncCommand(nil, &out); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-
-	for _, call := range server.Calls() {
-		if call.Method == "agent.start" {
-			return
-		}
-	}
-	t.Errorf("sync adopted a worktree and left it unstaffed; output:\n%s", out.String())
+	return server, out.String()
 }
 
 func TestPruneApplyRemoves(t *testing.T) {

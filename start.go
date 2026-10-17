@@ -137,13 +137,6 @@ func startCommand(args []string, out io.Writer) error {
 		return err
 	}
 	doc.Launch = launch.JSON()
-	tokenArgs, err := workerTokenArgs()
-	if err != nil {
-		if wErr := emit(doc.finish(err)); wErr != nil {
-			return wErr
-		}
-		return err
-	}
 	if line := launch.Line(); line != "" {
 		fmt.Fprintln(notes, line)
 	}
@@ -216,14 +209,14 @@ func startCommand(args []string, out io.Writer) error {
 	// The same KindStaff action `sync` and `dispatch` build, so the pane
 	// re-check in execute.staff() covers this path by construction too.
 	agent := reconcile.AgentName(s.root, branch)
-	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir}
+	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
 	results := executor.Run([]reconcile.Action{{
 		Kind:        reconcile.KindStaff,
 		Branch:      branch,
 		WorkspaceID: workspace,
 		PaneID:      pane,
 		AgentName:   agent,
-		AgentArgs:   append(append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...), tokenArgs...),
+		AgentArgs:   append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...),
 	}})
 	fmt.Fprint(notes, execute.Render(results))
 	doc.Staffing = execute.JSON(results)

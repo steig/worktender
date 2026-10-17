@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/herdrtest"
 	"github.com/steig/worktender/internal/wt"
@@ -41,19 +42,19 @@ func TestDoctorReportsEventsAsTheGateParsesThem(t *testing.T) {
 }
 
 // Workers holding your token is the default, and the reason "a human approves
-// and merges" is not a control (#253). doctor says so without changing its exit
-// code, and once a worker token is set it says that much and not the token.
+// and merges" is not a control. doctor says so without changing its exit code,
+// and once a worker token is set it says what that buys and not the token.
 func TestDoctorWarnsWhenWorkersShareYourToken(t *testing.T) {
-	t.Setenv(workerTokenEnv, "")
-	if got := workerTokenCheck(); got.state != stateWarn || !strings.Contains(got.note, workerTokenEnv) {
-		t.Errorf("unset: %+v; want a warning naming %s", got, workerTokenEnv)
+	t.Setenv(execute.WorkerTokenEnv, "")
+	if got := workerTokenCheck(); got.state != stateWarn || !strings.Contains(got.note, execute.WorkerTokenEnv) {
+		t.Errorf("unset: %+v; want a warning naming %s", got, execute.WorkerTokenEnv)
 	}
 
 	const token = "github_pat_worker_only"
-	t.Setenv(workerTokenEnv, token)
+	t.Setenv(execute.WorkerTokenEnv, token)
 	got := workerTokenCheck()
-	if got.state != stateOK {
-		t.Errorf("set: state = %q, want %q", got.state, stateOK)
+	if got.state != stateOK || !strings.Contains(got.note, "branch protection") {
+		t.Errorf("set: %+v; want ok, naming branch protection as the control", got)
 	}
 	if strings.Contains(got.value+got.note, token) {
 		t.Errorf("doctor printed the token: %+v", got)

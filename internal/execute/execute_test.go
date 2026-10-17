@@ -1,7 +1,9 @@
 package execute_test
 
 import (
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -476,6 +478,70 @@ func TestStaffColdStartSendsNoArgs(t *testing.T) {
 	}
 	if _, ok := callTo(t, server, "agent.start").Params["args"]; ok {
 		t.Error("a cold start should not pass --continue")
+	}
+}
+
+// Every staffing goes through here — sync, the event hooks and review as well as
+// start and dispatch — so this is where the worker token is given, and a
+// worker a reconcile restarts after herdr does is not left on your token.
+func TestStaffGivesTheAgentTheWorkerToken(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	repo := herdrtest.NewRepo(t)
+	exec, server := fixture(t, repo)
+	exec.StateDir = t.TempDir()
+
+	action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a",
+		PaneID: "w2:p1", AgentName: "a", AgentArgs: []string{"--model", "sonnet"}}
+
+	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	want := []any{"--model", "sonnet", "--settings", filepath.Join(exec.StateDir, "worker-settings.json")}
+	if got := callTo(t, server, "agent.start").Params["args"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("args = %v, want %v", got, want)
+	}
+}
+
+// With the token unset, the file a previous one was written to goes too: a
+// rotated or withdrawn token does not stay on disk until someone notices.
+func TestStaffWithoutAWorkerTokenRemovesTheLastOne(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "")
+	repo := herdrtest.NewRepo(t)
+	exec, server := fixture(t, repo)
+	exec.StateDir = t.TempDir()
+	stale := filepath.Join(exec.StateDir, "worker-settings.json")
+	if err := os.WriteFile(stale, []byte(`{"env":{"GH_TOKEN":"old"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a", PaneID: "w2:p1", AgentName: "a"}
+
+	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	if _, ok := callTo(t, server, "agent.start").Params["args"]; ok {
+		t.Error("an agent was given settings with no worker token set")
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("the last token's file is still there: %v", err)
+	}
+}
+
+// Nowhere to keep the token is a failed staffing, not an agent on your token.
+func TestStaffRefusesAWorkerTokenItCannotStore(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	repo := herdrtest.NewRepo(t)
+	exec, server := fixture(t, repo)
+
+	action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a", PaneID: "w2:p1", AgentName: "a"}
+
+	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusFailed {
+		t.Fatalf("status = %q, want failed: %s", result.Status, result.Detail)
+	}
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			t.Fatal("an agent was started on your token")
+		}
 	}
 }
 

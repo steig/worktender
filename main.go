@@ -445,6 +445,7 @@ func (s *session) perform(o *output, actions []reconcile.Action, applyPrune bool
 		Root:       s.root,
 		CallerDir:  s.dir,
 		ApplyPrune: applyPrune,
+		StateDir:   pluginStateDir(),
 	}
 	if s.client != nil {
 		executor.LookupReport = s.ghostReport

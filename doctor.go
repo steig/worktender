@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/jsonout"
@@ -343,16 +344,17 @@ func ghCheck() check {
 	return check{name: "gh", value: "authenticated", state: stateOK}
 }
 
-// workerTokenCheck says whether workers get a token of their own. It says
-// "set" and nothing more: the value is a credential, and this table gets pasted
-// wherever someone asks for help.
+// workerTokenCheck says whether workers get a token of their own, and never
+// the token: this table gets pasted wherever someone asks for help. Set is not
+// safe, and the note says so. A worker runs as you, so your own login is still
+// within its reach; what stops it merging is branch protection.
 func workerTokenCheck() check {
-	if os.Getenv(workerTokenEnv) == "" {
+	if os.Getenv(execute.WorkerTokenEnv) == "" {
 		return check{name: "worker-gh", value: "your token", state: stateWarn,
-			note: "workers share your gh token, so one can approve and merge; set " + workerTokenEnv + " to one that cannot"}
+			note: "workers' gh uses your token, so one can approve and merge; set " + execute.WorkerTokenEnv + " to narrow it"}
 	}
-	return check{name: "worker-gh", value: "set", state: stateOK,
-		note: "workers' gh uses " + workerTokenEnv + ", but your stored gh login is still readable to them"}
+	return check{name: "worker-gh", value: "narrowed", state: stateOK,
+		note: "workers' gh defaults to " + execute.WorkerTokenEnv + "; your login is still within reach, so branch protection is the control"}
 }
 
 // eventsCheck reports the opt-in as the gate actually parses it, not as it is

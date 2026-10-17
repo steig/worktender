@@ -10,6 +10,7 @@
 package execute
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -102,6 +103,68 @@ type Executor struct {
 	// BusyRetryFor bounds how long staffing keeps re-offering a pane herdr
 	// reports busy. Zero means AgentStartTimeout; tests set it short.
 	BusyRetryFor time.Duration
+	// StateDir holds the settings file that hands WorkerTokenEnv to an agent.
+	// Empty, with the token set, fails every staffing, because the alternative
+	// is an agent on your token.
+	StateDir string
+}
+
+// WorkerTokenEnv names a GitHub token for agents in place of yours. Every
+// agent this package starts gets it as GH_TOKEN, so `sync`, the event hooks and
+// `review` give it as surely as `start` and `dispatch` do: a worker restarted
+// by a reconcile after herdr restarts is still a worker.
+//
+// It narrows what an agent's gh does by default; it isolates nothing. The
+// agent runs as you, so your stored gh login is one `env -u GH_TOKEN` away.
+const WorkerTokenEnv = "WORKTENDER_WORKER_GH_TOKEN"
+
+// workerSettingsFile is the settings file in StateDir.
+const workerSettingsFile = "worker-settings.json"
+
+// workerTokenArgs are the agent arguments that give the agent WorkerTokenEnv
+// as GH_TOKEN, or none when it is unset — and then the file a previous token
+// was written to is removed, so an unset or rotated token does not linger.
+//
+// The token goes through a settings file because there is nowhere else it is
+// not shown: agent.start takes no environment, an argument is visible to `ps`
+// and in the pane the agent is started in, and typing an export would put it
+// on screen.
+func workerTokenArgs(dir string) ([]string, error) {
+	path := filepath.Join(dir, workerSettingsFile)
+	token := os.Getenv(WorkerTokenEnv)
+	if token == "" {
+		if dir != "" {
+			// Best effort: a file that will not go is a stale token on disk,
+			// not a reason to refuse an agent that is not given it.
+			os.Remove(path)
+		}
+		return nil, nil
+	}
+	if dir == "" {
+		return nil, fmt.Errorf("%s is set but there is no plugin state directory to keep it in", WorkerTokenEnv)
+	}
+	raw, _ := json.Marshal(map[string]any{"env": map[string]string{"GH_TOKEN": token}})
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("store the worker token: %w", err)
+	}
+	// Through a rename, so an agent starting beside this one never reads half
+	// a file. CreateTemp makes it 0600.
+	tmp, err := os.CreateTemp(dir, "worker-settings-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("store the worker token: %w", err)
+	}
+	_, err = tmp.Write(raw)
+	if cErr := tmp.Close(); err == nil {
+		err = cErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return nil, fmt.Errorf("store the worker token: %w", err)
+	}
+	return []string{"--settings", path}, nil
 }
 
 // Run performs every action in order and returns one Result each.
@@ -180,6 +243,11 @@ func (e *Executor) staff(action reconcile.Action, busyUntil time.Time) Result {
 	// Caller arguments go last so they cannot displace --continue: whether to
 	// resume is this executor's decision, not the caller's.
 	args = append(args, action.AgentArgs...)
+	tokenArgs, err := workerTokenArgs(e.StateDir)
+	if err != nil {
+		return Result{action, StatusFailed, err.Error()}
+	}
+	args = append(args, tokenArgs...)
 
 	started := time.Now()
 	for attempt := 1; ; attempt++ {

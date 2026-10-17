@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrtest"
 	"github.com/steig/worktender/internal/reconcile"
@@ -413,7 +414,7 @@ func TestStartSurvivesABaseItCannotResolve(t *testing.T) {
 // Nothing is defaulted. Without --permission-mode, start changes nothing about
 // what the agent it creates may do.
 func TestStartPassesNoAgentArgsByDefault(t *testing.T) {
-	t.Setenv(workerTokenEnv, "")
+	t.Setenv(execute.WorkerTokenEnv, "")
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w5", "w5:p1", "working")
 	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":5,"title":"t","body":"b"}`))
@@ -883,13 +884,13 @@ func TestStartWithoutAContextSaysHowToNameARepository(t *testing.T) {
 	}
 }
 
-// A worker holding your token can approve its own issue and merge its own PR
-// (#253). The token it is given instead reaches it as GH_TOKEN through a
-// settings file only it and you can read, and never through an argument or
-// anything start prints, either of which would put it on screen.
+// A worker holding your token can approve its own issue and merge its own PR.
+// The token it is given instead reaches it as GH_TOKEN through a 0600
+// settings file, and never through an argument or anything start prints,
+// either of which would put it on screen.
 func TestStartGivesTheWorkerItsOwnToken(t *testing.T) {
 	const token = "github_pat_worker_only"
-	t.Setenv(workerTokenEnv, token)
+	t.Setenv(execute.WorkerTokenEnv, token)
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w5", "w5:p1", "working")
 	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":5,"title":"t","body":"b"}`))
