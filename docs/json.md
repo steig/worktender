@@ -787,6 +787,39 @@ $ worktender report --status done --pr 4 --note green --json
   the two channels a gate reads, and a worker whose stdout its own tooling
   captured would otherwise have reported to nobody.
 
+## `verify --json`
+
+```sh
+$ worktender verify 42 --repo . --json
+{
+  "repository": "/Users/you/code/thing",
+  "issue": 42,
+  "pr": null,
+  "base": "31db5d1c9b7e4a02f6c1d8e5a3b90f2c4d6e8a10",
+  "head": "8a4f0e2b6c1d9e3f5a7b0c2d4e6f8a1b3c5d7e9f",
+  "checks": [
+    {
+      "command": "go test -run TestTheThing ./...",
+      "expect": "prints ok",
+      "class": "discriminating",
+      "base": { "commit": "31db5d1c…", "exit_code": 0, "timed_out": false, "passed": false },
+      "head": { "commit": "8a4f0e2b…", "exit_code": 0, "timed_out": false, "passed": true }
+    }
+  ],
+  "error": null,
+  "exit_code": 0
+}
+```
+
+- **`class`** is `discriminating`, `guard`, `failing` or `unjudged`, as in
+  [Verifying that the checks prove the change](dispatch.md#verifying-that-the-checks-prove-the-change).
+- **`passed`** is whether the run met `expect`, which is not the same as exiting
+  0: a check expecting `exits 1` passes by failing.
+- **`exit_code`** inside a run is null when the check timed out and was killed.
+- **`base`** and **`head`** at the top are null when `verify` stopped before
+  finding them, and `checks` is empty until both sides have run. The progress
+  lines go to stderr.
+
 ## Call the binary, not the action
 
 A herdr action is a fixed command array with no argument surface, so

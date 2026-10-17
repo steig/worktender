@@ -255,14 +255,10 @@ var (
 	draftPrintsToken = regexp.MustCompile(`^[A-Za-z0-9._-]{1,40}$`)
 )
 
-// draftOutcomes are the outcomes a drafted check may expect, besides
-// "prints <token>".
-var draftOutcomes = []string{"exits 0", "exits 1", "exits non-zero", "prints nothing"}
-
 // vetOutcome is "" when expect is an outcome a drafted check may carry, else
-// why not.
+// why not: one of fixedOutcomes, or "prints <token>".
 func vetOutcome(expect string) string {
-	if slices.Contains(draftOutcomes, expect) {
+	if _, ok := fixedOutcomes[expect]; ok {
 		return ""
 	}
 	if token, ok := strings.CutPrefix(expect, "prints "); ok && draftPrintsToken.MatchString(token) {
@@ -549,30 +545,31 @@ func drafterArgs() []string {
 	}
 }
 
-// exportTracked writes the files HEAD tracks into a new 0700 directory and
-// returns it, with the function that removes it. The drafter runs there and
-// not in the checkout, so what it can read is what anyone cloning the
-// repository can: no untracked .env, no ignored key, no build output.
+// exportTracked writes the files rev tracks into a new 0700 directory and
+// returns it, with the function that removes it. The drafter and verify's
+// checks run there and not in the checkout, so what they can read is what
+// anyone cloning the repository can: no untracked .env, no ignored key, no
+// build output.
 //
-// It is `git archive HEAD | tar -x`, with the extracting done here so that
+// It is `git archive <rev> | tar -x`, with the extracting done here so that
 // only directories and regular files are written, each under the export. A
 // tracked symlink is left out rather than recreated, since one pointing at
 // ~/.ssh would hand the drafter the file it names.
-func exportTracked(root string) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "worktender-draft-export-*")
+func exportTracked(root, rev string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "worktender-export-*")
 	if err != nil {
 		return "", nil, withCode(exitEnvironment, fmt.Errorf("make a directory to export the repository into: %w", err))
 	}
 	cleanup := func() { os.RemoveAll(dir) }
-	if err := extractHead(root, dir); err != nil {
+	if err := extractCommit(root, rev, dir); err != nil {
 		cleanup()
-		return "", nil, withCode(exitEnvironment, fmt.Errorf("export the files HEAD tracks for the drafter: %w", err))
+		return "", nil, withCode(exitEnvironment, fmt.Errorf("export the files %s tracks: %w", rev, err))
 	}
 	return dir, cleanup, nil
 }
 
-func extractHead(root, dir string) error {
-	cmd := exec.Command("git", "-C", root, "archive", "--format=tar", "HEAD")
+func extractCommit(root, rev, dir string) error {
+	cmd := exec.Command("git", "-C", root, "archive", "--format=tar", rev)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
@@ -586,7 +583,7 @@ func extractHead(root, dir string) error {
 	// Drain the rest, so git is not left blocked on a pipe nobody reads.
 	io.Copy(io.Discard, stdout)
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("git archive HEAD: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("git archive %s: %w: %s", rev, err, strings.TrimSpace(stderr.String()))
 	}
 	return extractErr
 }
@@ -660,7 +657,7 @@ func draftInExport(root string, number int, snap issueSnapshot) (string, []draft
 		}
 	}()
 
-	export, cleanup, err := exportTracked(root)
+	export, cleanup, err := exportTracked(root, "HEAD")
 	if err != nil {
 		return "", nil, err
 	}
