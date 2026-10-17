@@ -29,9 +29,11 @@ type ghCall []string
 type gh struct {
 	releaseExists bool
 	createFails   bool
-	// assets is what `release view` prints, one name per line — what the real
-	// gh prints for `--json assets --jq '.assets[].name'`.
-	assets string
+	// view is what `release view` prints for the script's --jq, and checksums
+	// what `release download` prints for checksums.txt. The fake ignores the
+	// query, so each test spells the answer the real gh would give it.
+	view      string
+	checksums string
 }
 
 // runPublish runs the script against that gh, which records its argv per call.
@@ -61,7 +63,8 @@ func runReleaseScript(t *testing.T, path string, fake gh, args ...string) ([]ghC
 	script := "#!/bin/sh\n" +
 		"echo \"$*\" >> " + log + "\n" +
 		"case \"$1 $2\" in\n" +
-		"'release view') printf '%s' '" + fake.assets + "'; exit " + exit(!fake.releaseExists) + " ;;\n" +
+		"'release view') printf '%s' '" + fake.view + "'; exit " + exit(!fake.releaseExists) + " ;;\n" +
+		"'release download') printf '%s' '" + fake.checksums + "' ;;\n" +
 		"'release create') echo 'a release with the same tag name already exists' >&2; exit " + exit(fake.createFails) + " ;;\n" +
 		"esac\n" +
 		"exit 0\n"
@@ -169,12 +172,12 @@ func assertUploads(t *testing.T, call ghCall, tag string, paths []string) {
 func TestPublishUploadsToAReleaseThatAlreadyExists(t *testing.T) {
 	paths := assets(t, "worktender_linux_amd64", "checksums.txt")
 
-	calls, err := runPublish(t, gh{releaseExists: true}, append([]string{"v1.2.3"}, paths...)...)
+	calls, err := runPublish(t, gh{releaseExists: true, view: "false true"}, append([]string{"v1.2.3"}, paths...)...)
 	if err != nil {
 		t.Fatalf("release-publish.sh failed on an existing release: %v", err)
 	}
 
-	if got, want := subcommands(calls), "release view, release edit, release upload"; got != want {
+	if got, want := subcommands(calls), "release view, release upload"; got != want {
 		t.Fatalf("gh calls = %v, want %v.\n"+
 			"A `release create` here is #182 exactly: it fails with 'a release with "+
 			"the same tag name already exists' and the tag ships with no assets.", got, want)
@@ -298,8 +301,9 @@ func TestReleaseWorkflowRunsThePublishScript(t *testing.T) {
 // releases/latest is what scripts/install.sh hands every fresh install, so a
 // tag that lands there directly reaches everyone with no soak and nothing to
 // roll back to. release.yml publishes through release-publish.sh, so the
-// equivalent of `--prerelease` in the workflow is the script ending every path
-// with the release marked one — including a release a laptop already created.
+// equivalent of `--prerelease` in the workflow is the script marking the
+// release one before it uploads — whether it creates the release or finds a
+// draft someone else made.
 func TestReleaseWorkflowPublishesAPrerelease(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yml"))
 	if err != nil {
@@ -310,14 +314,17 @@ func TestReleaseWorkflowPublishesAPrerelease(t *testing.T) {
 			"here says whether a tag soaks as a prerelease")
 	}
 
-	for _, fake := range []gh{{}, {releaseExists: true}} {
+	for _, fake := range []gh{{}, {releaseExists: true, view: "true false"}} {
 		paths := assets(t, "worktender_linux_amd64", "checksums.txt")
 		calls, err := runPublish(t, fake, append([]string{"v1.2.3"}, paths...)...)
 		if err != nil {
 			t.Fatalf("%+v: release-publish.sh failed: %v", fake, err)
 		}
 		marked := false
-		for _, c := range calls[:len(calls)-1] {
+		for _, c := range calls {
+			if c.subcommand() == "release upload" {
+				break
+			}
 			if (c.subcommand() == "release create" || c.subcommand() == "release edit") &&
 				c.has("v1.2.3") && c.has("--prerelease") {
 				marked = true
@@ -328,4 +335,20 @@ func TestReleaseWorkflowPublishesAPrerelease(t *testing.T) {
 				"releases/latest moves to it the moment it is published", fake, subcommands(calls))
 		}
 	}
+}
+
+// "Re-run jobs" on a tag release-promote.sh already made latest finds a stable
+// release. Marking it a prerelease would silently move releases/latest back to
+// the tag before it, so a stable release only gets its assets.
+func TestPublishLeavesAStableReleaseStable(t *testing.T) {
+	paths := assets(t, "worktender_linux_amd64", "checksums.txt")
+
+	calls, err := runPublish(t, gh{releaseExists: true, view: "false false"}, append([]string{"v1.2.3"}, paths...)...)
+	if err != nil {
+		t.Fatalf("release-publish.sh failed on a stable release: %v", err)
+	}
+	if got, want := subcommands(calls), "release view, release upload"; got != want {
+		t.Fatalf("gh calls = %v, want %v; a `release edit` here demotes a promoted tag", got, want)
+	}
+	assertUploads(t, last(t, calls), "v1.2.3", paths)
 }

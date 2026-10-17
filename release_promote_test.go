@@ -2,12 +2,20 @@ package main
 
 import "testing"
 
+func runPromote(t *testing.T, fake gh, tag string) ([]ghCall, error) {
+	t.Helper()
+	return runReleaseScript(t, "scripts/release-promote.sh", fake, tag)
+}
+
 // scripts/release-promote.sh is the only step that moves releases/latest now
 // that release.yml publishes prereleases. It must flip both halves — not a
 // prerelease, and latest — or install.sh keeps resolving the old tag.
 func TestPromoteMarksTheReleaseLatest(t *testing.T) {
-	calls, err := runReleaseScript(t, "scripts/release-promote.sh",
-		gh{releaseExists: true, assets: "worktender_linux_amd64\nchecksums.txt\n"}, "v1.2.3")
+	calls, err := runPromote(t, gh{
+		releaseExists: true,
+		view:          "false\nworktender_linux_amd64\nworktender_darwin_arm64\nchecksums.txt\n",
+		checksums:     "abc  worktender_linux_amd64\ndef *worktender_darwin_arm64\n",
+	}, "v1.2.3")
 	if err != nil {
 		t.Fatalf("release-promote.sh failed: %v", err)
 	}
@@ -18,25 +26,45 @@ func TestPromoteMarksTheReleaseLatest(t *testing.T) {
 	}
 }
 
-// install.sh refuses a release with no checksums.txt, so promoting one that
-// release.yml never finished publishing to breaks every fresh install.
-func TestPromoteRefusesAReleaseWithoutChecksums(t *testing.T) {
-	calls, err := runReleaseScript(t, "scripts/release-promote.sh",
-		gh{releaseExists: true, assets: "worktender_linux_amd64\n"}, "v1.2.3")
-	if err == nil {
-		t.Fatal("release-promote.sh made a release with no checksums.txt latest")
-	}
-	if got := subcommands(calls); got != "release view" {
-		t.Errorf("gh calls = %v, want only the view", got)
+// install.sh downloads checksums.txt and the binary it names from latest, so
+// promoting a release missing either breaks every fresh install. A partial
+// upload has checksums.txt and still misses binaries.
+func TestPromoteRefusesAnIncompleteRelease(t *testing.T) {
+	for name, fake := range map[string]gh{
+		"no checksums.txt": {releaseExists: true, view: "false\nworktender_linux_amd64\n"},
+		"a binary checksums.txt names is missing": {
+			releaseExists: true,
+			view:          "false\nworktender_linux_amd64\nchecksums.txt\n",
+			checksums:     "abc  worktender_linux_amd64\ndef  worktender_darwin_arm64\n",
+		},
+		"empty checksums.txt": {releaseExists: true, view: "false\nchecksums.txt\n"},
+		"a draft": {
+			releaseExists: true,
+			view:          "true\nworktender_linux_amd64\nchecksums.txt\n",
+			checksums:     "abc  worktender_linux_amd64\n",
+		},
+		"no release": {},
+	} {
+		calls, err := runPromote(t, fake, "v1.2.3")
+		if err == nil {
+			t.Errorf("%s: release-promote.sh made the release latest", name)
+		}
+		for _, c := range calls {
+			if c.subcommand() == "release edit" {
+				t.Errorf("%s: release-promote.sh ran %v", name, c)
+			}
+		}
 	}
 }
 
-func TestPromoteRefusesAMissingRelease(t *testing.T) {
-	calls, err := runReleaseScript(t, "scripts/release-promote.sh", gh{}, "v1.2.3")
-	if err == nil {
-		t.Fatal("release-promote.sh succeeded for a tag with no release")
-	}
-	if got := subcommands(calls); got != "release view" {
-		t.Errorf("gh calls = %v, want only the view", got)
+func TestPromoteRefusesSomethingThatIsNotATag(t *testing.T) {
+	for _, tag := range []string{"--latest", "main", "1.2.3"} {
+		calls, err := runPromote(t, gh{releaseExists: true}, tag)
+		if err == nil {
+			t.Errorf("release-promote.sh accepted %q as a tag", tag)
+		}
+		if len(calls) != 0 {
+			t.Errorf("%q: gh was called (%v) before the tag was checked", tag, subcommands(calls))
+		}
 	}
 }
