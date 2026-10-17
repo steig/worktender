@@ -6,6 +6,45 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.19.0] — 2026-10-17
+
+The rest of the factory safety plan (#253), and model choice per slice. The
+first release published as a prerelease: it becomes `latest` only when
+promoted with `scripts/release-promote.sh v0.19.0`.
+
+### Added
+
+- **Workers run on the model the slice needs.** (#289) A `model:<name>` issue
+  label, or `default_model` in `~/.config/worktender/config.json`, picks the
+  worker's model; `factory --model` and `start --model` override. Names are
+  validated, so a label cannot pass a flag to claude. `doctor` warns when
+  workers would inherit your default model.
+- **`stats` reports tokens per merged PR, by model.** (#287) Input, output and
+  cache tokens from each worker's transcript, totals per model and the median
+  per PR. Tokens, not dollars.
+- **`factory` claims an issue on origin before starting it.** (#286) A
+  create-only push to `refs/worktender/claims/<N>`; another coordinator's
+  claim skips the issue, origin refusing the push is an environment error, a
+  partial start keeps its claim, and closing the issue releases it. More than
+  one coordinator can now work a queue.
+- **A `done` report names the commit it was made at.** (#282) `gate
+  --require-pr` refuses, exit 3 `head_moved`, when the PR's head is not that
+  commit. It catches an accidental or late push, not a hostile worker.
+- **`verify` refuses hollow tests.** (#279) With the change's Go files reverted
+  to the merge-base, the changed tests must fail; a build failure or no test
+  run is unjudged, never a pass.
+- **`review` flags a slice over 300 non-test lines as risk:high.** (#278)
+- **Releases soak as prereleases.** (#277, #281) Tags publish as prereleases;
+  `scripts/release-promote.sh vX` makes one `latest` after checking every
+  checksummed asset is there. A re-run leaves a stable release stable.
+- **`docs/canaries.md`:** a weekly seeded-defect procedure that measures
+  reviewer recall, blind. (#285)
+
+### Fixed
+
+- `factory` runs git with `LC_ALL=C`, so claim parsing works in any locale.
+  (#291)
+
 ## [0.18.0] — 2026-10-16
 
 More of the factory safety plan (#253).
