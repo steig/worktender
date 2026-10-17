@@ -585,7 +585,9 @@ $ worktender stats --json
 - **`alerts`** is null unless `--check` was given, and `[]` when it was and
   nothing crossed a threshold. Each alert is `{kind, issue, branch, value,
   threshold, message}`: `kind` is `ceremony`, `proof_loop` or `escape_rate`;
-  `issue` and `branch` are null for `escape_rate`, which is about the fleet;
+  `issue` and `branch` are null for `escape_rate`, which is about the fleet,
+  and its `value` is the upper bound of the rate's 95% Wilson interval,
+  to three places;
   `message` is the line the text output prints after `alert: `. The exit code
   is 3 whenever the list is non-empty, `--json` or not.
 - **`skipped_lines`** counts ledger lines that did not decode — a torn write, or
