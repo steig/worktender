@@ -26,6 +26,14 @@
 # Notes already on an existing release are never touched — whoever wrote them
 # meant them, and --generate-notes would replace a curated CHANGELOG excerpt
 # with a commit list.
+#
+# Every release this script touches ends as a prerelease. releases/latest skips
+# prereleases, so scripts/install.sh keeps handing out the last promoted tag
+# while this one soaks; scripts/release-promote.sh is what makes it latest.
+# That includes a release created from a laptop without --prerelease, which
+# would otherwise reach every installer the moment it exists. The cost: re-running
+# this workflow for a tag that was already promoted demotes it again, and it has
+# to be promoted again.
 set -eu
 
 if [ "$#" -lt 2 ]; then
@@ -60,7 +68,8 @@ view_err=$(mktemp)
 trap 'rm -f "$view_err"' EXIT
 
 if gh release view "$tag" >/dev/null 2>"$view_err"; then
-	echo "release-publish: $tag already has a release; uploading assets to it" >&2
+	echo "release-publish: $tag already has a release; marking it a prerelease and uploading assets to it" >&2
+	gh release edit "$tag" --prerelease
 else
 	echo "release-publish: no release for $tag yet ($(tr -d '\n' <"$view_err")); creating one" >&2
 
@@ -75,7 +84,7 @@ else
 	# to. A create that failed for a real reason — no token, no permission —
 	# fails the upload too, with a message about the thing that actually
 	# matters.
-	if ! gh release create "$tag" --generate-notes --title "$tag"; then
+	if ! gh release create "$tag" --prerelease --generate-notes --title "$tag"; then
 		echo "release-publish: creating $tag failed; trying the upload anyway in case something else created it" >&2
 	fi
 fi

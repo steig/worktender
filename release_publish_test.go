@@ -29,6 +29,9 @@ type ghCall []string
 type gh struct {
 	releaseExists bool
 	createFails   bool
+	// assets is what `release view` prints, one name per line — what the real
+	// gh prints for `--json assets --jq '.assets[].name'`.
+	assets string
 }
 
 // runPublish runs the script against that gh, which records its argv per call.
@@ -37,6 +40,11 @@ type gh struct {
 // matters is the sequence of calls, and herdrtest's fakes answer a single
 // question. Recording argv per call is the whole assertion.
 func runPublish(t *testing.T, fake gh, args ...string) ([]ghCall, error) {
+	t.Helper()
+	return runReleaseScript(t, "scripts/release-publish.sh", fake, args...)
+}
+
+func runReleaseScript(t *testing.T, path string, fake gh, args ...string) ([]ghCall, error) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -53,7 +61,7 @@ func runPublish(t *testing.T, fake gh, args ...string) ([]ghCall, error) {
 	script := "#!/bin/sh\n" +
 		"echo \"$*\" >> " + log + "\n" +
 		"case \"$1 $2\" in\n" +
-		"'release view') exit " + exit(!fake.releaseExists) + " ;;\n" +
+		"'release view') printf '%s' '" + fake.assets + "'; exit " + exit(!fake.releaseExists) + " ;;\n" +
 		"'release create') echo 'a release with the same tag name already exists' >&2; exit " + exit(fake.createFails) + " ;;\n" +
 		"esac\n" +
 		"exit 0\n"
@@ -61,10 +69,10 @@ func runPublish(t *testing.T, fake gh, args ...string) ([]ghCall, error) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("sh", append([]string{"scripts/release-publish.sh"}, args...)...)
+	cmd := exec.Command("sh", append([]string{path}, args...)...)
 	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
-	t.Logf("release-publish.sh %v:\n%s", args, out)
+	t.Logf("%s %v:\n%s", path, args, out)
 
 	raw, readErr := os.ReadFile(log)
 	if readErr != nil && !os.IsNotExist(readErr) {
@@ -166,7 +174,7 @@ func TestPublishUploadsToAReleaseThatAlreadyExists(t *testing.T) {
 		t.Fatalf("release-publish.sh failed on an existing release: %v", err)
 	}
 
-	if got, want := subcommands(calls), "release view, release upload"; got != want {
+	if got, want := subcommands(calls), "release view, release edit, release upload"; got != want {
 		t.Fatalf("gh calls = %v, want %v.\n"+
 			"A `release create` here is #182 exactly: it fails with 'a release with "+
 			"the same tag name already exists' and the tag ships with no assets.", got, want)
@@ -284,5 +292,40 @@ func TestReleaseWorkflowRunsThePublishScript(t *testing.T) {
 		t.Error("release.yml calls `gh release create` directly again. That is the #182 " +
 			"failure: it is fatal when a release already exists for the tag. Go through " +
 			"scripts/release-publish.sh.")
+	}
+}
+
+// releases/latest is what scripts/install.sh hands every fresh install, so a
+// tag that lands there directly reaches everyone with no soak and nothing to
+// roll back to. release.yml publishes through release-publish.sh, so the
+// equivalent of `--prerelease` in the workflow is the script ending every path
+// with the release marked one — including a release a laptop already created.
+func TestReleaseWorkflowPublishesAPrerelease(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "scripts/release-publish.sh") {
+		t.Fatal("release.yml does not publish through scripts/release-publish.sh, so nothing " +
+			"here says whether a tag soaks as a prerelease")
+	}
+
+	for _, fake := range []gh{{}, {releaseExists: true}} {
+		paths := assets(t, "worktender_linux_amd64", "checksums.txt")
+		calls, err := runPublish(t, fake, append([]string{"v1.2.3"}, paths...)...)
+		if err != nil {
+			t.Fatalf("%+v: release-publish.sh failed: %v", fake, err)
+		}
+		marked := false
+		for _, c := range calls[:len(calls)-1] {
+			if (c.subcommand() == "release create" || c.subcommand() == "release edit") &&
+				c.has("v1.2.3") && c.has("--prerelease") {
+				marked = true
+			}
+		}
+		if !marked {
+			t.Errorf("%+v: gh calls %v never mark v1.2.3 --prerelease before the upload, so "+
+				"releases/latest moves to it the moment it is published", fake, subcommands(calls))
+		}
 	}
 }
