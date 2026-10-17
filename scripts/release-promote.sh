@@ -47,12 +47,15 @@ if ! sums=$(gh release download "$tag" --pattern checksums.txt --output -); then
 	echo "release-promote: could not download checksums.txt for $tag; refusing to make it latest" >&2
 	exit 1
 fi
-if [ -z "$sums" ]; then
+# A one-column or blank checksums.txt names nothing, and a loop over nothing
+# would verify nothing.
+assets=$(printf '%s\n' "$sums" | awk '{ sub(/^\*/, "", $2); if ($2 != "") print $2 }')
+if [ -z "$assets" ]; then
 	echo "release-promote: $tag's checksums.txt names no assets; refusing to make it latest" >&2
 	exit 1
 fi
-for asset in $(printf '%s\n' "$sums" | awk '{ sub(/^\*/, "", $2); print $2 }'); do
-	if ! printf '%s\n' "$names" | grep -qxF "$asset"; then
+for asset in $assets; do
+	if ! printf '%s\n' "$names" | grep -qxF -e "$asset"; then
 		echo "release-promote: $tag's checksums.txt names $asset, which is not uploaded; refusing to make it latest" >&2
 		exit 1
 	fi
