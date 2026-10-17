@@ -531,6 +531,11 @@ func TestGhPRLookupAgainstRealGh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
+	// Both halves ask gh about this checkout's repository, so they need a git
+	// checkout of it: an export of the tree (as verify runs checks in) is not one.
+	if !strings.Contains(gitx.RemoteURL(root), "steig/worktender") {
+		t.Skip("not a checkout whose origin is the upstream repository")
+	}
 
 	// A branch nobody has ever opened a pull request for.
 	state, err := reconcile.GhPRLookup(root, "worktender/no-such-branch-8f3a1c")
@@ -546,9 +551,6 @@ func TestGhPRLookupAgainstRealGh(t *testing.T) {
 	// no particular pull request is permanent — a branch can be reused and its
 	// state change under a test that pinned one. The assertion is correspondingly
 	// loose: some state, not a named one.
-	if !strings.Contains(gitx.RemoteURL(root), "steig/worktender") {
-		t.Skip("origin is not the upstream repository")
-	}
 	found, err := exec.Command("gh", "pr", "list", "--state", "all", "--limit", "1",
 		"--json", "headRefName", "--jq", ".[].headRefName").Output()
 	if err != nil {
