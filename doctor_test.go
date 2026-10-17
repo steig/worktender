@@ -71,7 +71,7 @@ func TestDoctorWarnsWhenAnyWriterCanApprove(t *testing.T) {
 		state state
 		value string
 	}{
-		{"", stateWarn, "unset"},
+		{"", stateWarn, "none"},
 		{",", stateWarn, "none"},
 		{"steig, @alice", stateOK, "steig,alice"},
 	} {
@@ -79,6 +79,10 @@ func TestDoctorWarnsWhenAnyWriterCanApprove(t *testing.T) {
 		if got := approversCheck(); got.state != tc.state || got.value != tc.value {
 			t.Errorf("%q: %+v; want %s %s", tc.raw, got, tc.state, tc.value)
 		}
+	}
+	unsetApprovers(t)
+	if got := approversCheck(); got.state != stateWarn || got.value != "unset" {
+		t.Errorf("unset: %+v; want warn unset", got)
 	}
 }
 

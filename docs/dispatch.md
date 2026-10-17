@@ -270,15 +270,15 @@ is on the list. An approval from anyone else is refused, and the refusal names
 the approver and the variable:
 
 ```
-worktender: issue #42 was not approved by anyone in WORKTENDER_APPROVERS: the approval of sha256 … is from @worker-bot; have someone listed run `worktender approve 42`
+worktender: issue #42 was not approved by anyone in WORKTENDER_APPROVERS with write access: of the approvals of sha256 …, @worker-bot is not listed; have someone listed run `worktender approve 42`
 ```
 
 It does nothing against a worker on your own token, which approves as you; that
 is what [`WORKTENDER_WORKER_GH_TOKEN`](reference.md#giving-workers-their-own-github-token)
 is for, and the two together are the point. Unset, any write-access account
-counts, as before, and `doctor` warns. Set to
-nothing but commas, nobody counts. The event hooks read it from herdr's own
-environment, like `WORKTENDER_EVENTS`, so export it before starting herdr.
+counts, as before, and `doctor` warns. Set but blank, or nothing but commas,
+nobody counts. The event hooks read it from herdr's own environment, like
+`WORKTENDER_EVENTS`, so export it before starting herdr.
 
 The code is 3 rather than 1 because no change to the invocation fixes it. A
 person has to read the payload and approve it, which no retry and no

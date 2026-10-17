@@ -53,6 +53,15 @@ func approvalOf(t *testing.T, title, body string) string {
 	return approvalCommentPrefix + hash
 }
 
+// unsetApprovers leaves approversEnv unset for the test, whatever the
+// developer exports: set, even blank, it is an allowlist.
+func unsetApprovers(t *testing.T) {
+	t.Helper()
+
+	t.Setenv(approversEnv, "")
+	os.Unsetenv(approversEnv)
+}
+
 // fakeGitHub is a gh on PATH answering for one repository, steig/worktender,
 // and recording every call. Answers are files cat'ed, never echoed: dash's
 // echo rewrites backslashes, and these answers are full of them.
@@ -65,7 +74,7 @@ func newFakeGitHub(t *testing.T, meta, snapshot string, permissions map[string]s
 	t.Helper()
 
 	f := &fakeGitHub{t: t, dir: t.TempDir()}
-	t.Setenv(approversEnv, "")
+	unsetApprovers(t)
 	f.write("meta.json", meta)
 	f.write("repo.json", `{"name":"worktender","owner":{"login":"steig"}}`)
 	if snapshot != "" {
@@ -276,24 +285,41 @@ func TestStartFindsTheApprovalAmongOtherComments(t *testing.T) {
 }
 
 // A worker's own account has write access to push, so with an allowlist set
-// only a listed login's approval counts. The refusal says
-// why, naming the approver, and is still a person's to fix.
+// only a listed login's approval counts. Set but blank is a list naming
+// nobody, not an unset one. The refusal says why for each approver, without
+// quoting the comment, and is still a person's to fix.
 func TestFactoryApprovalRefusesAnApproverOffTheAllowlist(t *testing.T) {
 	approval := approvalOf(t, readyTitle, readyBody)
 	for name, list := range map[string]string{
 		"someone else listed": "tom,alice",
 		"nobody listed":       " , ",
+		"blank":               "",
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newReadyStart(t)
-			newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody, comment{"steig", approval}), map[string]string{"steig": "admin"})
+			gh := newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody, comment{"steig", approval}), map[string]string{"steig": "admin"})
 			t.Setenv(approversEnv, list)
 			err := r.run()
 			assertRefusedBeforeAnyAgent(t, r.server, err, "not approved by anyone in "+approversEnv)
-			if err != nil && (!strings.Contains(err.Error(), "@steig") || strings.Contains(err.Error(), approvalCommentPrefix)) {
+			if err != nil && (!strings.Contains(err.Error(), "@steig is not listed") || strings.Contains(err.Error(), approvalCommentPrefix)) {
 				t.Errorf("the refusal should name the approver and not quote the comment: %v", err)
 			}
+			if strings.Contains(gh.read("calls"), "collaborators/") {
+				t.Errorf("an unlisted approver's permission was looked up:\n%s", gh.read("calls"))
+			}
 		})
+	}
+
+	// A listed approver whose write access cannot be shown is named as such,
+	// not as unlisted.
+	r := newReadyStart(t)
+	newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody,
+		comment{"tom", approval}, comment{"worker-bot", approval}), map[string]string{"worker-bot": "write"})
+	t.Setenv(approversEnv, "tom")
+	err := r.run()
+	assertRefusedBeforeAnyAgent(t, r.server, err, "@tom is listed but cannot be shown to have write access")
+	if err != nil && !strings.Contains(err.Error(), "@worker-bot is not listed") {
+		t.Errorf("the refusal should name every approver that did not count: %v", err)
 	}
 }
 
@@ -312,6 +338,22 @@ func TestFactoryApprovalAcceptsAnApproverOnTheAllowlist(t *testing.T) {
 	}
 	if pinned := pinnedCopy(t, r.checkout); !strings.Contains(pinned, "@steig approved") {
 		t.Errorf("the approver named should be the listed one:\n%s", pinned)
+	}
+}
+
+// The limit of the allowlist, pinned: it judges the comment's author, and a
+// worker holding a listed person's token posts as that person. Nothing here can
+// tell, so the approval counts; keeping workers off that token is
+// WORKTENDER_WORKER_GH_TOKEN's job, not this one's.
+func TestFactoryApprovalCannotTellWhoHeldAListedToken(t *testing.T) {
+	r := newReadyStart(t)
+	// Posted by a worker on steig's token: to GitHub, and so to start, it is
+	// steig's comment.
+	newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody,
+		comment{"steig", approvalOf(t, readyTitle, readyBody)}), map[string]string{"steig": "admin"})
+	t.Setenv(approversEnv, "steig")
+	if err := r.run(); err != nil {
+		t.Fatalf("an approval under a listed login counts whoever held the token: %v", err)
 	}
 }
 
