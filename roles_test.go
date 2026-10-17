@@ -238,13 +238,13 @@ func TestDispatchRefusesAnUnknownRole(t *testing.T) {
 func TestDoctorRolesCheck(t *testing.T) {
 	t.Run("no configuration", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-		if c := rolesCheck(); c.state != stateOff || c.value != "none" {
+		if c, _ := rolesCheck(); c.state != stateOff || c.value != "none" {
 			t.Errorf("check = %+v; want off/none", c)
 		}
 	})
 	t.Run("invalid", func(t *testing.T) {
 		writeRoles(t, `{"rolez": {}}`)
-		if c := rolesCheck(); c.state != stateFail || !strings.Contains(c.note, "rolez") {
+		if c, _ := rolesCheck(); c.state != stateFail || !strings.Contains(c.note, "rolez") {
 			t.Errorf("check = %+v; want fail naming the key", c)
 		}
 	})
@@ -253,13 +253,13 @@ func TestDoctorRolesCheck(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(home, "kb"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if c := rolesCheck(); c.state != stateOK || c.value != "1 role in "+filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "worktender", "config.json") {
+		if c, _ := rolesCheck(); c.state != stateOK || c.value != "1 role in "+filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "worktender", "config.json") {
 			t.Errorf("check = %+v; want ok with one role", c)
 		}
 	})
 	t.Run("missing agent and dir", func(t *testing.T) {
 		writeRoles(t, uxRoles)
-		c := rolesCheck()
+		c, _ := rolesCheck()
 		if c.state != stateWarn || !strings.Contains(c.note, "agent ux-designer") || !strings.Contains(c.note, "no directory") {
 			t.Errorf("check = %+v; want a warning naming the agent and the directory", c)
 		}

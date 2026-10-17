@@ -1018,3 +1018,19 @@ func TestFactoryFallsBackToTheConfiguredDefaultModel(t *testing.T) {
 		t.Errorf("start's document carries model %v (%v), want sonnet (default)", s.Model, s.ModelReason)
 	}
 }
+
+// A --model that is not a model name refuses the pass before anything is
+// claimed or created, rather than handing claude a flag.
+func TestFactoryRefusesAModelFlagThatIsAFlag(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{10, "Ten", nil}})
+
+	err := factoryCommand([]string{"--model=-x"}, &strings.Builder{})
+
+	if exitCode(err) != exitUsage {
+		t.Fatalf("err = %v; want a usage error", err)
+	}
+	if got := createdBranches(server); len(got) != 0 || len(claims(repo)) != 0 {
+		t.Errorf("created %v and claimed %v for a refused pass", got, claims(repo))
+	}
+}

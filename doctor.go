@@ -52,7 +52,8 @@ func doctorCommand(args []string, out io.Writer) error {
 		herdr.note = clientErr.Error()
 	}
 
-	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), approversCheck(), eventsCheck(), rolesCheck(), modelCheck(), lessonsCheck()}
+	rolesLine, modelLine := rolesCheck()
+	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), approversCheck(), eventsCheck(), rolesLine, modelLine, lessonsCheck()}
 
 	// Nothing below the checks is answerable without herdr, and saying so once
 	// is better than four repetitions of the same cause.
@@ -411,13 +412,18 @@ func eventsCheck() check {
 // .claude/agents is found by `start` there and nowhere else, and doctor stands
 // in no repository — so a role whose agent is missing from the home directory
 // is a warning that names the case, not a failure.
-func rolesCheck() check {
+//
+// The model check comes with it so the configuration is read once. An invalid
+// configuration is the roles line's to report, so the model line only points
+// there.
+func rolesCheck() (check, check) {
 	config, err := roles.Load()
 	if err != nil {
-		return check{name: "roles", value: "invalid", state: stateFail, note: err.Error()}
+		return check{name: "roles", value: "invalid", state: stateFail, note: err.Error()},
+			check{name: "model", value: "unknown", state: stateOff, note: "see roles"}
 	}
 	if config == nil {
-		return check{name: "roles", value: "none", state: stateOff, note: "no " + roles.Path()}
+		return check{name: "roles", value: "none", state: stateOff, note: "no " + roles.Path()}, modelCheck(config)
 	}
 
 	names := make([]string, 0, len(config.Roles))
@@ -454,25 +460,32 @@ func rolesCheck() check {
 
 	value := fmt.Sprintf("%s in %s", plural(len(names), "role"), config.Path)
 	if len(problems) > 0 {
-		return check{name: "roles", value: value, state: stateWarn, note: strings.Join(problems, "; ")}
+		return check{name: "roles", value: value, state: stateWarn, note: strings.Join(problems, "; ")}, modelCheck(config)
 	}
-	return check{name: "roles", value: value, state: stateOK, note: strings.Join(names, ", ")}
+	return check{name: "roles", value: value, state: stateOK, note: strings.Join(names, ", ")}, modelCheck(config)
 }
 
 // modelCheck warns while a worker with no model: label and no agent file
-// starts on whatever model the user's own sessions run on, which is often the
-// most expensive one. An invalid configuration is rolesCheck's to report.
-func modelCheck() check {
-	config, err := roles.Load()
-	if err != nil {
-		return check{name: "model", value: "unknown", state: stateOff, note: "see roles"}
+// would start on whatever model the user's own sessions run on, which is often
+// the most expensive one. Nothing does when every role names an agent and
+// default_role is set: then every worker has an agent file, and the model is
+// written there.
+func modelCheck(config *roles.Config) check {
+	if config != nil && config.DefaultModel != "" {
+		return check{name: "model", value: config.DefaultModel, state: stateOK,
+			note: "for workers with no " + roles.ModelLabel + " label and no role agent"}
 	}
-	if config == nil || config.DefaultModel == "" {
-		return check{name: "model", value: "unset", state: stateWarn,
-			note: "workers inherit your default model; set default_model in " + roles.Path()}
+	if config != nil && config.DefaultRole != "" {
+		allAgents := true
+		for _, r := range config.Roles {
+			allAgents = allAgents && r.Agent != ""
+		}
+		if allAgents {
+			return check{name: "model", value: "agents", state: stateOK, note: "every role names an agent, whose file sets its model"}
+		}
 	}
-	return check{name: "model", value: config.DefaultModel, state: stateOK,
-		note: "for workers with no " + roles.ModelLabel + " label and no role agent"}
+	return check{name: "model", value: "unset", state: stateWarn,
+		note: "workers inherit your default model; set default_model in " + roles.Path()}
 }
 
 // repositories reads what herdr currently holds. The scope is herdr's open

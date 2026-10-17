@@ -129,6 +129,10 @@ var agentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 // it becomes an argument to claude, so it may not start with a dash.
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$`)
 
+// IsModelName is whether s may be passed to claude as --model: a value, never
+// another flag.
+func IsModelName(s string) bool { return modelName.MatchString(s) }
+
 // ModelLabel is the label prefix that picks a slice's model: model:sonnet.
 const ModelLabel = "model:"
 
@@ -309,6 +313,9 @@ func (c *Config) Resolve(flagRole string, labels []string, repoRoot string) (*La
 // A label does not give way: it is a choice made for this slice.
 func (c *Config) Model(flagModel string, labels []string, launch *Launch) (model, reason string, err error) {
 	if flagModel != "" {
+		if !IsModelName(flagModel) {
+			return "", "", fmt.Errorf("--model %q is not a model name", flagModel)
+		}
 		return flagModel, "flag", nil
 	}
 	label := ""

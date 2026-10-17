@@ -439,3 +439,11 @@ func TestModelRefusesALabelItCannotUse(t *testing.T) {
 		})
 	}
 }
+
+// --model is typed by whoever runs start or factory, but it still becomes an
+// argument to claude, so it may not be a flag either.
+func TestModelRefusesAFlagThatIsNotAModel(t *testing.T) {
+	if model, _, err := (*Config)(nil).Model("-x", nil, nil); err == nil {
+		t.Errorf("Model(--model -x) = %q, want an error", model)
+	}
+}

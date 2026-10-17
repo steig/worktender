@@ -250,20 +250,37 @@ func TestDoctorPluralisesWorktrees(t *testing.T) {
 }
 
 // With no default_model, a worker with no model: label runs on whatever model
-// the user's own sessions do, and doctor says so until one is set.
+// the user's own sessions do, and doctor says so until one is set — or until
+// every worker is sure to start with an agent file, which carries its model.
 func TestDoctorWarnsWhenWorkersInheritYourModel(t *testing.T) {
+	modelLine := func() check {
+		_, c := rolesCheck()
+		return c
+	}
+
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	if got := modelCheck(); got.state != stateWarn || !strings.Contains(got.note, "workers inherit your default model") {
+	if got := modelLine(); got.state != stateWarn || !strings.Contains(got.note, "workers inherit your default model") {
 		t.Errorf("no configuration: %+v; want a warning that workers inherit your model", got)
 	}
 
 	writeRoles(t, `{"roles": {}}`)
-	if got := modelCheck(); got.state != stateWarn {
+	if got := modelLine(); got.state != stateWarn {
 		t.Errorf("no default_model: %+v; want a warning", got)
 	}
 
+	// No default_role: an issue no label matches runs with no role at all.
+	writeRoles(t, uxRoles, "ux-designer")
+	if got := modelLine(); got.state != stateWarn {
+		t.Errorf("every role an agent, no default_role: %+v; want a warning", got)
+	}
+
+	writeRoles(t, `{"default_role": "ux", "roles": {"ux": {"agent": "ux-designer"}}}`, "ux-designer")
+	if got := modelLine(); got.state != stateOK {
+		t.Errorf("every worker gets an agent: %+v; want ok", got)
+	}
+
 	writeRoles(t, `{"default_model": "sonnet"}`)
-	if got := modelCheck(); got.state != stateOK || got.value != "sonnet" {
+	if got := modelLine(); got.state != stateOK || got.value != "sonnet" {
 		t.Errorf("default_model sonnet: %+v; want ok naming sonnet", got)
 	}
 }

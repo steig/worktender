@@ -87,9 +87,11 @@ A worker's model is picked per slice, by `start` and `factory`:
 4. Otherwise no `--model`, and claude's own default.
 
 The start line says `model: sonnet (label model:sonnet)`, and `--json`
-carries `model` and `model_reason`. `worktender doctor` warns while no
-`default_model` is set, because then a worker with no label runs on whatever
-model your own sessions do, often the most expensive one.
+carries `model` and `model_reason`. A `--model` that is not a model name is
+refused, as a label's is. `worktender doctor` warns while no `default_model`
+is set, because then a worker with no label runs on whatever model your own
+sessions do, often the most expensive one — unless `default_role` is set and
+every role names an agent, so every worker's model comes from its agent file.
 
 `--permission-mode` stays a flag, and autonomy is never defaulted.
 
@@ -140,7 +142,9 @@ The label is escaped before it is printed.
 **A `model:` label picks a model.** That is a cost choice, not a capability:
 whoever can label an issue can put its worker on Opus. Its name must look like
 a model alias or ID — letters, digits, `.`, `_`, `-`, `[`, `]`, not starting
-with `-` — so it cannot become another flag on the `claude` command line.
+with `-` — so it cannot become another flag on the `claude` command line. A
+label that fails that, or two that disagree, refuses the start: whoever can
+label an issue can also hold its slice until the label is fixed.
 
 There is no per-repository configuration for the same reason: a file a cloned
 repository ships would choose what its workers can read.

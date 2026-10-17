@@ -18,6 +18,7 @@ import (
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/jsonout"
+	"github.com/steig/worktender/internal/roles"
 	"github.com/steig/worktender/internal/wt"
 )
 
@@ -78,6 +79,11 @@ func factoryCommand(args []string, out io.Writer) error {
 	}
 	if *maxWorkers < 1 {
 		return usagef("--max must be at least 1, got %d; %s", *maxWorkers, factoryUsage)
+	}
+	// Refused here, before anything is claimed, rather than by every start in
+	// the pass in turn.
+	if *model != "" && !roles.IsModelName(*model) {
+		return usagef("--model %q is not a model name; %s", *model, factoryUsage)
 	}
 
 	// Herdr is required even for a dry run: the cap is a count of live agents,
