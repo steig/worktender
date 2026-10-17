@@ -171,7 +171,7 @@ answer() { [ -f "$D/$1" ] || { printf 'gh: HTTP 404\n' >&2; exit 1; }; cat "$D/$
 case "$1 $2" in
 "issue list") case "$*" in *"--state closed"*) answer closed.json ;; *) answer list.json ;; esac ;;
 "issue view") answer "issue-$3.json" ;;
-"run list") case "$*" in *"--workflow ci --branch main --status completed --limit 1"*) answer runs.json ;; *) exit 1 ;; esac ;;
+"run list") case "$*" in *"--workflow ci --branch main --status completed --limit 5"*) answer runs.json ;; *) exit 1 ;; esac ;;
 "repo view") answer repo.json ;;
 "api graphql")
   for a in "$@"; do case "$a" in number=*) n=${a#number=} ;; esac; done
@@ -233,18 +233,18 @@ func closeInProgress(t *testing.T, edits string, numbers ...int) {
 	}
 }
 
-// setMainCI makes gh's latest completed ci run on main the run given, or, with
-// a nil run, makes gh fail to list runs at all.
-func setMainCI(t *testing.T, edits string, run map[string]any) {
+// setMainCI makes gh's completed ci runs on main the runs given, newest first,
+// or, with none, makes gh fail to list runs at all.
+func setMainCI(t *testing.T, edits string, runs ...map[string]any) {
 	t.Helper()
 	path := filepath.Join(filepath.Dir(edits), "runs.json")
-	if run == nil {
+	if len(runs) == 0 {
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	raw, err := json.Marshal([]map[string]any{run})
+	raw, err := json.Marshal(runs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,12 +618,59 @@ func TestFactoryWillNotDispatchWhileMainIsRed(t *testing.T) {
 	}
 }
 
+// A cancelled run judged nothing, so the failed run before it still stands.
+func TestFactoryLooksPastACancelledRunToARedOne(t *testing.T) {
+	const url = "https://github.com/steig/worktender/actions/runs/8"
+	repo := herdrtest.NewRepo(t)
+	server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+	setMainCI(t, edits,
+		map[string]any{"conclusion": "cancelled", "url": "https://github.com/steig/worktender/actions/runs/9"},
+		map[string]any{"conclusion": "failure", "url": url},
+	)
+
+	var out strings.Builder
+	err := factoryCommand(nil, &out)
+	if exitCode(err) != exitNeedsHuman || !strings.Contains(fmt.Sprint(err), url) {
+		t.Errorf("exit %d (%v), want %d naming %s", exitCode(err), err, exitNeedsHuman, url)
+	}
+	if got := createdBranches(server); len(got) != 0 {
+		t.Errorf("started %v behind a cancelled run on a red main", got)
+	}
+}
+
+// A red pass still tidies the board first, and its JSON says what it cleared.
+func TestFactoryRedMainJSONCarriesWhatWasCleared(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	_, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+	closeInProgress(t, edits, 7)
+	setMainCI(t, edits, map[string]any{"conclusion": "failure", "url": "https://github.com/steig/worktender/actions/runs/9"})
+
+	var out strings.Builder
+	err := factoryCommand([]string{"--json"}, &out)
+	if exitCode(err) != exitNeedsHuman {
+		t.Errorf("exit = %d (%v), want %d", exitCode(err), err, exitNeedsHuman)
+	}
+	var doc struct {
+		Cleared []struct {
+			Issue   int  `json:"issue"`
+			Removed bool `json:"removed"`
+		} `json:"cleared"`
+		ExitCode int `json:"exit_code"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out.String())
+	}
+	if len(doc.Cleared) != 1 || doc.Cleared[0].Issue != 7 || !doc.Cleared[0].Removed || doc.ExitCode != exitNeedsHuman {
+		t.Errorf("doc = %+v, want #7 cleared and exit %d", doc, exitNeedsHuman)
+	}
+}
+
 // A gh that cannot say how main stands is warned about, not obeyed: the pass
 // works the queue as it would have without the check.
 func TestFactoryStartsWhenMainsCIIsUnknown(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
-	setMainCI(t, edits, nil)
+	setMainCI(t, edits)
 
 	out := passFactory(t)
 

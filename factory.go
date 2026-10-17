@@ -417,16 +417,20 @@ func clearClosedInProgress(root string, dryRun bool, notes io.Writer, doc *facto
 	return nil
 }
 
-// redMainConclusions are the conclusions of a run that failed. A cancelled run
-// is not among them: nothing was found wrong with the code.
+// redMainConclusions are the conclusions of a run that failed.
 var redMainConclusions = []string{"failure", "timed_out", "startup_failure"}
 
+// redMainSilent are the conclusions of a run that judged nothing about the
+// code, so the run before it still says how the branch stands.
+var redMainSilent = []string{"cancelled", "skipped", "neutral"}
+
 // redMain is the URL of the latest completed ci run on the branch workers fork
-// from when that run failed, and "" when it did not or there is none.
+// from that judged the code, when that run failed; "" when it passed or none of
+// the last few judged anything.
 func redMain(root string) (string, error) {
 	branch := strings.TrimPrefix(gitx.BaseRef(root), "origin/")
 	raw, err := factoryGh(root, "run", "list", "--workflow", "ci", "--branch", branch,
-		"--status", "completed", "--limit", "1", "--json", "conclusion,url")
+		"--status", "completed", "--limit", "5", "--json", "conclusion,url")
 	if err != nil {
 		return "", err
 	}
@@ -435,12 +439,18 @@ func redMain(root string) (string, error) {
 		URL        string `json:"url"`
 	}
 	if err := json.Unmarshal(raw, &runs); err != nil {
-		return "", withCode(exitEnvironment, fmt.Errorf("read the ci runs gh listed: %w", err))
+		return "", fmt.Errorf("read the ci runs gh listed: %w", err)
 	}
-	if len(runs) == 0 || !slices.Contains(redMainConclusions, runs[0].Conclusion) {
+	for _, run := range runs {
+		if slices.Contains(redMainSilent, run.Conclusion) {
+			continue
+		}
+		if slices.Contains(redMainConclusions, run.Conclusion) {
+			return run.URL, nil
+		}
 		return "", nil
 	}
-	return runs[0].URL, nil
+	return "", nil
 }
 
 // factoryGh runs gh against the repository's origin, as start's issue lookup
