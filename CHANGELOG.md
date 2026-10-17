@@ -6,6 +6,38 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.17.0] — 2026-10-16
+
+The first slices of the factory safety plan (#253): the approval and merge
+gates were policy rather than controls, and these start making them controls.
+
+### Added
+
+- **`worktender verify <issue> [--pr N]`: does each approved check actually
+  discriminate?** (#269) Runs the issue's pinned, approved checks in a fresh
+  export of the merge-base and of the PR head, one export per check, and
+  classifies each: discriminating (fails on base, passes on head), guard
+  (passes on both), failing, or unjudged (an outcome it cannot read, a timeout,
+  a death by signal; never a pass). Exits 0 only when nothing fails on head and
+  at least one check discriminates. `--pr` is refused unless the PR belongs to
+  the issue. A timed-out check's whole process group is killed.
+- **Workers can run with their own GitHub token.** (#268) With
+  `WORKTENDER_WORKER_GH_TOKEN` set, every agent worktender launches (start,
+  dispatch, sync, hooks, review) gets it as `GH_TOKEN` through a 0600 settings
+  file. This narrows what a worker does by default; it does not isolate one,
+  since a worker runs as your user. Branch protection is the control. `doctor`
+  warns when workers share your token, and names a leftover token file.
+- **`CLAUDE.md`, `CODEOWNERS`.** (#254) The repo's checkable rules now reach
+  workers in their worktrees, held to 60 lines by a guardrail test; a human
+  owner reviews CI, worker instructions and the trust-boundary code.
+
+### Changed
+
+- **The escape-rate gate is 5%, judged on its 95% Wilson interval.** (#267)
+  `stats --check` alerts when the interval's upper bound passes the threshold
+  (default was 0.2, now 0.05), and says so plainly when no escapes were seen
+  but there are not yet enough merges (about 73) to show the rate is under it.
+
 ## [0.16.1] — 2026-10-16
 
 ### Changed
