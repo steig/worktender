@@ -494,6 +494,8 @@ func TestReportDeliversToItsOwnPane(t *testing.T) {
 
 	t.Setenv("HERDR_SOCKET_PATH", server.SocketPath)
 	t.Setenv(paneEnv, "w1:p1")
+	// Outside a checkout, so the report names no commit.
+	t.Chdir(t.TempDir())
 
 	var out strings.Builder
 	if err := run([]string{"report", "--status", "done", "--pr", "4", "--note", "green"}, &out); err != nil {

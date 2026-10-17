@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/jsonout"
 )
@@ -22,7 +24,7 @@ const gateDefaultTimeout = 15 * time.Minute
 // Unwrapped, because a wrapped envelope line is two lines to a parser.
 const gateReadSource = herdrapi.ReadSourceRecentUnwrapped
 
-const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr] [--timeout 15m] [--dagr] [--json]"
+const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr] [--repo <path>] [--timeout 15m] [--dagr] [--json]"
 
 // gateOptions is one gate invocation.
 type gateOptions struct {
@@ -32,8 +34,13 @@ type gateOptions struct {
 	targets   []string
 	until     []string
 	requirePR bool
-	timeout   time.Duration
-	asJSON    bool
+	// repo is where --require-pr asks gh about the PR, and root is it resolved
+	// to its repository, by runGate before the wait so a gate run outside one
+	// fails at once rather than at the release.
+	repo    string
+	root    string
+	timeout time.Duration
+	asJSON  bool
 	// dagr asks for the wait to be mirrored into a herdr-dagr run file, and
 	// dagrPath is where. The path is resolved by gateCommand rather than by the
 	// parser, so parsing stays a pure function of the arguments.
@@ -125,6 +132,7 @@ func parseGate(args []string) (gateOptions, error) {
 	flags.Var(targetFlag{targets: &targets}, "target", "an agent or pane to wait on; repeat for more than one")
 	flags.Var(targetFlag{targets: &targets, split: true}, "any", "agents or panes to wait on, comma-separated; the first to satisfy the predicate releases")
 	requirePR := flags.Bool("require-pr", false, "the report must carry a pull request number")
+	repo := flags.String("repo", ".", "repository whose PR a --require-pr done is checked against")
 	// A duration rather than herdr's bare milliseconds: this is worktender's own
 	// surface, and "15m" cannot be pasted wrong by a factor of a thousand.
 	timeout := flags.Duration("timeout", gateDefaultTimeout, "how long to wait before giving up")
@@ -149,7 +157,7 @@ func parseGate(args []string) (gateOptions, error) {
 		// The gate's reason for existing is completion, so that is the default.
 		until = statusFlag{"done"}
 	}
-	return gateOptions{targets: targets, until: until, requirePR: *requirePR, timeout: *timeout, asJSON: *asJSON, dagr: *dagr}, nil
+	return gateOptions{targets: targets, until: until, requirePR: *requirePR, repo: *repo, timeout: *timeout, asJSON: *asJSON, dagr: *dagr}, nil
 }
 
 // satisfies is the whole predicate surface: a status from the closed set, and
@@ -231,6 +239,11 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 
 	started := time.Now()
 	targets, err := resolveTargets(client, opts.targets)
+	if err == nil && opts.requirePR {
+		if opts.root, err = gitx.RepoRoot(opts.repo); err != nil {
+			err = usagef("--repo: %v; --require-pr checks the PR's head in a repository", err)
+		}
+	}
 	if err != nil {
 		if opts.asJSON {
 			// No targets resolved, so there is nothing to list as waiting — but
@@ -253,6 +266,14 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 	}
 
 	outcome, evidence, about, released, err := gateWait(client, opts, targets, notes, started, dagr)
+	if err == nil && opts.requirePR && released.status == "done" {
+		if err = gateHead(opts.root, targets[about].name, *released); err != nil {
+			outcome, evidence = gateOutcomeHeadMoved, gateEvidenceVerified
+			if exitCode(err) != exitNeedsHuman {
+				outcome, evidence = gateOutcomeError, ""
+			}
+		}
+	}
 	waited := time.Since(started)
 
 	if opts.asJSON {
@@ -267,10 +288,30 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 		fmt.Fprintf(out, "gate: %s released after %s (evidence: %s)\n", targets[about].name, waited.Round(time.Second), evidence)
 		fmt.Fprint(out, renderReport(*released))
 	}
-	if err != nil && outcome == gateOutcomeBlocked && released != nil {
+	if err != nil && (outcome == gateOutcomeBlocked || outcome == gateOutcomeHeadMoved) && released != nil {
 		fmt.Fprint(out, renderReport(*released))
 	}
 	return err
+}
+
+// gateHead holds a done to the commit it was made at: the PR it names must
+// still have that commit as its head, or what a person merges is not what the
+// worker reported done. Asked of gh after the release, and never earlier, so a
+// push made after the report is caught here rather than at the merge.
+func gateHead(root, name string, r report) error {
+	if r.sha == "" {
+		return codef(exitNeedsHuman, "gate %s: the done for PR #%d names no commit, so nothing binds it to what would merge (evidence: %s)",
+			name, r.pr, gateEvidenceVerified)
+	}
+	pr, err := reviewPRFor(root, strconv.Itoa(r.pr))
+	if err != nil {
+		return fmt.Errorf("gate %s: %w; the done is not bound to PR #%d's head", name, err, r.pr)
+	}
+	if pr.HeadRefOid != r.sha {
+		return codef(exitNeedsHuman, "gate %s: PR #%d's head is %s, but the done was reported at %s; what would merge is not what was reported done (evidence: %s)",
+			name, r.pr, shortOid(pr.HeadRefOid), shortOid(r.sha), gateEvidenceVerified)
+	}
+	return nil
 }
 
 // writeGateJSON writes the document and then returns the gate's own error, so

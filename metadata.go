@@ -50,6 +50,7 @@ const (
 	tokenKeyVersion = "worktender_v"
 	tokenKeyStatus  = "worktender_status"
 	tokenKeyPR      = "worktender_pr"
+	tokenKeySha     = "worktender_sha"
 	// The note's chunks are this plus their index: worktender_note0, worktender_note1…
 	tokenKeyNotePrefix = "worktender_note"
 	// worktender_seq counts reports on this pane: it says which report this
@@ -85,6 +86,7 @@ func encodeReport(r report, seq uint64) (map[string]any, error) {
 		tokenKeyVersion: tokenVersion,
 		tokenKeyStatus:  r.status,
 		tokenKeyPR:      prSlot(r),
+		tokenKeySha:     shaSlot(r),
 		tokenKeySeq:     strconv.FormatUint(seq, 10),
 	}
 
@@ -140,6 +142,15 @@ func decodeReport(tokens map[string]string) (report, uint64, bool) {
 		return report{}, 0, false
 	}
 
+	// Absent is a writer from before the slot existed, which is a report made at
+	// no commit anyone can name rather than a malformed one.
+	sha := ""
+	if raw, present := tokens[tokenKeySha]; present {
+		if sha, ok = parseShaValue(raw); !ok {
+			return report{}, 0, false
+		}
+	}
+
 	note, ok := joinNoteChunks(tokens)
 	if !ok {
 		return report{}, 0, false
@@ -149,7 +160,7 @@ func decodeReport(tokens map[string]string) (report, uint64, bool) {
 	if reportNote(note) != nil {
 		return report{}, 0, false
 	}
-	return report{status: status, pr: pr, note: note}, seq, true
+	return report{status: status, pr: pr, sha: sha, note: note}, seq, true
 }
 
 // parseSeqValue reads the counter slot. Absent, zero, or anything that is not a

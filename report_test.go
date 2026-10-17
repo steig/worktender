@@ -4,6 +4,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/steig/worktender/internal/herdrtest"
 )
 
 func TestReportRejectsMalformedEnvelopes(t *testing.T) {
@@ -205,5 +207,54 @@ func TestReportNeedsNoHerdrAndNoRepository(t *testing.T) {
 func TestRunReportFailsOnARejectedEnvelope(t *testing.T) {
 	if err := run([]string{"report", "--status", "shipped", "--note", "n"}, io.Discard); err == nil {
 		t.Fatal("run returned nil for an invalid status; the failure must reach the exit code")
+	}
+}
+
+// A done is bound to the commit its checkout was at, read from git rather than
+// typed, and both channels carry it back to a gate intact.
+func TestReportCarriesTheCommitItWasMadeAt(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	repo.Write("work.txt", "done\n")
+	repo.Git("add", ".")
+	repo.Git("commit", "-q", "-m", "work")
+	head := repo.Git("rev-parse", "HEAD")
+	t.Chdir(repo.Root)
+	t.Setenv(paneEnv, "")
+
+	var out strings.Builder
+	if err := run([]string{"report", "--status", "done", "--pr", "4", "--note", "green"}, &out); err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if !strings.Contains(out.String(), "\nsha: "+head+"\n") {
+		t.Fatalf("the envelope does not name HEAD %s:\n%s", head, out.String())
+	}
+
+	printed, _ := envelopesIn(out.String())
+	if printed.sha != head {
+		t.Errorf("the terminal channel reads sha %q back, want %q", printed.sha, head)
+	}
+	tokens, err := encodeReport(printed, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]string{}
+	for k, v := range tokens {
+		if s, ok := v.(string); ok {
+			stored[k] = s
+		}
+	}
+	if attached, _, ok := decodeReport(stored); !ok || attached.sha != head {
+		t.Errorf("the metadata channel reads %+v back, want sha %q", attached, head)
+	}
+
+	// The slot is validated on the way in, so a short or forged commit is no
+	// report on either channel.
+	forged := strings.Replace(out.String(), head, head[:12], 1)
+	if _, n := envelopesIn(forged); n != 0 {
+		t.Errorf("an envelope with an abbreviated sha was read as a report")
+	}
+	stored[tokenKeySha] = head[:12]
+	if _, _, ok := decodeReport(stored); ok {
+		t.Errorf("tokens with an abbreviated sha were read as a report")
 	}
 }
