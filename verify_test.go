@@ -176,11 +176,14 @@ func TestVerifyRefusesAPullRequestForAnotherIssue(t *testing.T) {
 func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(runtime.GOROOT(), "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, tc := range []struct {
-		name, test string
-		want       int
+		name, test, says string
+		want             int
 	}{
-		{"hollow", "if Double(0) != 0 { t.Fatal(Double(0)) }", exitNeedsHuman},
-		{"needs the change", "if Double(2) != 4 { t.Fatal(Double(2)) }", exitOK},
+		{"hollow", "func TestDouble(t *testing.T) { if Double(0) != 0 { t.Fatal(Double(0)) } }",
+			"hollow: tests pass with the change reverted (TestDouble)", exitNeedsHuman},
+		{"needs the change", "func TestDouble(t *testing.T) { if Double(2) != 4 { t.Fatal(Double(2)) } }", "", exitOK},
+		{"unfound", "var _ = testing.Short\n\nfunc TestDouble(t *T) {}\n\ntype T = testing.T",
+			"hold no test verify can find", exitNeedsHuman},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := verifyRepo(t, "`test -f added.txt` exits 0")
@@ -192,7 +195,7 @@ func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 			repo.Git("checkout", "42-the-thing")
 			repo.Git("rebase", "main")
 			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return 2 * x }\n")
-			repo.Write("lib/lib_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestDouble(t *testing.T) {\n\t"+tc.test+"\n}\n")
+			repo.Write("lib/lib_test.go", "package lib\n\nimport \"testing\"\n\n"+tc.test+"\n")
 			repo.Git("add", ".")
 			repo.Git("commit", "-m", "double it")
 
@@ -201,8 +204,8 @@ func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 			if exitCode(err) != tc.want {
 				t.Fatalf("verify: %v (exit %d); want exit %d\n%s", err, exitCode(err), tc.want, out.String())
 			}
-			if tc.want == exitNeedsHuman && !strings.Contains(err.Error(), "hollow: tests pass with the change reverted (TestDouble)") {
-				t.Errorf("error = %v; want it to name the hollow test", err)
+			if tc.want == exitNeedsHuman && !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("error = %v; want it to say %q", err, tc.says)
 			}
 			if tc.want == exitOK && !strings.Contains(out.String(), "revert: the changed tests fail with 2 non-test file(s) put back as on base") {
 				t.Errorf("output does not say the tests failed with the change reverted:\n%s", out.String())

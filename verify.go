@@ -336,7 +336,7 @@ func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, no
 	if err != nil {
 		return withCode(exitEnvironment, fmt.Errorf("list what %s changed: %w", shortOid(head), err))
 	}
-	var restore, remove, tests []string
+	var restore, remove, tests, testFiles []string
 	packages := map[string]bool{}
 	fields := strings.Split(strings.TrimSuffix(string(diff), "\x00"), "\x00")
 	for i := 0; i+1 < len(fields); i += 2 {
@@ -346,6 +346,7 @@ func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, no
 			if status == "D" {
 				continue
 			}
+			testFiles = append(testFiles, file)
 			src, err := exec.Command("git", "-C", root, "show", head+":"+file).Output()
 			if err != nil {
 				return withCode(exitEnvironment, fmt.Errorf("read %s on %s: %w", file, shortOid(head), err))
@@ -364,9 +365,14 @@ func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, no
 	case len(restore)+len(remove) == 0:
 		fmt.Fprintf(notes, "revert: skipped, the change touches no non-test file\n")
 		return nil
-	case len(tests) == 0:
+	case len(testFiles) == 0:
 		fmt.Fprintf(notes, "revert: skipped, the change adds or changes no Go test\n")
 		return nil
+	// A test spelled so the pattern misses it, `*tt.T` from an aliased
+	// import, must not pass for a change with no tests.
+	case len(tests) == 0:
+		return codef(exitNeedsHuman, "the changed test files (%s) hold no test verify can find to run with the change reverted",
+			strings.Join(testFiles, ", "))
 	}
 
 	export, cleanup, err := exportTracked(root, head)
