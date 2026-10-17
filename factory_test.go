@@ -917,6 +917,26 @@ func TestFactoryKeepsTheClaimOfAStartThatFailedAfterItsWorktree(t *testing.T) {
 	}
 }
 
+// claimIssue and releaseClaim match git's English stderr, which git localizes.
+// A fake git that reports the locale it was run under stands in for a machine
+// whose LC_ALL is not C; factoryGit must hand git C regardless.
+func TestFactoryGitRunsInTheCLocale(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\necho \"$LC_ALL\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+
+	out, err := factoryGit(t.TempDir(), "push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out); got != "C" {
+		t.Errorf("git ran with LC_ALL=%q, want C", got)
+	}
+}
+
 // A refusal from origin itself — here a hook, as a ruleset or missing
 // permission would be — is not another coordinator's claim. Read as one, every
 // issue would be skipped and the pass would exit 0 having started nothing.
