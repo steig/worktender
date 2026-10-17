@@ -18,6 +18,9 @@ const (
 	gateOutcomeBlocked    = "blocked"
 	gateOutcomeTimeout    = "timeout"
 	gateOutcomeWorkerGone = "worker_gone"
+	// gateOutcomeHeadMoved is a done whose PR's head is not the commit it was
+	// reported at, under --require-pr.
+	gateOutcomeHeadMoved = "head_moved"
 	// gateOutcomeError is the wait ending for a reason that is not about any
 	// worker: herdr's socket dropping, a target that would not resolve. Its
 	// exit code carries the distinction; `outcome` only says the gate never
@@ -103,7 +106,7 @@ type gateTargetJSON struct {
 	Baseline *reportJSON `json:"baseline"`
 }
 
-// reportJSON is the three-slot envelope.
+// reportJSON is the four-slot envelope.
 //
 // The note is carried because a human reading the document wants it. It stays
 // untrusted data: nothing here is a field a gate can be asked to match on, for
@@ -113,12 +116,14 @@ type reportJSON struct {
 	// PR is null rather than 0 when the worker gave none. Zero is a pull request
 	// number that cannot exist, but null is the answer that does not have to be
 	// explained.
-	PR   *int   `json:"pr"`
-	Note string `json:"note"`
+	PR *int `json:"pr"`
+	// Sha is the commit the report was made at, null when it named none.
+	Sha  *string `json:"sha"`
+	Note string  `json:"note"`
 }
 
 func newReportJSON(r report) *reportJSON {
-	out := &reportJSON{Status: r.status, Note: r.note}
+	out := &reportJSON{Status: r.status, Sha: jsonout.String(r.sha), Note: r.note}
 	if r.pr > 0 {
 		pr := r.pr
 		out.PR = &pr

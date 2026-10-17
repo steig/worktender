@@ -22,9 +22,12 @@ import (
 // constants so the reader cannot drift from the writer.
 var envelopeFrame = func() (announce []string, lines int) {
 	announce = strings.Split(noteOpen, "\n")
-	// header, status, pr, the announcement, the quoted note, the terminator.
-	return announce, 3 + len(announce) + 2
+	// header, status, pr, sha, the announcement, the quoted note, the terminator.
+	return announce, slotLines + len(announce) + 2
 }
+
+// slotLines is the header and the three slots that precede the announcement.
+const slotLines = 4
 
 // envelopesIn returns the last complete envelope in a terminal snapshot, and
 // how many the snapshot holds. Last, not first: a pane accumulates, so the
@@ -62,7 +65,7 @@ func parseEnvelope(lines []string) (report, bool) {
 		return report{}, false
 	}
 	for i, want := range announce {
-		if lines[3+i] != want {
+		if lines[slotLines+i] != want {
 			return report{}, false
 		}
 	}
@@ -77,12 +80,21 @@ func parseEnvelope(lines []string) (report, bool) {
 		return report{}, false
 	}
 
+	raw, ok := strings.CutPrefix(lines[3], "sha: ")
+	if !ok {
+		return report{}, false
+	}
+	sha, ok := parseShaValue(raw)
+	if !ok {
+		return report{}, false
+	}
+
 	note, ok := strings.CutPrefix(lines[height-2], noteQuote)
 	if !ok || reportNote(note) != nil {
 		return report{}, false
 	}
 
-	return report{status: status, pr: pr, note: note}, true
+	return report{status: status, pr: pr, sha: sha, note: note}, true
 }
 
 // isHeaderLine finds the header under the decoration an agent TUI stamps on the
