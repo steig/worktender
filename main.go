@@ -41,6 +41,73 @@ func releaseLock(lock *repolock.Lock, out io.Writer) {
 	}
 }
 
+// handlers maps each subcommand run dispatches to its entry point. `list` is an
+// alias reachable here but deliberately absent from commands, and so from usage.
+var handlers = map[string]func(args []string, out io.Writer) error{
+	"ls":   lsCommand,
+	"list": lsCommand,
+	// Read-only, takes no lock, works from outside a repository.
+	"doctor": doctorCommand,
+	// Moves this plugin's own install forward; touches no repository of the
+	// user's.
+	"update": updateCommand,
+	// A person clearing an issue for an agent: shows the exact payload,
+	// then comments its hash and labels it, with their own gh auth.
+	"approve": approveCommand,
+	// A read-only agent proposing an issue's acceptance checks, vetted
+	// against an allow-list. Prints them, or with --write puts them on the
+	// issue; never labels or approves.
+	"draft": draftCommand,
+	// Issue number in, agent working on it out. Creates a worktree, so it
+	// must be told which repository.
+	"start": startCommand,
+	// One pass over the factory:ready queue, starting the oldest issues
+	// until --max workers hold a slot. Starts through `start`.
+	"factory": factoryCommand,
+	// Runs an issue's approved checks on a change's merge-base and head, in
+	// exports of each, and says whether any of them shows the change.
+	"verify": verifyCommand,
+	// Adopt and staff. Finished worktrees are only listed.
+	"sync": syncCommand,
+	// Staffs one named pane; changes no worktree, so it takes no lock.
+	"dispatch": dispatchCommand,
+	// Lists finished worktrees and removes nothing.
+	"prune": func(args []string, out io.Writer) error { return pruneCommand(args, out, false) },
+	// The explicit opt-in to actually removing them.
+	"prune-apply": func(args []string, out io.Writer) error { return pruneCommand(args, out, true) },
+	// A worker filling slots for its coordinator; touches neither herdr nor
+	// the repository.
+	"report": reportCommand,
+	// A coordinator waiting on a worker; reads herdr, not the repository.
+	"gate": gateCommand,
+	// One pass routing a pull request's failing checks and new reviews to
+	// the worker on its branch. Types into idle panes only.
+	"pr-feedback": prFeedbackCommand,
+	// CI, then a second agent judging the PR against its issue's
+	// acceptance checks, before a human sees it. Opens a pane beside the
+	// worker and waits for the reviewer's verdict.
+	"review": reviewCommand,
+	// A worker's goal chain, read live from GitHub, for a hook to hand back
+	// to it after compaction, or with --if-due on its role's interval.
+	// Silent outside a worktender worktree.
+	"refocus": refocusCommand,
+	// A durable, threaded log for agent-to-agent messages, global across
+	// the fleet rather than scoped to one repository. Touches neither
+	// herdr nor a git checkout, so it needs no session either.
+	"inbox": inboxCommand,
+	// Reads the dispatch ledger and asks gh about each pull request in it.
+	// Global across repositories, like the inbox, so it needs no session.
+	"stats": statsCommand,
+	// Drafts lessons from failed-then-fixed dispatches in the ledger, and
+	// moves one a person has written and approved into the file start
+	// reads for that role. Reads the ledger and the user's config only.
+	"lessons": lessonsCommand,
+	// Invoked by herdr, never by hand. Off unless opted in.
+	"on-event": onEventCommand,
+	// Invoked once by herdr after the server is ready. Off unless opted in.
+	"startup": startupCommand,
+}
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "worktender:", err)
@@ -54,94 +121,10 @@ func run(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return usagef("%s", usage)
 	}
-
-	switch args[0] {
-	case "ls", "list":
-		return lsCommand(args[1:], out)
-	case "doctor":
-		// Read-only, takes no lock, works from outside a repository.
-		return doctorCommand(args[1:], out)
-	case "update":
-		// Moves this plugin's own install forward; touches no repository of the
-		// user's.
-		return updateCommand(args[1:], out)
-	case "approve":
-		// A person clearing an issue for an agent: shows the exact payload,
-		// then comments its hash and labels it, with their own gh auth.
-		return approveCommand(args[1:], out)
-	case "draft":
-		// A read-only agent proposing an issue's acceptance checks, vetted
-		// against an allow-list. Prints them, or with --write puts them on the
-		// issue; never labels or approves.
-		return draftCommand(args[1:], out)
-	case "start":
-		// Issue number in, agent working on it out. Creates a worktree, so it
-		// must be told which repository.
-		return startCommand(args[1:], out)
-	case "factory":
-		// One pass over the factory:ready queue, starting the oldest issues
-		// until --max workers hold a slot. Starts through `start`.
-		return factoryCommand(args[1:], out)
-	case "verify":
-		// Runs an issue's approved checks on a change's merge-base and head, in
-		// exports of each, and says whether any of them shows the change.
-		return verifyCommand(args[1:], out)
-	case "sync":
-		// Adopt and staff. Finished worktrees are only listed.
-		return syncCommand(args[1:], out)
-	case "dispatch":
-		// Staffs one named pane; changes no worktree, so it takes no lock.
-		return dispatchCommand(args[1:], out)
-	case "prune":
-		// Lists finished worktrees and removes nothing.
-		return pruneCommand(args[1:], out, false)
-	case "prune-apply":
-		// The explicit opt-in to actually removing them.
-		return pruneCommand(args[1:], out, true)
-	case "report":
-		// A worker filling slots for its coordinator; touches neither herdr nor
-		// the repository.
-		return reportCommand(args[1:], out)
-	case "gate":
-		// A coordinator waiting on a worker; reads herdr, not the repository.
-		return gateCommand(args[1:], out)
-	case "pr-feedback":
-		// One pass routing a pull request's failing checks and new reviews to
-		// the worker on its branch. Types into idle panes only.
-		return prFeedbackCommand(args[1:], out)
-	case "review":
-		// CI, then a second agent judging the PR against its issue's
-		// acceptance checks, before a human sees it. Opens a pane beside the
-		// worker and waits for the reviewer's verdict.
-		return reviewCommand(args[1:], out)
-	case "refocus":
-		// A worker's goal chain, read live from GitHub, for a hook to hand back
-		// to it after compaction, or with --if-due on its role's interval.
-		// Silent outside a worktender worktree.
-		return refocusCommand(args[1:], out)
-	case "inbox":
-		// A durable, threaded log for agent-to-agent messages, global across
-		// the fleet rather than scoped to one repository. Touches neither
-		// herdr nor a git checkout, so it needs no session either.
-		return inboxCommand(args[1:], out)
-	case "stats":
-		// Reads the dispatch ledger and asks gh about each pull request in it.
-		// Global across repositories, like the inbox, so it needs no session.
-		return statsCommand(args[1:], out)
-	case "lessons":
-		// Drafts lessons from failed-then-fixed dispatches in the ledger, and
-		// moves one a person has written and approved into the file start
-		// reads for that role. Reads the ledger and the user's config only.
-		return lessonsCommand(args[1:], out)
-	case "on-event":
-		// Invoked by herdr, never by hand. Off unless opted in.
-		return onEventCommand(args[1:], out)
-	case "startup":
-		// Invoked once by herdr after the server is ready. Off unless opted in.
-		return startupCommand(args[1:], out)
-	default:
-		return usagef("unknown command %q; %s", args[0], usage)
+	if h, ok := handlers[args[0]]; ok {
+		return h(args[1:], out)
 	}
+	return usagef("unknown command %q; %s", args[0], usage)
 }
 
 // stateDir is where herdr lets this plugin keep state between invocations.
