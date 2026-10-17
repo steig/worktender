@@ -280,9 +280,10 @@ Errors you are most likely to meet:
 - **`worktender verify <issue>` runs the approved checks on base and head.** Each
   runs in an export of the merge-base and of the head (`--pr N` for a PR's,
   this checkout's `HEAD` otherwise). Exits **0** only when nothing fails on
-  head, at least one check fails on base and passes on head, and the changed
-  Go tests fail with the non-test files put back as on base; **3**
-  otherwise. See
+  head, at least one check fails on base and passes on head, and a changed Go
+  test runs and fails with the changed Go source, `go.mod` and `go.sum` put
+  back as on base; **3** otherwise, a revert that passes (hollow), does not
+  build, runs no test, times out or finds no test included. See
   [Verifying that the checks prove the change](dispatch.md#verifying-that-the-checks-prove-the-change).
 - **`list` is an alias for `ls`.**
 - **`pr-feedback` and `refocus` are the watch mod's.** It runs them for you, and

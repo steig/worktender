@@ -182,6 +182,9 @@ func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 		{"hollow", "func TestDouble(t *testing.T) { if Double(0) != 0 { t.Fatal(Double(0)) } }",
 			"hollow: tests pass with the change reverted (TestDouble)", exitNeedsHuman},
 		{"needs the change", "func TestDouble(t *testing.T) { if Double(2) != 4 { t.Fatal(Double(2)) } }", "", exitOK},
+		{"calls something new", "func TestTriple(t *testing.T) { if Triple(2) != 6 { t.Fatal(Triple(2)) } }",
+			"do not build with the change reverted", exitNeedsHuman},
+		{"skipped", "func TestDouble(t *testing.T) { t.Skip(\"later\") }", "no changed test ran", exitNeedsHuman},
 		{"unfound", "var _ = testing.Short\n\nfunc TestDouble(t *T) {}\n\ntype T = testing.T",
 			"hold no test verify can find", exitNeedsHuman},
 	} {
@@ -194,7 +197,7 @@ func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 			repo.Git("commit", "-m", "the library")
 			repo.Git("checkout", "42-the-thing")
 			repo.Git("rebase", "main")
-			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return 2 * x }\n")
+			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return 2 * x }\n\nfunc Triple(x int) int { return 3 * x }\n")
 			repo.Write("lib/lib_test.go", "package lib\n\nimport \"testing\"\n\n"+tc.test+"\n")
 			repo.Git("add", ".")
 			repo.Git("commit", "-m", "double it")
@@ -207,17 +210,18 @@ func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 			if tc.want == exitNeedsHuman && !strings.Contains(err.Error(), tc.says) {
 				t.Errorf("error = %v; want it to say %q", err, tc.says)
 			}
-			if tc.want == exitOK && !strings.Contains(out.String(), "revert: the changed tests fail with 2 non-test file(s) put back as on base") {
+			if tc.want == exitOK && !strings.Contains(out.String(), "revert: the changed tests fail with") {
 				t.Errorf("output does not say the tests failed with the change reverted:\n%s", out.String())
 			}
 		})
 	}
 }
 
-func TestVerifySkipsTheRevertWithNoNonTestChange(t *testing.T) {
+func TestVerifySkipsTheRevertWithNoGoSourceChange(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	repo.Git("checkout", "-b", "42-the-thing")
 	repo.Write("lib_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestNothing(t *testing.T) {}\n")
+	repo.Write("README.md", "a README edit is not code the test could need\n")
 	repo.Git("add", ".")
 	repo.Git("commit", "-m", "a test alone")
 	body := "## Acceptance\n- [ ] `test -f lib_test.go` exits 0\n"
@@ -228,7 +232,7 @@ func TestVerifySkipsTheRevertWithNoNonTestChange(t *testing.T) {
 	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {
 		t.Fatalf("verify: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "revert: skipped, the change touches no non-test file") {
+	if !strings.Contains(out.String(), "revert: skipped, the change touches no Go source, go.mod or go.sum") {
 		t.Errorf("output does not say the revert was skipped:\n%s", out.String())
 	}
 }

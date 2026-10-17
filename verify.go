@@ -328,9 +328,16 @@ var goTestFunc = regexp.MustCompile(`(?m)^func (Test\w*)\(\w+ \*testing\.T\)`)
 // verifyTestsNeedTheChange refuses tests that pass without the change they
 // came with. Approved checks are graded on base and head, but the worker's
 // own tests are graded only by passing, and a test that passes with the code
-// change reverted tests nothing. So head's export has every changed
-// non-test file put back as it was on base, the changed test files kept, and
-// the changed test files' tests run there: at least one has to fail.
+// change reverted tests nothing. So head's export has every changed Go
+// source file, go.mod and go.sum put back as they were on base, the changed
+// test files kept, and the changed test files' tests run there: at least one
+// has to fail. A README edit beside a test-only change is not code the tests
+// could need, so it is left alone.
+//
+// Only a test that ran and failed counts. A build failure on the revert says
+// the test calls something new, not that it checks what the new thing does,
+// and a run where every test skipped or none matched shows nothing either
+// way: both are unjudged.
 func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, notes io.Writer) error {
 	diff, err := exec.Command("git", "-C", root, "diff", "--name-status", "--no-renames", "-z", base, head).Output()
 	if err != nil {
@@ -355,6 +362,7 @@ func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, no
 				tests = append(tests, string(m[1]))
 				packages["./"+path.Dir(file)] = true
 			}
+		case !strings.HasSuffix(file, ".go") && path.Base(file) != "go.mod" && path.Base(file) != "go.sum":
 		case status == "A":
 			remove = append(remove, file)
 		default:
@@ -363,7 +371,7 @@ func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, no
 	}
 	switch {
 	case len(restore)+len(remove) == 0:
-		fmt.Fprintf(notes, "revert: skipped, the change touches no non-test file\n")
+		fmt.Fprintf(notes, "revert: skipped, the change touches no Go source, go.mod or go.sum\n")
 		return nil
 	case len(testFiles) == 0:
 		fmt.Fprintf(notes, "revert: skipped, the change adds or changes no Go test\n")
@@ -398,17 +406,21 @@ func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, no
 
 	slices.Sort(tests)
 	tests = slices.Compact(tests)
-	argv := []string{"go", "test", "-count=1", "-run", "^(" + strings.Join(tests, "|") + ")$"}
+	argv := []string{"go", "test", "-count=1", "-v", "-run", "^(" + strings.Join(tests, "|") + ")$"}
 	argv = append(argv, slices.Sorted(maps.Keys(packages))...)
-	run, _, err := runIn(export, timeout, argv...)
+	run, output, err := runIn(export, timeout, argv...)
 	switch {
 	case err != nil:
 		return err
 	case run.ExitCode == nil:
 		return codef(exitNeedsHuman, "the changed tests did not finish with the change reverted, so whether they need it is unjudged")
-	case *run.ExitCode == 0:
+	case strings.Contains(output, "[build failed]") || strings.Contains(output, "[setup failed]"):
+		return codef(exitNeedsHuman, "the changed tests do not build with the change reverted, so whether they need it is unjudged")
+	case *run.ExitCode == 0 && strings.Contains(output, "--- PASS:"):
 		return codef(exitNeedsHuman, "hollow: tests pass with the change reverted (%s)", strings.Join(tests, ", "))
+	case *run.ExitCode == 0 || !strings.Contains(output, "--- FAIL:"):
+		return codef(exitNeedsHuman, "no changed test ran to a pass or a failure with the change reverted, so whether they need it is unjudged")
 	}
-	fmt.Fprintf(notes, "revert: the changed tests fail with %d non-test file(s) put back as on base\n", len(restore)+len(remove))
+	fmt.Fprintf(notes, "revert: the changed tests fail with %d Go file(s) put back as on base\n", len(restore)+len(remove))
 	return nil
 }
