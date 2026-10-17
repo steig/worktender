@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,15 +44,15 @@ const (
 	verifyGuard          = "guard"
 	verifyFailing        = "failing"
 	// verifyUnjudged is a check whose outcome verify cannot read, or one that
-	// timed out on either side. A timeout on base is not a failure that the
-	// change fixed, so it cannot count as discriminating.
+	// timed out or was killed on either side. A timeout on base is not a
+	// failure that the change fixed, so it cannot count as discriminating.
 	verifyUnjudged = "unjudged"
 )
 
 // verifyRun is one check run on one commit.
 type verifyRun struct {
 	Commit string `json:"commit"`
-	// ExitCode is null when the check timed out and was killed.
+	// ExitCode is null when the check timed out or was killed by a signal.
 	ExitCode *int `json:"exit_code"`
 	TimedOut bool `json:"timed_out"`
 	Passed   bool `json:"passed"`
@@ -74,15 +75,6 @@ type verifyJSON struct {
 	Checks     []verifyCheck `json:"checks"`
 	Error      *string       `json:"error"`
 	ExitCode   int           `json:"exit_code"`
-}
-
-func (d *verifyJSON) finish(err error) *verifyJSON {
-	d.ExitCode = exitCode(err)
-	if err != nil {
-		msg := err.Error()
-		d.Error = &msg
-	}
-	return d
 }
 
 func verifyCommand(args []string, out io.Writer) error {
@@ -120,7 +112,12 @@ func verifyCommand(args []string, out io.Writer) error {
 	doc := &verifyJSON{Repository: root, Issue: number, Checks: []verifyCheck{}}
 	finish := func(err error) error {
 		if *asJSON {
-			if wErr := jsonout.Write(out, doc.finish(err)); wErr != nil {
+			doc.ExitCode = exitCode(err)
+			if err != nil {
+				msg := err.Error()
+				doc.Error = &msg
+			}
+			if wErr := jsonout.Write(out, doc); wErr != nil {
 				return wErr
 			}
 		}
@@ -144,6 +141,13 @@ func verifyCommand(args []string, out io.Writer) error {
 		}
 		if !isCommitOid(pr.HeadRefOid) || !isCommitOid(pr.BaseRefOid) {
 			return finish(fmt.Errorf("gh gave PR #%d no head or base commit", pr.Number))
+		}
+		// Any PR's head can pass some issue's checks, so the PR has to be
+		// this issue's work: on the branch start named for it, or closing it.
+		if issueFromBranch(pr.HeadRefName) != number && !slices.ContainsFunc(pr.ClosingIssuesReferences,
+			func(i struct{ Number int }) bool { return i.Number == number }) {
+			return finish(codef(exitNeedsHuman, "PR #%d is not #%d's: its branch %s is not named for it and it does not close it",
+				pr.Number, number, pr.HeadRefName))
 		}
 		head, baseTip = gitx.Commit(root, pr.HeadRefOid), pr.BaseRefOid
 		if head == "" {
@@ -177,8 +181,21 @@ func verifyCommand(args []string, out io.Writer) error {
 		v.Class = classifyCheck(c.Expect, v.Base, v.Head)
 		counts[v.Class]++
 		doc.Checks = append(doc.Checks, v)
+		var said [2]string
+		for j, r := range []verifyRun{v.Base, v.Head} {
+			switch {
+			case r.TimedOut:
+				said[j] = "timed out"
+			case r.ExitCode == nil:
+				said[j] = "killed by a signal"
+			case r.Passed:
+				said[j] = fmt.Sprintf("passed (exit %d)", *r.ExitCode)
+			default:
+				said[j] = fmt.Sprintf("failed (exit %d)", *r.ExitCode)
+			}
+		}
 		fmt.Fprintf(notes, "%d. %-14s base %s %s, head %s %s: `%s` %s\n", i+1, v.Class,
-			shortOid(base), v.Base.describe(), shortOid(head), v.Head.describe(), c.Command, c.Expect)
+			shortOid(base), said[0], shortOid(head), said[1], c.Command, c.Expect)
 	}
 
 	switch {
@@ -193,52 +210,66 @@ func verifyCommand(args []string, out io.Writer) error {
 	return finish(nil)
 }
 
-// runChecks runs every check in one export of commit, in order, and judges
-// each against its expected outcome.
+// runChecks runs every check on commit, each in a fresh export so that what
+// one check writes is not there for the next, and judges each against its
+// expected outcome.
 func runChecks(root, commit string, checks []acceptanceCheck, timeout time.Duration) ([]verifyRun, error) {
-	export, cleanup, err := exportTracked(root, commit)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-
 	runs := make([]verifyRun, len(checks))
 	for i, c := range checks {
-		run := verifyRun{Commit: commit}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		cmd := exec.CommandContext(ctx, "sh", "-c", c.Command)
-		cmd.Dir = export
-		// A child the check started can hold its output open after sh is
-		// killed; stop waiting on that rather than on the child.
-		cmd.WaitDelay = 5 * time.Second
-		var output bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &output, &output
-		err := cmd.Run()
-		timedOut := ctx.Err() != nil
-		cancel()
-
-		var exit *exec.ExitError
-		switch {
-		case timedOut:
-			run.TimedOut = true
-		case err == nil:
-			run.ExitCode = new(int)
-		case errors.As(err, &exit):
-			code := exit.ExitCode()
-			run.ExitCode = &code
-		default:
-			return nil, withCode(exitEnvironment, fmt.Errorf("run check %d on %s: %w", i+1, shortOid(commit), err))
-		}
-		if run.ExitCode != nil {
-			run.Passed, _ = outcomeMet(c.Expect, *run.ExitCode, output.String())
+		run, err := runOneCheck(root, commit, c, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("run check %d on %s: %w", i+1, shortOid(commit), err)
 		}
 		runs[i] = run
 	}
 	return runs, nil
 }
 
+// runOneCheck is one check in its own export, which is gone when it returns.
+func runOneCheck(root, commit string, c acceptanceCheck, timeout time.Duration) (verifyRun, error) {
+	export, cleanup, err := exportTracked(root, commit)
+	if err != nil {
+		return verifyRun{}, err
+	}
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", c.Command)
+	cmd.Dir = export
+	// The timeout kills what the check started, not only sh (killTree), and
+	// stops waiting on a child that escaped it and holds the output open.
+	killTree(cmd)
+	cmd.WaitDelay = 5 * time.Second
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	err = cmd.Run()
+
+	run := verifyRun{Commit: commit}
+	var exit *exec.ExitError
+	switch {
+	// ctx's error, not Run's: a check killed by the cancel exits by signal,
+	// and Run reports that exit rather than the deadline behind it.
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		run.TimedOut = true
+	case err == nil:
+		run.ExitCode = new(int)
+	case errors.As(err, &exit):
+		// -1 is a death by signal, which is no exit code the outcome speaks of.
+		if code := exit.ExitCode(); code >= 0 {
+			run.ExitCode = &code
+		}
+	default:
+		return verifyRun{}, withCode(exitEnvironment, err)
+	}
+	if run.ExitCode != nil {
+		run.Passed, _ = outcomeMet(c.Expect, *run.ExitCode, output.String())
+	}
+	return run, nil
+}
+
 // fixedOutcomes are the outcomes verify can judge, and a drafted check may
-// expect, besides "prints <text>": each with whether a run met it.
+// expect, besides "prints <token>": each with whether a run met it.
 var fixedOutcomes = map[string]func(code int, output string) bool{
 	"exits 0":        func(code int, _ string) bool { return code == 0 },
 	"exits 1":        func(code int, _ string) bool { return code == 1 },
@@ -247,19 +278,21 @@ var fixedOutcomes = map[string]func(code int, output string) bool{
 }
 
 // outcomeMet says whether a run met expect. known is false for an outcome
-// verify cannot read, which no run meets.
+// verify cannot read, which no run meets. "prints <token>" is read only for
+// the tokens draft would propose, so that "prints nothing and exits 0" is
+// not taken for a search for "nothing and exits 0".
 func outcomeMet(expect string, code int, output string) (met, known bool) {
 	if judge, ok := fixedOutcomes[expect]; ok {
 		return judge(code, output), true
 	}
-	if text, ok := strings.CutPrefix(expect, "prints "); ok {
-		return strings.Contains(output, text), true
+	if token, ok := strings.CutPrefix(expect, "prints "); ok && draftPrintsToken.MatchString(token) {
+		return strings.Contains(output, token), true
 	}
 	return false, false
 }
 
 func classifyCheck(expect string, base, head verifyRun) string {
-	if _, known := outcomeMet(expect, 0, ""); !known || base.TimedOut || head.TimedOut {
+	if _, known := outcomeMet(expect, 0, ""); !known || base.ExitCode == nil || head.ExitCode == nil {
 		return verifyUnjudged
 	}
 	switch {
@@ -269,14 +302,4 @@ func classifyCheck(expect string, base, head verifyRun) string {
 		return verifyGuard
 	}
 	return verifyDiscriminating
-}
-
-func (r verifyRun) describe() string {
-	switch {
-	case r.TimedOut:
-		return "timed out"
-	case r.Passed:
-		return fmt.Sprintf("passed (exit %d)", *r.ExitCode)
-	}
-	return fmt.Sprintf("failed (exit %d)", *r.ExitCode)
 }

@@ -276,8 +276,11 @@ It reads the checks with the same parse and approval check `start` uses, so an
 issue edited since approval is refused with **3**. Each check runs under
 `sh -c` in an export of the merge-base's tracked files, then in an export of
 the head's, the same `git archive` export `draft` uses, never in a checkout.
-Each run has `--timeout` (default ten minutes). With `--pr`, the PR's head has
-to be in the local repository already; `verify` says how to fetch it.
+Every check gets a fresh export, so a file one check writes is not there for
+the next. Each run has `--timeout` (default ten minutes), which kills the
+check's whole process group. With `--pr`, the PR has to be the issue's: on a
+branch named for it (`42-…`) or closing it, or `verify` exits **3**. Its head
+has to be in the local repository already; `verify` says how to fetch it.
 
 **The export is not a sandbox.** It keeps your checkout's untracked files out of
 the way, nothing more. A check like `go test` runs the head's code as you, with
@@ -286,14 +289,16 @@ whose code you have not read runs that code with your credentials. Verify heads
 you would run the tests of anyway.
 
 The outcome is judged as written: `exits 0`, `exits 1`, `exits non-zero`,
-`prints nothing` (no output on stdout or stderr), or `prints <text>` (the
-output contains it). Each check is then one of:
+`prints nothing` (no output on stdout or stderr), or `prints <word>`, the word
+being one `draft` could propose (at most 40 of `A-Za-z0-9._-`). `prints <word>`
+is a case-sensitive substring match on stdout and stderr together, and ignores
+the exit code. Any other outcome cannot be judged. Each check is then one of:
 
 - **discriminating**: fails on base, passes on head;
 - **guard**: passes on both;
 - **failing**: fails on head;
-- **unjudged**: an outcome `verify` cannot read, or a run that timed out on
-  either side.
+- **unjudged**: an outcome `verify` cannot read, or a run that timed out or was
+  killed by a signal on either side.
 
 One line per check, with both commits. It exits **0** only when no check fails
 on head, none is unjudged, and at least one discriminates. Otherwise it exits

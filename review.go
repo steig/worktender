@@ -858,6 +858,9 @@ type reviewPR struct {
 	HeadRefOid  string    `json:"headRefOid"`
 	BaseRefOid  string    `json:"baseRefOid"`
 	Labels      []ghLabel `json:"labels"`
+	// ClosingIssuesReferences is the issues the PR closes on merge, which
+	// verify reads to tie a PR to its issue.
+	ClosingIssuesReferences []struct{ Number int } `json:"closingIssuesReferences"`
 }
 
 type ghLabel struct {
@@ -867,7 +870,7 @@ type ghLabel struct {
 // reviewPRFor asks gh about a PR named by number, URL or branch — gh pr view
 // takes all three, so review does too.
 func reviewPRFor(root, target string) (reviewPR, error) {
-	args := []string{"pr", "view", target, "--json", "number,state,headRefName,headRefOid,baseRefOid,labels"}
+	args := []string{"pr", "view", target, "--json", "number,state,headRefName,headRefOid,baseRefOid,labels,closingIssuesReferences"}
 	if origin := gitx.RemoteURL(root); origin != "" {
 		args = append(args, "--repo", origin)
 	}

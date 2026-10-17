@@ -815,7 +815,8 @@ $ worktender verify 42 --repo . --json
   [Verifying that the checks prove the change](dispatch.md#verifying-that-the-checks-prove-the-change).
 - **`passed`** is whether the run met `expect`, which is not the same as exiting
   0: a check expecting `exits 1` passes by failing.
-- **`exit_code`** inside a run is null when the check timed out and was killed.
+- **`exit_code`** inside a run is null when the check timed out or was killed
+  by a signal.
 - **`base`** and **`head`** at the top are null when `verify` stopped before
   finding them, and `checks` is empty until both sides have run. The progress
   lines go to stderr.
