@@ -24,9 +24,8 @@
 
 <p>
   For a pull request, <code>worktender verify &lt;issue&gt; --pr &lt;N&gt;</code>
-  asks the same of the issue's own checks: each must fail on the merge-base and
-  pass on the head, and the worker's new tests must fail with the change
-  reverted. A fresh reviewer reads each diff, and the merge names the verified
+  asks the same of the issue's own checks: it exits 0 only when none fails on
+  the head and at least one fails on the merge-base and passes on the head. A fresh reviewer reads each diff, and the merge names the verified
   commit with <code>--match-head-commit</code>.
 </p>
 

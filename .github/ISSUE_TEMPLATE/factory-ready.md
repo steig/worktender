@@ -32,8 +32,8 @@ explanation under Problem or Proposal. The section ends at the next heading.
 Prefer a check that fails until the work is done, in the last form above:
 `worktender verify` runs each check on the merge-base and on the PR, and `go
 test -run TestX` alone exits 0 with "no tests to run" before TestX exists. A
-`prints X` outcome needs X to match ^[A-Za-z0-9._-]{1,40}$; any other outcome is
-unjudged.
+`prints X` outcome needs X to match ^[A-Za-z0-9._-]{1,40}$. The outcomes verify
+judges are `exits 0`, `exits 1`, `exits non-zero`, `prints nothing` and `prints X`.
 
 PROBLEM: what is wrong or missing, and who it affects.
 PROPOSAL: what to build. Describe the outcome, and leave the approach to the

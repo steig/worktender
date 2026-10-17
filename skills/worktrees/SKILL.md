@@ -130,7 +130,8 @@ Flags may come on either side of the issue number.
 `~/.config/worktender/config.json`; without the flag an issue label or the
 configured default may pick one. The role is printed on a `role:` line — read
 it. `--model` overrides the model the role's agent file sets; without it an
-issue's `model:<name>` label, then `default_model`, picks the model. No
+issue's `model:<name>` label, then `default_model` (for a role with no agent),
+picks the model. No
 configuration means no role, exactly as before. Details: `docs/roles.md`.
 
 **`start` creates a checkout, so it will not guess a repository, and it is not a herdr

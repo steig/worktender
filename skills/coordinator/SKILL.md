@@ -27,9 +27,6 @@ worktender=$(command -v worktender) || worktender=$(herdr plugin list --json \
 # 2. Wait on the report, not on a clock. Start them all, then wait on them all.
 "$worktender" gate --any w9:p1,w10:p1 --until done --timeout 20m
 # gate: w10:p1 released after 4m12s (evidence: reported)   <- drop it and gate on the rest
-
-# 3. A done is a claim. Do the checks show the change, or did they pass before it?
-"$worktender" verify 12 --repo . --pr 31     # exit 0 only when a check discriminates
 ```
 
 `start` prints the exact `gate` line for what it just started — copy it. It
@@ -53,9 +50,9 @@ own model — a brief style (`code`, `design`, `analysis`) and directories to re
 line, because a label can choose the role and a repository's `.claude/agents`
 can redefine the agent. The model follows the slice: `--model` (on `factory`,
 for every start in the pass), else the issue's `model:<name>` label, else
-`default_model`, unless the role's agent file names one. `start` prints
-`model: <name> (<why>)`; read it, since a slice with no label and no
-`default_model` runs on whatever your own default is. See `docs/roles.md`.
+`default_model`, unless the role names an agent. `start` prints
+`model: <name> (<why>)`; read it, since a slice with no label, no
+`default_model` and no agent runs on whatever your own default is. See `docs/roles.md`.
 
 **When the slice is not an issue**, the older four-step path is still there:
 `herdr worktree create`, then `dispatch --pane <pane> --name <agent>`, then
@@ -163,24 +160,13 @@ fresh-context reviewer subagent on the strongest model, given the diff,
 `CLAUDE.md` and the pinned acceptance checks, and asked: what would you delete;
 what new type, field or helper did this add, and how many callers has each; would
 this test survive a rewrite? Its findings go back through `worktender pr-feedback`;
-only its conclusions enter your context. Use a fresh reviewer for each PR: one
-that has read an earlier PR's diff carries that PR's assumptions into the next.
+only its conclusions enter your context. A fresh reviewer per PR.
 
 **Run `worktender verify <issue> --pr <N>` before you name a PR for merge.** It
-runs the issue's approved checks on the merge-base and on the PR's head, and
-exits 0 only when none fails on head and at least one fails on base and passes
-on head. It then reverts the change's Go source and requires the worker's own
-new tests to fail, so a hollow test cannot pass. Exit 3 is a person's call, not
-a retry. It runs the head's code as you: verify heads you would run anyway. The
-checks it can judge look like this, so a "no tests to run" exit 0 cannot pass
-for a test the worker never wrote:
-
-```
-- [ ] `go test -count=1 -run TestX -v . | grep -q -- '--- PASS: TestX'` exits 0
-```
-
-A `prints X` outcome needs X to match `^[A-Za-z0-9._-]{1,40}$`; any other outcome
-is unjudged, never a pass.
+exits 0 only when the checks prove the change: none fails on the head, and at
+least one fails on the base and passes on the head. Exit 3 is a person's call,
+not a retry. It runs the head's code as you. Check forms and outcomes:
+`docs/dispatch.md`.
 
 ```bash
 PASS=$(go test -count=1 -v ./... | grep -cE "^--- PASS")
@@ -278,7 +264,7 @@ gh pr view <N> --json state,mergeable,mergeStateStatus,statusCheckRollup
 
 **You do not run `gh pr merge`.** That stays a human action. When you name a
 PR to merge, hand the human `gh pr merge <N> --match-head-commit <full sha>` with
-the head you verified (all 40 characters, not an abbreviation), so a head nobody verified cannot merge. Your job is to
+`<full sha>` of the head you verified, so a head nobody verified cannot merge. Your job is to
 name which PR merges next and why — a stacked slice before its base, whatever
 clears fastest among unrelated slices — and to flag one that looks mergeable
 but isn't (checks red, still-computing `mergeable: UNKNOWN`, conflicts).
@@ -400,9 +386,6 @@ Nothing else.
 - **Check the PR a `done` names** before acting as though work landed.
 - **Sequence merges, never execute them.** Name which PR merges next; the
   human clicks merge.
-- **Never approve on the owner's behalf.** `worktender approve` is a person
-  reading the payload; running it, or writing the approval comment, from a
-  coordinator or a worker defeats the control. Put the issue in front of the
-  human. Branch protection, not a worker's token, is what stops a merge.
+- **Never approve on the owner's behalf.** `worktender approve` is a person's.
 - **Be the fleet's inbox.** Cross-workspace herdr activity and GitHub PR/issue
   activity route through you, triaged before you relay or escalate.

@@ -271,9 +271,9 @@ Start several, then wait on the lot of them. `start` deliberately does not wait;
 `gate` is the other half.
 
 A `done` is a claim. `worktender verify 42 --pr 17` runs the issue's approved
-checks on the merge-base and on the PR's head, and exits 0 only when one fails
-on the base and passes on the head, and the worker's own new tests fail with the
-change reverted. See
+checks on the merge-base and on the PR's head, and exits 0 only when the checks
+prove the change: none fails on the head, and at least one fails on the base and
+passes on the head. See
 [Verifying that the checks prove the change](docs/dispatch.md#verifying-that-the-checks-prove-the-change).
 
 **`--base <ref>` forks from something other than the trunk**, which is how a
@@ -766,10 +766,6 @@ The docs site builds from `docs/*.md` plus the hand-written pages in
 python3 -m venv .venv && .venv/bin/pip install -r site/requirements.txt
 .venv/bin/python site/build.py && python3 -m http.server -d _site 8765
 ```
-
-A tag is published as a prerelease by `release.yml`, so only installs that pin
-it get it. After it has run clean factory passes, `scripts/release-promote.sh
-vX.Y.Z` makes it `latest`; rolling back is promoting the previous tag.
 
 ## License
 
