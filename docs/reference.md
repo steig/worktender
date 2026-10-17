@@ -10,6 +10,7 @@ version    0.5.0 @f074c65  warn  origin/main is at @a1b2c3d; run `worktender upd
 herdr      0.7.5           ok
 gh         authenticated   ok
 worker-gh  your token      warn  workers' gh uses your token, so one can approve and merge; set WORKTENDER_WORKER_GH_TOKEN to narrow it
+approvers  unset           warn  any account with write access can approve, a worker's own account among them; set WORKTENDER_APPROVERS
 events     unset           off
 roles      none            off   no /home/you/.config/worktender/config.json
 
@@ -41,7 +42,9 @@ right question first:
 
 It also warns while workers share your `gh` token; see
 [Giving workers their own GitHub token](#giving-workers-their-own-github-token).
-The warning does not change the exit code.
+It warns while `WORKTENDER_APPROVERS` is unset, or names nobody; see
+[Approving the raw bytes](dispatch.md#approving-the-raw-bytes-not-the-page).
+Neither warning changes the exit code.
 
 It also reports the role configuration `start` and `dispatch --role` read: the
 file, whether it parses, and any agent or directory a role names that does not
@@ -77,6 +80,8 @@ is on GitHub's side: branch protection requiring a review from someone other
 than the worker's account. Make the token as narrow as you can as well: it needs
 to push branches and open pull requests, and `approve` counts a comment from any
 account with write access, so it should not be able to comment on issues as one.
+Setting `WORKTENDER_APPROVERS` to your own login stops it counting even if it
+can.
 
 The token never goes on a command line, which `ps` and the pane would show. It
 is written to `worker-settings.json`, mode 0600, in the plugin state directory —

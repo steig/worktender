@@ -65,6 +65,7 @@ func newFakeGitHub(t *testing.T, meta, snapshot string, permissions map[string]s
 	t.Helper()
 
 	f := &fakeGitHub{t: t, dir: t.TempDir()}
+	t.Setenv(approversEnv, "")
 	f.write("meta.json", meta)
 	f.write("repo.json", `{"name":"worktender","owner":{"login":"steig"}}`)
 	if snapshot != "" {
@@ -271,6 +272,46 @@ func TestStartFindsTheApprovalAmongOtherComments(t *testing.T) {
 		map[string]string{"steig": "write", "drive-by": "read"})
 	if err := r.run(); err != nil {
 		t.Fatalf("start: %v", err)
+	}
+}
+
+// A worker's own account has write access to push, so with an allowlist set
+// only a listed login's approval counts. The refusal says
+// why, naming the approver, and is still a person's to fix.
+func TestFactoryApprovalRefusesAnApproverOffTheAllowlist(t *testing.T) {
+	approval := approvalOf(t, readyTitle, readyBody)
+	for name, list := range map[string]string{
+		"someone else listed": "tom,alice",
+		"nobody listed":       " , ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newReadyStart(t)
+			newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody, comment{"steig", approval}), map[string]string{"steig": "admin"})
+			t.Setenv(approversEnv, list)
+			err := r.run()
+			assertRefusedBeforeAnyAgent(t, r.server, err, "not approved by anyone in "+approversEnv)
+			if err != nil && (!strings.Contains(err.Error(), "@steig") || strings.Contains(err.Error(), approvalCommentPrefix)) {
+				t.Errorf("the refusal should name the approver and not quote the comment: %v", err)
+			}
+		})
+	}
+}
+
+// A listed approval counts even when a later one from an unlisted account with
+// write access sits above it, and the listed login, matched without regard to
+// case, is the approver the worker is told about.
+func TestFactoryApprovalAcceptsAnApproverOnTheAllowlist(t *testing.T) {
+	r := newReadyStart(t)
+	approval := approvalOf(t, readyTitle, readyBody)
+	newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody,
+		comment{"steig", approval}, comment{"worker-bot", approval}),
+		map[string]string{"steig": "admin", "worker-bot": "write"})
+	t.Setenv(approversEnv, "alice, @Steig")
+	if err := r.run(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if pinned := pinnedCopy(t, r.checkout); !strings.Contains(pinned, "@steig approved") {
+		t.Errorf("the approver named should be the listed one:\n%s", pinned)
 	}
 }
 

@@ -250,11 +250,35 @@ refused with **3**, before any worktree exists:
 - nobody approved it;
 - the only matching comment is from an account without write access, or a
   deleted account;
+- `WORKTENDER_APPROVERS` is set and no matching comment is from a login on it;
 - the Acceptance section does not parse.
 
 ```
 worktender: issue #42 changed since approval, or was not approved: no comment from an account with write access carries sha256 …; run `worktender approve 42`
 ```
+
+**Write access does not tell a person from a worker's account**, which needs
+write access to push. Name the people whose approvals count:
+
+```sh
+export WORKTENDER_APPROVERS=steig,alice
+```
+
+It is a comma-separated list of GitHub logins, matched without regard to case.
+When it is set, an approval counts only if its author has write access *and*
+is on the list. An approval from anyone else is refused, and the refusal names
+the approver and the variable:
+
+```
+worktender: issue #42 was not approved by anyone in WORKTENDER_APPROVERS: the approval of sha256 … is from @worker-bot; have someone listed run `worktender approve 42`
+```
+
+It does nothing against a worker on your own token, which approves as you; that
+is what [`WORKTENDER_WORKER_GH_TOKEN`](reference.md#giving-workers-their-own-github-token)
+is for, and the two together are the point. Unset, any write-access account
+counts, as before, and `doctor` warns. Set to
+nothing but commas, nobody counts. The event hooks read it from herdr's own
+environment, like `WORKTENDER_EVENTS`, so export it before starting herdr.
 
 The code is 3 rather than 1 because no change to the invocation fixes it. A
 person has to read the payload and approve it, which no retry and no

@@ -136,9 +136,33 @@ type issueSnapshot struct {
 // two are the whole of "can push to this repository".
 var writePermissions = []string{"admin", "write"}
 
+// approversEnv names the people whose approvals count, as comma-separated
+// GitHub logins. A worker's own account needs write access to push, so write
+// access alone does not tell it from a person; a list that names only people
+// does. A worker on a person's own token approves as that person, and no list
+// stops it: that is execute.WorkerTokenEnv's to prevent.
+const approversEnv = "WORKTENDER_APPROVERS"
+
+// approverAllowlist is approversEnv's logins, and whether it is set at all.
+// Set to nothing but commas it is an empty list, which nobody is on: a
+// mistyped allowlist refuses every approval rather than reverting to none.
+func approverAllowlist() (logins []string, set bool) {
+	raw := os.Getenv(approversEnv)
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	for login := range strings.SplitSeq(raw, ",") {
+		if login = strings.TrimPrefix(strings.TrimSpace(login), "@"); login != "" {
+			logins = append(logins, login)
+		}
+	}
+	return logins, true
+}
+
 // factoryApproval is the single test of whether a factory:ready issue may be
 // started: the issue as it stands now hashes to a payload that an account with
-// write access approved with `worktender approve`. start calls it, and so
+// write access, and on approversEnv's list when that is set, approved with
+// `worktender approve`. start calls it, and so
 // should anything that pulls ready issues from a queue, rather than restating
 // any part of it.
 //
@@ -164,6 +188,8 @@ func factoryApproval(root string, number int) (approvedIssue, error) {
 	// whose author cannot be shown to have write access is passed over, not
 	// fatal: a drive-by copy of a real approval's hash is just noise.
 	want := approvalCommentPrefix + hash
+	allowed, allowlisted := approverAllowlist()
+	var offList []string
 	checked := map[string]bool{}
 	nodes := snap.Comments.Nodes
 	for i := len(nodes) - 1; i >= 0; i-- {
@@ -176,7 +202,17 @@ func factoryApproval(root string, number int) (approvedIssue, error) {
 		if err != nil || !slices.Contains(writePermissions, permission) {
 			continue
 		}
+		// GitHub logins are case-insensitive, so the list is too.
+		if allowlisted && !slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, c.Author.Login) }) {
+			offList = append(offList, "@"+c.Author.Login)
+			continue
+		}
 		return approvedIssue{Number: number, Payload: payload, Hash: hash, Approver: c.Author.Login, Checks: checks}, nil
+	}
+	if len(offList) > 0 {
+		return approvedIssue{}, codef(exitNeedsHuman,
+			"issue #%d was not approved by anyone in %s: the approval of sha256 %s is from %s; "+
+				"have someone listed run `worktender approve %d`", number, approversEnv, hash, strings.Join(offList, ", "), number)
 	}
 	return approvedIssue{}, codef(exitNeedsHuman,
 		"issue #%d changed since approval, or was not approved: no comment from an account with write access "+

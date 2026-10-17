@@ -52,7 +52,7 @@ func doctorCommand(args []string, out io.Writer) error {
 		herdr.note = clientErr.Error()
 	}
 
-	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
+	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), approversCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
 
 	// Nothing below the checks is answerable without herdr, and saying so once
 	// is better than four repetitions of the same cause.
@@ -363,6 +363,22 @@ func workerTokenCheck() check {
 	}
 	return check{name: "worker-gh", value: "narrowed", state: stateOK,
 		note: "workers' gh defaults to " + execute.WorkerTokenEnv + "; your login is still within reach, so branch protection is the control"}
+}
+
+// approversCheck warns while any write-access account's approval counts, a
+// worker's own account among them.
+func approversCheck() check {
+	logins, set := approverAllowlist()
+	switch {
+	case !set:
+		return check{name: "approvers", value: "unset", state: stateWarn,
+			note: "any account with write access can approve, a worker's own account among them; set " + approversEnv}
+	case len(logins) == 0:
+		return check{name: "approvers", value: "none", state: stateWarn,
+			note: approversEnv + " names no login, so no approval counts"}
+	default:
+		return check{name: "approvers", value: strings.Join(logins, ","), state: stateOK}
+	}
 }
 
 // eventsCheck reports the opt-in as the gate actually parses it, not as it is
