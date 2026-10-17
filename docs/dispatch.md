@@ -261,6 +261,49 @@ person has to read the payload and approve it, which no retry and no
 coordinator can do for them. If `gh` cannot answer at all, the exit is **2**,
 the same as for an unreadable issue.
 
+### Verifying that the checks prove the change
+
+A check that already passes before the work proves nothing about it. `go test
+-run TestX` exits 0 with "no tests to run" until the worker writes `TestX`.
+`worktender verify` runs the approved checks on both sides of a change:
+
+```sh
+worktender verify 42 --repo .            # this checkout's HEAD against its merge-base
+worktender verify 42 --repo . --pr 17    # the PR's head against its merge-base
+```
+
+It reads the checks with the same parse and approval check `start` uses, so an
+issue edited since approval is refused with **3**. Each check runs under
+`sh -c` in an export of the merge-base's tracked files, then in an export of
+the head's, the same `git archive` export `draft` uses, never in a checkout.
+Every check gets a fresh export, so a file one check writes is not there for
+the next. Each run has `--timeout` (default ten minutes), which kills the
+check's whole process group. With `--pr`, the PR has to be the issue's: on a
+branch named for it (`42-…`) or closing it, or `verify` exits **3**. Its head
+has to be in the local repository already; `verify` says how to fetch it.
+
+**The export is not a sandbox.** It keeps your checkout's untracked files out of
+the way, nothing more. A check like `go test` runs the head's code as you, with
+your environment, your `$HOME` and your network, so `--pr` on a pull request
+whose code you have not read runs that code with your credentials. Verify heads
+you would run the tests of anyway.
+
+The outcome is judged as written: `exits 0`, `exits 1`, `exits non-zero`,
+`prints nothing` (no output on stdout or stderr), or `prints <word>`, the word
+being one `draft` could propose (at most 40 of `A-Za-z0-9._-`). `prints <word>`
+is a case-sensitive substring match on stdout and stderr together, and ignores
+the exit code. Any other outcome cannot be judged. Each check is then one of:
+
+- **discriminating**: fails on base, passes on head;
+- **guard**: passes on both;
+- **failing**: fails on head;
+- **unjudged**: an outcome `verify` cannot read, or a run that timed out or was
+  killed by a signal on either side.
+
+One line per check, with both commits. It exits **0** only when no check fails
+on head, none is unjudged, and at least one discriminates. Otherwise it exits
+**3**: a change whose checks all passed before it started is a person's call.
+
 **The worker reads the approved payload, not the live issue.** From that same
 single fetch, `start` writes the payload byte for byte to
 `$(git rev-parse --git-path worktender/issue.md)` in the new worktree. That is
