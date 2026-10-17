@@ -769,7 +769,6 @@ $ worktender report --status done --pr 4 --note green --json
 {
   "status": "done",
   "pr": 4,
-  "sha": "7df3383ed0b5e5fcae98b29d574b1a482909ac6e",
   "note": "green",
   "note_length": 5,
   "note_limit": 200,
@@ -785,8 +784,6 @@ $ worktender report --status done --pr 4 --note green --json
   outside herdr looks like — a gate can still read it off the terminal, but only
   while the line is in the buffer. That is not a failed report and it exits 0.
 - **`pane_id`** is null in the same case.
-- **`sha`** is `git rev-parse HEAD` in the directory `report` ran in, null
-  outside a checkout. The worker cannot set it.
 - **`note_length`** against **`note_limit`** because the note is *refused*
   rather than truncated when it is too long, and a worker building one
   programmatically should not have to guess how this command counts runes.

@@ -57,9 +57,10 @@ type report struct {
 	// unparseable.
 	pr int
 	// sha is the commit the worker's checkout was at when it reported, empty
-	// when it reported from outside a checkout. It is never the worker's to
-	// type: a done is bound to what was verified, and a gate holds the PR's
-	// head to it.
+	// when it reported from outside a checkout. report fills it from git, not
+	// from a flag, so a gate can hold the PR's head to it. That catches a push
+	// made after the done, not a hostile worker: anything in the pane can print
+	// an envelope, or set its tokens, with whatever sha it likes.
 	sha  string
 	note string
 }

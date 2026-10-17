@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -857,6 +859,36 @@ func TestGateRefusesADoneForACommitThatIsNotTheHead(t *testing.T) {
 				t.Errorf("outcome %q exit %d, want %q exit %d", doc.Outcome, doc.ExitCode, gateOutcomeHeadMoved, exitNeedsHuman)
 			}
 		})
+	}
+}
+
+// gh is asked about the PR in the repository --repo names, not wherever the
+// gate happens to run, and a gate that can name no repository fails before it
+// waits rather than refusing the done at the end.
+func TestGateChecksTheHeadInTheRepositoryItWasGiven(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	asked := filepath.Join(t.TempDir(), "pwd")
+	herdrtest.FakeGh(t, "pwd > "+asked+"; "+herdrtest.CatScript(t,
+		`{"number":12,"state":"OPEN","headRefName":"12-x","headRefOid":"`+gateHeadA+`","baseRefOid":"`+gateHeadB+`","labels":[]}`))
+	t.Chdir(t.TempDir())
+
+	if _, err, _ := newGateWorker(t, "working", "").gate(t, "--target", "worker", "--require-pr", "--timeout", "10s"); exitCode(err) != exitUsage {
+		t.Errorf("a --require-pr gate outside a repository exited %d (%v), want %d", exitCode(err), err, exitUsage)
+	}
+
+	w := newGateWorker(t, "working", "")
+	go w.attaches(report{status: "done", pr: 12, sha: gateHeadA, note: "green"})
+	out, err, _ := w.gate(t, "--target", "worker", "--require-pr", "--repo", repo.Root, "--timeout", "10s")
+	if err != nil {
+		t.Fatalf("gate did not release: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(asked)
+	if err != nil {
+		t.Fatalf("gh was never asked: %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(repo.Root)
+	if dir, _ := filepath.EvalSymlinks(strings.TrimSpace(string(got))); dir != want {
+		t.Errorf("gh was asked in %s, want the repository %s", dir, want)
 	}
 }
 

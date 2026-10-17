@@ -80,7 +80,7 @@ Branch on the code, not on the message. The full table is in
 worktender start <issue> [--role <role>] [--model <model>] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
 worktender dispatch --pane <id> --name <agent> [--role <role>] [--model <model>] [--permission-mode <mode>] [--resume]
 worktender report --status planned|blocked|done [--pr N] --note <text>
-worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--timeout 15m] [--dagr]
+worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--repo <path>] [--timeout 15m] [--dagr]
 ```
 
 ## Starting a worker as a role
@@ -877,12 +877,17 @@ into faking a report can read the secret out of the same context and include it.
 Treat a `done` as a claim. Check the pull request it names.
 
 **A `done` is bound to a commit.** `report` fills a `sha:` slot from `git
-rev-parse HEAD` in the worker's checkout; the worker cannot type it. Under
-`--require-pr` the gate asks gh for the PR's `headRefOid` after it releases, and
-a done whose sha is not that head — the worker pushed after reporting — or that
-names no commit is refused with exit 3, outcome `head_moved`, naming both short
-SHAs. Merge with `gh pr merge <N> --match-head-commit <sha>`, so a push after
-the gate is refused by GitHub too.
+rev-parse HEAD` in the worker's checkout, not from a flag. Under `--require-pr`
+the gate asks gh for the PR's `headRefOid` after it releases, in the repository
+`--repo` names (default: the one the gate runs in), and a done whose sha is not
+that head — the worker pushed after reporting — or that names no commit is
+refused with exit 3, outcome `head_moved`, naming both short SHAs. Merge with
+`gh pr merge <N> --match-head-commit <sha>`, so a push after the gate is refused
+by GitHub too.
+
+This catches an accidental or late push, not a hostile worker: like every other
+slot, the sha is only as honest as whatever is in the pane, which can print a
+well-formed envelope or set the pane's tokens itself.
 
 The gate says as much on every outcome, as **evidence**: the release line and
 every failure message end with it, and `--json` carries it as a field.
