@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -599,6 +600,70 @@ func TestReviewHandsTheReviewerFilesForTheRecordedCommit(t *testing.T) {
 	payload, _, _, _ := approvalPayload(42, readyTitle, readyBody)
 	if !strings.Contains(string(issue), payload) || !strings.Contains(string(issue), "UNTRUSTED DATA") {
 		t.Errorf("issue.md must carry the approved payload under the untrusted framing; got:\n%s", issue)
+	}
+}
+
+// A slice over the cap is reviewed as risk:high whatever its labels say, and
+// only its non-test lines count: tests are cheap to read, and the file
+// headers are not changes.
+func TestReviewFlagsADiffOverTheSliceCap(t *testing.T) {
+	diffOf := func(nonTest int) string {
+		var b strings.Builder
+		b.WriteString("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,2 +1,300 @@\n -kept\n")
+		for i := 0; i < nonTest; i++ {
+			b.WriteString([]string{"+added\n", "-removed\n"}[i%2])
+		}
+		b.WriteString("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n@@ -0,0 +1,500 @@\n")
+		b.WriteString(strings.Repeat("+test\n", 500))
+		return b.String()
+	}
+	run := func(t *testing.T, nonTest int, args ...string) (string, string) {
+		t.Helper()
+		server, _, gh := fakeReview(t, greenPR)
+		gh.write("diff.txt", diffOf(nonTest))
+		stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
+		var out strings.Builder
+		if err := reviewCommand(append([]string{"17"}, args...), &out); err != nil {
+			t.Fatalf("review: %v", err)
+		}
+		typed := calledWith(server, "pane.send_text")
+		if len(typed) != 1 {
+			t.Fatalf("want one brief typed; got %+v", typed)
+		}
+		return out.String(), typed[0].Params["text"].(string)
+	}
+
+	for _, tc := range []struct {
+		nonTest int
+		over    bool
+	}{{sliceCap, false}, {sliceCap + 1, true}} {
+		out, brief := run(t, tc.nonTest, "--json")
+		doc := reviewDoc(t, out)
+		if doc.NonTestLines != tc.nonTest || doc.RiskHigh != tc.over {
+			t.Errorf("%d non-test lines: document says %d and risk_high %v, want %v", tc.nonTest, doc.NonTestLines, doc.RiskHigh, tc.over)
+		}
+		if strings.Contains(brief, "adversarially") != tc.over {
+			t.Errorf("%d non-test lines: adversarial brief is %v, want %v: %q", tc.nonTest, !tc.over, tc.over, brief)
+		}
+
+		out, _ = run(t, tc.nonTest)
+		line := fmt.Sprintf("over the slice cap: %d non-test lines; split or review adversarially", tc.nonTest)
+		if strings.Contains(out, line) != tc.over {
+			t.Errorf("%d non-test lines: cap line printed is %v, want %v:\n%s", tc.nonTest, !tc.over, tc.over, out)
+		}
+	}
+}
+
+// A file is a test file only if it is one on both sides of the diff: moving
+// production code into a _test.go name takes it out of the build.
+func TestNonTestLinesCountsCodeRenamedIntoATestFile(t *testing.T) {
+	diff := "diff --git a/x.go b/x_test.go\nsimilarity index 50%\nrename from x.go\nrename to x_test.go\n" +
+		"--- a/x.go\n+++ b/x_test.go\n@@ -1,2 +1,1 @@\n-func f() {}\n-func g() {}\n+func h() {}\n" +
+		"diff --git a/y_test.go b/y_test.go\n--- a/y_test.go\n+++ b/y_test.go\n@@ -1 +1 @@\n-old\n+new\n" +
+		"diff --git \"a/q\\tq_test.go\" \"b/q\\tq_test.go\"\n--- \"a/q\\tq_test.go\"\n+++ \"b/q\\tq_test.go\"\n@@ -1 +1 @@\n-old\n+new\n" +
+		"diff --git a/z.go b/z.go\ndeleted file mode 100644\n--- a/z.go\n+++ /dev/null\n@@ -1 +0,0 @@\n--- not a header\n"
+	if n := nonTestLines([]byte(diff)); n != 4 {
+		t.Errorf("nonTestLines = %d, want 4: the renamed file's three and the deleted file's one, none from the test files", n)
 	}
 }
 

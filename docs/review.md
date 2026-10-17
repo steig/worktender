@@ -141,7 +141,11 @@ the outcome.
 ## `risk:high`
 
 A `risk:high` label on the PR or the issue asks for the stronger review. Either
-is enough: a label here only ever makes the review stricter. It does two things:
+is enough: a label here only ever makes the review stricter. So does size: a
+diff that adds or removes more than 300 lines outside `_test.go` files is
+reviewed as `risk:high` with no label, and review prints
+`over the slice cap: N non-test lines; split or review adversarially`. The
+count is `non_test_lines` in `--json`. Either way it does two things:
 
 - The brief asks the reviewer to review adversarially, for security, data loss
   and failure paths.
@@ -236,6 +240,7 @@ Written on the failure paths too, like `start --json`.
   "head": "0123456789abcdef0123456789abcdef01234567",
   "issue": 42,
   "risk_high": false,
+  "non_test_lines": 120,
   "approved": true,
   "inputs": "/home/me/.local/state/herdr/plugins/steig.worktender/review/17-0123456789ab-2614553904",
   "outcome": "verified",
