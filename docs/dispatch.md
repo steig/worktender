@@ -418,10 +418,20 @@ create factory:ready` and `gh label create factory:in-progress`.
   checkout herdr knows, is named for its number the way `start` names branches
   (`42` or `42-…`), or when it already carries `factory:in-progress`. Matching
   on the number rather than the whole name means an edited title still matches.
-- **Start, then relabel.** If the relabel fails after a successful start, the
-  issue stays labelled `factory:ready`, the pass exits **2**, and the next pass
-  skips it because its branch exists. The other order would leave an issue
-  labelled in progress with nothing working on it whenever a start failed.
+- **Claimed on origin before it starts.** Before each start the pass pushes
+  `refs/worktender/claims/<issue>` to origin, create-only. If the ref is
+  already there, another coordinator holds the issue: the pass skips it
+  (`claimed-elsewhere` in the notes and in `--json`) without spending a slot.
+  Claims live under `refs/worktender/`, so they never show up as branches. A
+  start that fails before it made a branch or checkout deletes its claim
+  again; one that fails later keeps it, since a worker may be live there, and
+  says so. A pass that cannot push the claim at all (no origin, no access, a
+  ruleset or hook refusing it) stops there and exits **2**.
+- **Claim, start, then relabel.** If the relabel fails after a successful
+  start, the issue stays labelled `factory:ready`, the pass exits **2**, and the
+  next pass skips it because its branch and claim exist. The other order would
+  leave an issue labelled in progress with nothing working on it whenever a
+  start failed.
 - **Approval is `start`'s to check**, for a manual start and a queued one alike;
   the factory does not restate it. When `start` refuses an issue (exit 3:
   edited since it was approved, or never approved by an account with write
@@ -435,12 +445,17 @@ create factory:ready` and `gh label create factory:in-progress`.
   herdr or gh unreachable) stops the pass.
 - **Closed issues lose `factory:in-progress`.** A worker's merged pull request
   closes its issue but leaves the label on it. Every pass, at the cap or not,
-  removes `factory:in-progress` from each closed issue still carrying it and
-  says which (`cleared` in `--json`); `--dry-run` only lists them. Open issues
-  and other labels are never touched. A failed removal is a warning: the pass
-  still works the queue, then exits **2**.
-- **Two passes at once can race** onto the same issue; nothing locks between
-  them. Run one loop, or one cron line under `flock`.
+  removes `factory:in-progress` from each closed issue still carrying it,
+  deletes that issue's claim ref, and says which (`cleared` in `--json`);
+  `--dry-run` only lists them. Open issues and other labels are never touched.
+  A failed removal is a warning: the pass still works the queue, then exits
+  **2**.
+- **A stale claim is cleared by hand.** Claims do not expire. One left behind —
+  a pass killed mid-start, a start that failed after making its checkout, or a
+  closed issue that never got its in-progress label — keeps that issue off
+  every queue until you delete it:
+  `git push origin :refs/worktender/claims/<issue>`. List them with
+  `git ls-remote origin 'refs/worktender/claims/*'`.
 
 ```sh
 worktender factory [--max <n>] [--repo <path>] [--dry-run] [--json]

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,19 +31,8 @@ func factoryFleet(t *testing.T, repo *herdrtest.Repo, busy []string, ready []que
 	t.Helper()
 
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
-	server.Handle("worktree.create", func(params map[string]any) (any, error) {
-		branch, _ := params["branch"].(string)
-		repo.AddWorktree(branch, branch)
-		return map[string]any{
-			"type": "workspace_created",
-			"workspace": map[string]any{
-				"workspace_id": "w9", "number": 9, "label": "issue", "focused": false,
-				"pane_count": 1, "tab_count": 1, "active_tab_id": "t1", "agent_status": "idle",
-			},
-			"root_pane": map[string]any{"pane_id": "w9:p1", "workspace_id": "w9", "tab_id": "t1", "index": 0},
-			"tab":       map[string]any{"tab_id": "t1", "workspace_id": "w9", "index": 0},
-		}, nil
-	})
+	server.Handle("worktree.create", createWorktree(repo))
+	bareOrigin(t, repo)
 
 	// Each workspace's pane is "<id>:p1", and its report is whatever followed
 	// the slash in its entry of busy: "idle/done" is an idle agent that has
@@ -87,6 +77,45 @@ func factoryFleet(t *testing.T, repo *herdrtest.Repo, busy []string, ready []que
 	server.HandleResult("workspace.list", map[string]any{"type": "workspace_list", "workspaces": workspaces})
 
 	return server, fakeFactoryGh(t, ready)
+}
+
+// createWorktree answers worktree.create by making the worktree for real, as
+// herdr would.
+func createWorktree(repo *herdrtest.Repo) herdrtest.Handler {
+	return func(params map[string]any) (any, error) {
+		branch, _ := params["branch"].(string)
+		repo.AddWorktree(branch, branch)
+		return map[string]any{
+			"type": "workspace_created",
+			"workspace": map[string]any{
+				"workspace_id": "w9", "number": 9, "label": "issue", "focused": false,
+				"pane_count": 1, "tab_count": 1, "active_tab_id": "t1", "agent_status": "idle",
+			},
+			"root_pane": map[string]any{"pane_id": "w9:p1", "workspace_id": "w9", "tab_id": "t1", "index": 0},
+			"tab":       map[string]any{"tab_id": "t1", "workspace_id": "w9", "index": 0},
+		}, nil
+	}
+}
+
+// bareOrigin gives repo a local bare repository as origin, holding main, so
+// claims are pushed somewhere real without reaching the network.
+func bareOrigin(t *testing.T, repo *herdrtest.Repo) {
+	t.Helper()
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	repo.Git("init", "--bare", "-b", "main", origin)
+	repo.Git("remote", "add", "origin", origin)
+	repo.Git("push", "-q", "origin", "main")
+}
+
+// claims is every claim ref on repo's origin.
+func claims(repo *herdrtest.Repo) []string {
+	var refs []string
+	for _, line := range strings.Split(repo.Git("ls-remote", "origin", claimRefPrefix+"*"), "\n") {
+		if _, ref, ok := strings.Cut(line, "\t"); ok {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
 }
 
 // reportTokens is the pane metadata a worker's `report --status <status>`
@@ -757,5 +786,158 @@ func TestFactoryDryRunAndRealPassResolveTheRepositoryTheyAreGiven(t *testing.T) 
 		if out := passFactory(t, args...); !strings.Contains(out, "repository: "+root) {
 			t.Errorf("factory %v should act on the repository it was given (%s):\n%s", args, root, out)
 		}
+	}
+}
+
+// The claim is on origin before start makes the worktree, which is what makes
+// it a lock: a second coordinator asking origin during the worker's whole run
+// finds it there.
+func TestFactoryClaimsAnIssueBeforeStartingIt(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+	create := createWorktree(repo)
+	var heldAtCreate []string
+	server.Handle("worktree.create", func(params map[string]any) (any, error) {
+		heldAtCreate = claims(repo)
+		return create(params)
+	})
+
+	out := passFactory(t)
+
+	if got := createdBranches(server); len(got) != 1 || got[0] != "5-five" {
+		t.Fatalf("started %v, want 5-five:\n%s", got, out)
+	}
+	if want := []string{claimRef(5)}; !slices.Equal(heldAtCreate, want) {
+		t.Errorf("claims on origin when the worktree was made = %q, want %q", heldAtCreate, want)
+	}
+	if got := repo.Git("branch", "--list", "--all", "*claims*"); got != "" {
+		t.Errorf("a claim must never read as a branch, got %q", got)
+	}
+}
+
+// Another coordinator's claim is skipped whatever commit it names. #5's names
+// the same base this pass would push, which git reports as "up to date" and
+// exits 0 for, so the exit status alone would read it as this pass's own claim.
+// #6's names another commit, which the create-only push is refused for.
+func TestFactorySkipsAnIssueAnotherCoordinatorClaimed(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}, {6, "Six", nil}, {7, "Seven", nil}})
+	repo.Git("push", "-q", "origin", "main:"+claimRef(5))
+	repo.Git("commit", "-q", "--allow-empty", "-m", "elsewhere")
+	repo.Git("push", "-q", "origin", "HEAD:"+claimRef(6))
+	repo.Git("reset", "-q", "--hard", "HEAD~1")
+
+	var out strings.Builder
+	if err := factoryCommand([]string{"--max", "1", "--json"}, &out); err != nil {
+		t.Fatalf("factory: %v\n%s", err, out.String())
+	}
+
+	if got := createdBranches(server); len(got) != 1 || got[0] != "7-seven" {
+		t.Errorf("started %v, want only 7-seven: a claimed issue must not hold the slot", got)
+	}
+	if got := readEdits(t, edits); len(got) != 1 || !strings.Contains(got[0], "issue edit 7 ") {
+		t.Errorf("label edits = %q, want only #7 relabelled", got)
+	}
+	var doc struct {
+		Issues []struct {
+			Issue   int    `json:"issue"`
+			Outcome string `json:"outcome"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out.String())
+	}
+	var outcomes []string
+	for _, i := range doc.Issues {
+		outcomes = append(outcomes, fmt.Sprintf("#%d %s", i.Issue, i.Outcome))
+	}
+	want := []string{"#5 " + factoryClaimedElsewhere, "#6 " + factoryClaimedElsewhere, "#7 " + factoryStarted}
+	if !slices.Equal(outcomes, want) {
+		t.Errorf("outcomes = %q, want %q", outcomes, want)
+	}
+}
+
+// A start that fails gives its claim back, so the issue is not held by nobody.
+func TestFactoryReleasesTheClaimOfAFailedStart(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	five := queued{5, "Five", nil}
+	_, edits := factoryFleet(t, repo, nil, []queued{five})
+	unapprove(t, edits, five)
+
+	var out strings.Builder
+	if err := factoryCommand(nil, &out); exitCode(err) != exitNeedsHuman {
+		t.Fatalf("exit %d (%v), want start's refusal:\n%s", exitCode(err), err, out.String())
+	}
+	if got := claims(repo); len(got) != 0 {
+		t.Errorf("claims on origin = %q, want none after a failed start:\n%s", got, out.String())
+	}
+}
+
+// The pass that takes the label off a closed issue deletes its claim too, and
+// leaves an open issue's claim alone. #3 closed with no claim at all, as an
+// issue started before claims existed did.
+func TestFactoryReleasesTheClaimOfAClosedIssue(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	_, edits := factoryFleet(t, repo, []string{"idle", "idle"}, nil)
+	repo.Git("push", "-q", "origin", "main:"+claimRef(4), "main:"+claimRef(9))
+	closeInProgress(t, edits, 3, 4)
+
+	out := passFactory(t)
+
+	if got, want := claims(repo), []string{claimRef(9)}; !slices.Equal(got, want) {
+		t.Errorf("claims on origin = %q, want only %q:\n%s", got, want, out)
+	}
+	if got := readEdits(t, edits); len(got) != 2 {
+		t.Errorf("label edits = %q, want #3 and #4 cleared", got)
+	}
+}
+
+// A start that fails after its worktree exists may have left an agent live in
+// it, and its branch is not on origin, so the claim is all that keeps another
+// machine off the issue. It stays, and the pass says how to clear it.
+func TestFactoryKeepsTheClaimOfAStartThatFailedAfterItsWorktree(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+	server.Handle("agent.start", func(map[string]any) (any, error) {
+		return nil, &herdrtest.CodedError{Code: "internal", Message: "agent would not start"}
+	})
+
+	var out strings.Builder
+	if err := factoryCommand(nil, &out); err == nil {
+		t.Fatalf("factory succeeded, want start's failure:\n%s", out.String())
+	}
+	if got := createdBranches(server); len(got) != 1 {
+		t.Fatalf("started %v, want the worktree made before the failure:\n%s", got, out.String())
+	}
+	if got, want := claims(repo), []string{claimRef(5)}; !slices.Equal(got, want) {
+		t.Errorf("claims on origin = %q, want %q kept:\n%s", got, want, out.String())
+	}
+	if !strings.Contains(out.String(), "git push origin :"+claimRef(5)) {
+		t.Errorf("the pass should say how to clear the kept claim:\n%s", out.String())
+	}
+}
+
+// A refusal from origin itself — here a hook, as a ruleset or missing
+// permission would be — is not another coordinator's claim. Read as one, every
+// issue would be skipped and the pass would exit 0 having started nothing.
+func TestFactoryTreatsARefusalFromOriginAsAnEnvironmentError(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}, {6, "Six", nil}})
+	hook := filepath.Join(repo.Git("remote", "get-url", "origin"), "hooks", "pre-receive")
+	herdrtest.WriteFile(t, hook, "#!/bin/sh\nexit 1\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	err := factoryCommand(nil, &out)
+	if got := exitCode(err); got != exitEnvironment {
+		t.Errorf("exit %d (%v), want exitEnvironment:\n%s", got, err, out.String())
+	}
+	if got := createdBranches(server); len(got) != 0 {
+		t.Errorf("started %v with no claim taken", got)
+	}
+	if strings.Contains(out.String(), factoryClaimedElsewhere) {
+		t.Errorf("a refusal from origin is not a claim held elsewhere:\n%s", out.String())
 	}
 }
