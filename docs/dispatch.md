@@ -516,9 +516,10 @@ dispatch does not raise the same alert every day forever.
 | `proof_loop` | a dispatch that reported `done` has had more gate runs and reports than the threshold since its last progress — the first `done`, or a later commit on its branch — with nothing new committed | `--max-proof-loop` (3) |
 | `escape_rate` | the upper bound of the escape rate's 95% interval is over this fraction, with at least 5 merged pull requests that could be checked | `--max-escape-rate` (0.05) |
 
-Every default is set to stay quiet on a healthy fleet and fire on one that
-plainly is not, because an alert that fires on ordinary work is switched off
-within a week and then catches nothing:
+Every default but the escape rate's is set to stay quiet on a healthy fleet
+and fire on one that plainly is not, because an alert that fires on ordinary
+work is switched off within a week and then catches nothing. The escape rate is
+a gate instead, and says so when it fires on a fleet that is clean so far:
 
 - **Ceremony 20 per 100 lines** is one coordination event for every five lines
   changed. An ordinary dispatch — a gate or two, a few inbox messages — over a
@@ -534,8 +535,9 @@ within a week and then catches nothing:
 - **Escape rate 0.05** is the exception: a gate, not an alarm. It fires until
   the interval's upper bound is under one in twenty, so a fleet has to show it
   is safe rather than merely look it — with no escapes at all, that takes
-  73 checked merges. Escapes are found by revert and blame phrasing, so the
-  true rate is no lower than the measured one. Under the **floor of 5** it
+  73 checked merges, and until then the alert ends "no escapes seen, but not
+  yet enough merges to show the rate is under 5%". Escapes are found by revert
+  and blame phrasing, so the true rate is no lower than the measured one. Under the **floor of 5** it
   stays quiet, and plain `stats` says there is not enough data yet.
 
 The watch mod does not run `--check`; wire it into cron, or a mod, yourself.

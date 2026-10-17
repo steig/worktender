@@ -112,10 +112,22 @@ func checkStats(dispatches []*statsDispatch, th statsThresholds, window time.Dur
 	s := summarise(dispatches)
 	if s.Escapes != nil && s.EscapesChecked >= escapeAlertFloor {
 		if _, hi := wilson(*s.Escapes, s.EscapesChecked); hi > th.escapeRate {
+			// A fleet that is clean so far has not failed anything, only not
+			// passed yet; the tail keeps that from reading as an alarm.
+			gate := ""
+			if k, p := *s.Escapes, float64(*s.Escapes)/float64(s.EscapesChecked); k == 0 || p <= th.escapeRate {
+				seen := "no escapes seen"
+				if k > 0 {
+					seen = fmt.Sprintf("the measured rate is within %.4g%%", th.escapeRate*100)
+				}
+				gate = fmt.Sprintf("; %s, but not yet enough merges to show the rate is under %.4g%%", seen, th.escapeRate*100)
+			}
+			// Three places, not two: 0/72's 0.0507 must not read as 0.05
+			// against a threshold of 0.05.
 			alerts = append(alerts, statsAlert{
-				Kind: alertEscapeRate, Value: round2(hi), Threshold: th.escapeRate,
-				Message: fmt.Sprintf("escape rate %s of merged PRs reverted or blamed for a regression within %s: the 95%% interval reaches past %.4g%%",
-					escapeFigure(*s.Escapes, s.EscapesChecked), days(window), th.escapeRate*100),
+				Kind: alertEscapeRate, Value: math.Round(hi*1000) / 1000, Threshold: th.escapeRate,
+				Message: fmt.Sprintf("escape rate %s of merged PRs reverted or blamed for a regression within %s: the 95%% interval reaches past %.4g%%%s",
+					escapeFigure(*s.Escapes, s.EscapesChecked), days(window), th.escapeRate*100, gate),
 			})
 		}
 	}

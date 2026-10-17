@@ -214,7 +214,7 @@ func statsCommand(args []string, out io.Writer) error {
 	th := defaultThresholds
 	fs.Float64Var(&th.ceremonyRatio, "max-ceremony-ratio", th.ceremonyRatio, "alert on a dispatch with more ceremony than this per 100 changed lines")
 	fs.IntVar(&th.proofLoop, "max-proof-loop", th.proofLoop, "alert on a dispatch with more gate runs and reports than this since done with no new commit")
-	fs.Float64Var(&th.escapeRate, "max-escape-rate", th.escapeRate, "alert when more than this fraction of merged pull requests escaped")
+	fs.Float64Var(&th.escapeRate, "max-escape-rate", th.escapeRate, "alert when the upper bound of the 95% interval on the fraction of merged pull requests that escaped is over this")
 	if err := fs.Parse(args); err != nil {
 		return usagef("%v; %s", err, statsUsage)
 	}
