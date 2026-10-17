@@ -54,6 +54,9 @@ const (
 	factoryWouldStart = "would_start"
 	factorySkipped    = "skipped"
 	factoryFailed     = "failed"
+	// factoryClaimedElsewhere is an issue whose claim ref another coordinator
+	// already holds on origin.
+	factoryClaimedElsewhere = "claimed-elsewhere"
 )
 
 func factoryCommand(args []string, out io.Writer) error {
@@ -183,23 +186,46 @@ func factoryCommand(args []string, out io.Writer) error {
 			continue
 		}
 
-		// THE ORDER IS START, THEN THE LABEL. The other order — claim the issue
-		// by labelling it, then start — fails worse. A start that fails after
-		// the claim leaves an issue labelled in-progress with nobody working
-		// on it: gone from the queue and looking handled to anyone reading the
-		// board. Starting first, the failure left over is a label swap that did
-		// not happen after a worker did, and the next pass meets that issue
-		// still labelled ready — and skips it, because its branch exists.
+		// THE ORDER IS CLAIM, START, THEN THE LABEL. The branch check above
+		// only sees this machine's branches and whatever has been pushed, and a
+		// worker's branch is not pushed until its pull request opens, so two
+		// coordinators could both pass it for a whole worker run. The claim is
+		// the lock: a ref on origin that only one push can create. It is taken
+		// before the start and given back if the start fails, so a failure
+		// leaves the issue on the queue rather than held by nobody.
 		//
-		// That is the guarantee, and it rests on the branch rather than on the
-		// label: start names the branch for the issue number, and git and herdr
-		// are asked for it before every start. The label is the board's view
-		// for humans, kept in step on a best-effort basis.
+		// The label comes last, as the board's view for humans, kept in step on
+		// a best-effort basis. Labelling first would leave an issue marked in
+		// progress whenever a start failed; labelling last, the failure left
+		// over is a swap that did not happen after a worker did, and the next
+		// pass skips that issue because its branch and its claim exist.
+		claimed, err := claimIssue(s.root, candidate.Number)
+		if err != nil {
+			entry.Outcome, entry.Reason = factoryFailed, jsonout.String(err.Error())
+			doc.Issues = append(doc.Issues, entry)
+			fmt.Fprintf(notes, "failed to claim #%d: %v\n", candidate.Number, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("claim #%d: %w", candidate.Number, err)
+			}
+			break
+		}
+		if !claimed {
+			reason := "another coordinator holds " + claimRef(candidate.Number) + " on origin"
+			entry.Outcome, entry.Reason = factoryClaimedElsewhere, jsonout.String(reason)
+			doc.Issues = append(doc.Issues, entry)
+			fmt.Fprintf(notes, "skipped #%d: %s: %s\n", candidate.Number, factoryClaimedElsewhere, reason)
+			continue
+		}
+
 		fmt.Fprintf(notes, "\nstarting #%d: %s\n", candidate.Number, candidate.Title)
 		startDoc, err := runStart(s.root, candidate.Number, *asJSON, out)
 		entry.Start = startDoc
 		if err != nil {
 			entry.Outcome, entry.Reason = factoryFailed, jsonout.String(err.Error())
+			if rErr := releaseClaim(s.root, candidate.Number); rErr != nil {
+				fmt.Fprintf(notes, "warning: #%d did not start and still holds its claim; clear it with `git push origin :%s`: %v\n",
+					candidate.Number, claimRef(candidate.Number), rErr)
+			}
 			// start is where an issue's approval is checked — factoryApproval:
 			// a write-access account's `worktender approve` hash must match the
 			// issue as it stands — so manual starts and this queue cannot
@@ -377,10 +403,10 @@ func swapLabel(root string, number int) error {
 }
 
 // clearClosedInProgress takes factory:in-progress off every closed issue that
-// still carries it, and says which. A worker's pull request closes its issue
-// when it merges, and nothing else takes the label off: without this, closed
-// issues read as work in progress and the label stops being a filter for what
-// is.
+// still carries it, and its claim ref off origin, and says which. A worker's
+// pull request closes its issue when it merges, and nothing else takes the
+// label off: without this, closed issues read as work in progress and the
+// label stops being a filter for what is.
 //
 // Only closed issues are asked for, so an open one is never touched, and only
 // that label is removed. A dry run lists what it would clear and clears
@@ -398,12 +424,39 @@ func clearClosedInProgress(root string, dryRun bool, notes io.Writer, doc *facto
 	}
 	slices.SortFunc(closed, func(a, b issue) int { return a.Number - b.Number })
 
+	// Only the claims that exist are deleted: an issue started before claims
+	// were taken has none, and deleting a ref that is not there is not
+	// something every server accepts.
+	var claims []string
+	if len(closed) > 0 && !dryRun {
+		listed, err := factoryGit(root, "ls-remote", "--refs", "origin", claimRefPrefix+"*")
+		if err != nil {
+			return fmt.Errorf("list claims on origin: %w", err)
+		}
+		for _, line := range strings.Split(listed, "\n") {
+			if _, ref, ok := strings.Cut(line, "\t"); ok {
+				claims = append(claims, ref)
+			}
+		}
+	}
+
 	for _, c := range closed {
 		entry := factoryClearedJSON{Issue: c.Number, Title: c.Title}
 		if dryRun {
 			doc.Cleared = append(doc.Cleared, entry)
 			fmt.Fprintf(notes, "would remove %s from closed #%d: %s\n", labelFactoryInProgress, c.Number, c.Title)
 			continue
+		}
+		// The claim goes before the label: a pass only finds this issue again
+		// while the label is on it, so a claim left behind a removed label
+		// would never be released.
+		if slices.Contains(claims, claimRef(c.Number)) {
+			if err := releaseClaim(root, c.Number); err != nil {
+				entry.Reason = jsonout.String(err.Error())
+				doc.Cleared = append(doc.Cleared, entry)
+				return fmt.Errorf("release the claim of closed #%d: %w", c.Number, err)
+			}
+			fmt.Fprintf(notes, "released %s of closed #%d\n", claimRef(c.Number), c.Number)
 		}
 		if _, err := factoryGh(root, "issue", "edit", strconv.Itoa(c.Number), "--remove-label", labelFactoryInProgress); err != nil {
 			entry.Reason = jsonout.String(err.Error())
@@ -473,6 +526,72 @@ func factoryGh(root string, args ...string) ([]byte, error) {
 		return nil, withCode(exitEnvironment, fmt.Errorf("gh %s: %w; check `gh auth status`", args[0]+" "+args[1], err))
 	}
 	return out, nil
+}
+
+// claimRef is where a coordinator's claim on an issue lives on origin: under
+// refs/worktender/ rather than refs/heads/, so it never shows up as a branch.
+func claimRef(number int) string {
+	return claimRefPrefix + strconv.Itoa(number)
+}
+
+const claimRefPrefix = "refs/worktender/claims/"
+
+// claimIssue creates the issue's claim ref on origin, and says whether this
+// pass now holds it. False with no error is another coordinator holding it.
+//
+// The empty lease makes the push create-only, and origin checks it as it
+// updates the ref, so of two pushes racing for one claim exactly one creates
+// it. The exit status does not say which: a push of the same commit to a ref
+// that already holds it is "up to date" and exits 0, and two coordinators
+// claiming from the same base push the same commit. So the claim is read from
+// the porcelain status, where only "*" is a ref this push created.
+func claimIssue(root string, number int) (bool, error) {
+	ref := claimRef(number)
+	base := gitx.BaseRef(root)
+	sha := gitx.Commit(root, base)
+	if sha == "" {
+		return false, withCode(exitEnvironment, fmt.Errorf("resolve %s in %s to claim #%d on", base, root, number))
+	}
+	out, err := factoryGit(root, "push", "--porcelain", "origin", sha+":"+ref, "--force-with-lease="+ref+":")
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 || !strings.HasSuffix(fields[1], ":"+ref) {
+			continue
+		}
+		switch fields[0] {
+		case "*":
+			return true, nil
+		case "=", "!":
+			return false, nil
+		}
+	}
+	if err == nil {
+		err = withCode(exitEnvironment, fmt.Errorf("git push reported nothing for %s:\n%s", ref, out))
+	}
+	return false, err
+}
+
+// releaseClaim deletes the issue's claim ref from origin.
+func releaseClaim(root string, number int) error {
+	_, err := factoryGit(root, "push", "--porcelain", "origin", ":"+claimRef(number))
+	return err
+}
+
+// factoryGit runs git in root and returns its stdout, carrying stderr in the
+// error, for the calls that reach origin.
+func factoryGit(root string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			err = fmt.Errorf("%w: %s", err, msg)
+		}
+		return string(out), withCode(exitEnvironment, fmt.Errorf("git %s: %w", args[0], err))
+	}
+	return string(out), nil
 }
 
 // takenBranches is every name an issue's work could already be living under:
@@ -563,7 +682,7 @@ type factoryClearedJSON struct {
 type factoryIssueJSON struct {
 	Issue int    `json:"issue"`
 	Title string `json:"title"`
-	// Outcome is started, would_start, skipped or failed.
+	// Outcome is started, would_start, skipped, claimed-elsewhere or failed.
 	Outcome string `json:"outcome"`
 	// Reason is why it was skipped or failed, and on a started issue why its
 	// label could not be swapped.

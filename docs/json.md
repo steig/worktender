@@ -729,9 +729,10 @@ $ worktender factory --repo . --json
   `max` was measured against.
 - **`issues`** is every issue the pass looked at, in the order it looked. Issues
   further down the queue than the free slots reached are not listed.
-- **`outcome`** is `started`, `would_start` (under `--dry-run`), `skipped` or
-  `failed`. **`reason`** says why for the last two, and on a `started` issue
-  with `label_swapped` false, why the relabel failed.
+- **`outcome`** is `started`, `would_start` (under `--dry-run`), `skipped`,
+  `claimed-elsewhere` (another coordinator holds the issue's claim ref on
+  origin) or `failed`. **`reason`** says why for the last three, and on a
+  `started` issue with `label_swapped` false, why the relabel failed.
 - **`start`** is `start --json`'s own document for that issue, carried whole
   rather than written beside this one, so stdout stays one document. Null when
   start did not run.
