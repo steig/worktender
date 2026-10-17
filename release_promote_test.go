@@ -68,3 +68,42 @@ func TestPromoteRefusesSomethingThatIsNotATag(t *testing.T) {
 		}
 	}
 }
+
+// A checksums.txt that downloads but names no file would let the loop over its
+// names verify nothing, and promote a release install.sh cannot install from.
+func TestPromoteRefusesChecksumsThatNameNothing(t *testing.T) {
+	for name, sums := range map[string]string{
+		"one column":       "abc\ndef\n",
+		"blank lines":      " \n\t\n",
+		"star but no name": "abc  *\n",
+	} {
+		calls, err := runPromote(t, gh{
+			releaseExists: true,
+			view:          "false\nworktender_linux_amd64\nchecksums.txt\n",
+			checksums:     sums,
+		}, "v1.2.3")
+		if err == nil {
+			t.Errorf("%s: release-promote.sh made the release latest", name)
+		}
+		for _, c := range calls {
+			if c.subcommand() == "release edit" {
+				t.Errorf("%s: release-promote.sh ran %v", name, c)
+			}
+		}
+	}
+}
+
+// Without -e, grep reads an asset name that starts with "-" as an option.
+func TestPromoteChecksAnAssetNamedLikeAFlag(t *testing.T) {
+	calls, err := runPromote(t, gh{
+		releaseExists: true,
+		view:          "false\n-v\nchecksums.txt\n",
+		checksums:     "abc  -v\n",
+	}, "v1.2.3")
+	if err != nil {
+		t.Fatalf("release-promote.sh failed: %v", err)
+	}
+	if edit := last(t, calls); edit.subcommand() != "release edit" {
+		t.Fatalf("promote ended on %v, want release edit", edit)
+	}
+}
