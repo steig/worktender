@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -84,7 +86,7 @@ func TestStatsCheckAlertsOnEscapeRate(t *testing.T) {
 	if exitCode(err) != exitNeedsHuman {
 		t.Fatalf("exit %d, want 3", exitCode(err))
 	}
-	if strings.Count(out, "\n") != 1 || !strings.Contains(out, "alert: escape rate: 3 of 5 merged PRs (60%)") {
+	if strings.Count(out, "\n") != 1 || !strings.Contains(out, "alert: escape rate 3/5 (23–88%) of merged PRs") {
 		t.Errorf("want one escape-rate alert:\n%s", out)
 	}
 
@@ -97,8 +99,105 @@ func TestStatsCheckAlertsOnEscapeRate(t *testing.T) {
 	if err := json.Unmarshal([]byte(buf.String()), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Alerts) != 1 || doc.Alerts[0].Kind != alertEscapeRate || doc.Alerts[0].Issue != nil || doc.Alerts[0].Value != 0.6 {
-		t.Errorf("alerts = %+v, want one fleet-wide escape_rate at 0.6", doc.Alerts)
+	if len(doc.Alerts) != 1 || doc.Alerts[0].Kind != alertEscapeRate || doc.Alerts[0].Issue != nil || doc.Alerts[0].Value != 0.882 {
+		t.Errorf("alerts = %+v, want one fleet-wide escape_rate at its upper bound, 0.882", doc.Alerts)
+	}
+}
+
+// cleanMergesFixture lays down n merged dispatches in one repository, none of
+// which escaped.
+func cleanMergesFixture(t *testing.T, n int) {
+	t.Helper()
+	path := withLedger(t)
+	var lines []string
+	for i := 1; i <= n; i++ {
+		lines = append(lines,
+			fmt.Sprintf(`{"v":1,"event":"start","at":"2026-08-01T10:00:00Z","repository":"/r","branch":"%d-x","issue":%d,"origin":"git@github.com:o/r.git","agent_kind":"claude","agent_name":"wt-%d"}`, i, i, i),
+			fmt.Sprintf(`{"v":1,"event":"report","at":"2026-08-01T11:00:00Z","repository":"/r","branch":"%d-x","status":"done","pr":%d}`, i, 100+i))
+	}
+	herdrtest.WriteFile(t, path, strings.Join(lines, "\n")+"\n")
+	herdrtest.FakeGh(t, `case "$1 $2" in
+"pr view") `+herdrtest.CatScript(t, `{"state":"MERGED","additions":10,"deletions":0,"title":"feat: x","mergedAt":"2026-10-01T12:00:00Z","mergeCommit":{"oid":"abc1234def5678abc1234def5678abc1234def56"}}`)+` ;;
+*) echo '[]' ;;
+esac`)
+}
+
+// No escapes in 30 merges is 0–11%: clean as far as it goes, but not yet
+// shown to be under one in twenty.
+func TestStatsCheckDefaultEscapeRateIsFivePercent(t *testing.T) {
+	cleanMergesFixture(t, 30)
+	out, err := runCheck(t, "--since", "0")
+	if exitCode(err) != exitNeedsHuman || !strings.Contains(out, "alert: escape rate 0/30 ") ||
+		!strings.HasSuffix(out, "; no escapes seen, but not yet enough merges to show the rate is under 5%\n") {
+		t.Errorf("want an escape-rate alert against 5%%, got exit %d:\n%s", exitCode(err), out)
+	}
+	if out, err := runCheck(t, "--since", "0", "--max-escape-rate", "0.2"); err != nil || out != "" {
+		t.Errorf("at 0.2 the interval is under the threshold; got %q, %v", out, err)
+	}
+}
+
+func TestWilsonInterval(t *testing.T) {
+	for _, c := range []struct {
+		k, n   int
+		lo, hi float64
+	}{
+		{0, 13, 0, 0.2281},
+		{1, 20, 0.0089, 0.2361},
+		{0, 72, 0, 0.0507},
+		{0, 73, 0, 0.0500},
+	} {
+		lo, hi := wilson(c.k, c.n)
+		if math.Abs(lo-c.lo) > 0.0001 || math.Abs(hi-c.hi) > 0.0001 {
+			t.Errorf("wilson(%d, %d) = %.4f–%.4f, want %.4f–%.4f", c.k, c.n, lo, hi, c.lo, c.hi)
+		}
+	}
+	// The 5% gate opens between 72 and 73 escape-free merges.
+	if _, hi := wilson(0, 72); hi <= 0.05 {
+		t.Errorf("0/72 upper bound %.5f, want over 0.05", hi)
+	}
+	if _, hi := wilson(0, 73); hi > 0.05 {
+		t.Errorf("0/73 upper bound %.5f, want at most 0.05", hi)
+	}
+}
+
+// One escape in twenty is 5% measured, but 0.89–23.6% is not yet shown under
+// 5%: the alert says the measured rate is within it, not that it is clean.
+func TestStatsCheckEscapeAlertSaysAMeasuredRateWithinTheGate(t *testing.T) {
+	var dispatches []*statsDispatch
+	for i := 0; i < 20; i++ {
+		d := &statsDispatch{facts: &prFacts{State: "MERGED"}, escapeKnown: true}
+		if i == 0 {
+			d.escape = &escapeFinding{}
+		}
+		dispatches = append(dispatches, d)
+	}
+	alerts := checkStats(dispatches, defaultThresholds, defaultEscapeWindow)
+	if len(alerts) != 1 || !strings.HasSuffix(alerts[0].Message, "; the measured rate is within 5%, but not yet enough merges to show the rate is under 5%") {
+		t.Errorf("alerts = %+v", alerts)
+	}
+}
+
+func TestStatsCheckReportsAnIntervalForTheEscapeRate(t *testing.T) {
+	cleanMergesFixture(t, 13)
+	var out strings.Builder
+	if err := statsCommand(nil, &out); err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if !strings.Contains(out.String(), "escape rate 0/13 (0–23%) of merged PRs reverted or blamed for a regression within 14d of merging\n") {
+		t.Errorf("want the escape rate with its interval:\n%s", out.String())
+	}
+
+	// Under the floor --check stays quiet, and plain stats says why.
+	cleanMergesFixture(t, 2)
+	if out, err := runCheck(t, "--since", "0"); err != nil || out != "" {
+		t.Errorf("two merges raised %q, %v", out, err)
+	}
+	out.Reset()
+	if err := statsCommand(nil, &out); err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if !strings.Contains(out.String(), "escape rate 0/2 (0–66%) of merged PRs reverted or blamed for a regression within 14d of merging; under 5, not enough data to judge yet\n") {
+		t.Errorf("want too few merges said:\n%s", out.String())
 	}
 }
 

@@ -214,7 +214,7 @@ func statsCommand(args []string, out io.Writer) error {
 	th := defaultThresholds
 	fs.Float64Var(&th.ceremonyRatio, "max-ceremony-ratio", th.ceremonyRatio, "alert on a dispatch with more ceremony than this per 100 changed lines")
 	fs.IntVar(&th.proofLoop, "max-proof-loop", th.proofLoop, "alert on a dispatch with more gate runs and reports than this since done with no new commit")
-	fs.Float64Var(&th.escapeRate, "max-escape-rate", th.escapeRate, "alert when more than this fraction of merged pull requests escaped")
+	fs.Float64Var(&th.escapeRate, "max-escape-rate", th.escapeRate, "alert when the upper bound of the 95% interval on the fraction of merged pull requests that escaped is over this")
 	if err := fs.Parse(args); err != nil {
 		return usagef("%v; %s", err, statsUsage)
 	}
@@ -560,9 +560,13 @@ func renderStats(out io.Writer, dispatches []*statsDispatch, window time.Duratio
 		fmt.Fprintf(out, "per merged PR: median wall clock %s, %.2f attempts, rework rate %.0f%%, %.2f ceremony\n",
 			wall, *s.AttemptsPerMergedPR, *s.ReworkRate*100, *s.CeremonyPerMergedPR)
 	}
-	if s.EscapeRate != nil {
-		fmt.Fprintf(out, "escapes: %d of %d merged PRs (%.0f%%) reverted or blamed for a regression within %s of merging\n",
-			*s.Escapes, s.EscapesChecked, *s.EscapeRate*100, days(window))
+	if s.Escapes != nil {
+		enough := ""
+		if s.EscapesChecked < escapeAlertFloor {
+			enough = fmt.Sprintf("; under %d, not enough data to judge yet", escapeAlertFloor)
+		}
+		fmt.Fprintf(out, "escape rate %s of merged PRs reverted or blamed for a regression within %s of merging%s\n",
+			escapeFigure(*s.Escapes, s.EscapesChecked), days(window), enough)
 	}
 	if unanswered > 0 {
 		fmt.Fprintf(out, "gh could not answer for %d pull request(s), so MERGED reads ? there; `worktender stats --json` carries why\n", unanswered)
