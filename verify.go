@@ -31,7 +31,9 @@ import (
 // approval start insists on, because they are run as shell commands: what runs
 // is what a person approved byte for byte. Each runs in an export of the
 // commit's tracked files, never in a checkout, for the reason draft's drafter
-// does (exportTracked), and under a timeout.
+// does (exportTracked), and under a timeout. Neither is a sandbox: the
+// approved command is trusted, but the head it runs, a test file most of all,
+// is the change under verification, and it runs as the user.
 
 const verifyUsage = "usage: worktender verify <issue> [--pr <n>] [--repo <path>] [--timeout 10m] [--json]"
 

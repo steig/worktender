@@ -279,6 +279,12 @@ the head's, the same `git archive` export `draft` uses, never in a checkout.
 Each run has `--timeout` (default ten minutes). With `--pr`, the PR's head has
 to be in the local repository already; `verify` says how to fetch it.
 
+**The export is not a sandbox.** It keeps your checkout's untracked files out of
+the way, nothing more. A check like `go test` runs the head's code as you, with
+your environment, your `$HOME` and your network, so `--pr` on a pull request
+whose code you have not read runs that code with your credentials. Verify heads
+you would run the tests of anyway.
+
 The outcome is judged as written: `exits 0`, `exits 1`, `exits non-zero`,
 `prints nothing` (no output on stdout or stderr), or `prints <text>` (the
 output contains it). Each check is then one of:

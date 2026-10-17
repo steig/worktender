@@ -546,10 +546,11 @@ func drafterArgs() []string {
 }
 
 // exportTracked writes the files rev tracks into a new 0700 directory and
-// returns it, with the function that removes it. The drafter and verify's
-// checks run there and not in the checkout, so what they can read is what
-// anyone cloning the repository can: no untracked .env, no ignored key, no
-// build output.
+// returns it, with the function that removes it. The drafter runs there and
+// not in the checkout, so what it can read is what anyone cloning the
+// repository can: no untracked .env, no ignored key, no build output. verify's
+// checks run there too, but that keeps only the checkout's untracked files out
+// of a check's way; a check is a process with the user's whole environment.
 //
 // It is `git archive <rev> | tar -x`, with the extracting done here so that
 // only directories and regular files are written, each under the export. A
