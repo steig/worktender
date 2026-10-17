@@ -6,6 +6,30 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.18.0] — 2026-10-16
+
+More of the factory safety plan (#253).
+
+### Added
+
+- **`WORKTENDER_APPROVERS`: approvals count only from listed logins.** (#273)
+  When set, an approval comment counts only if its author is on the list (case
+  insensitive) and has write access. A set but blank value allows nobody. It
+  stops a worker's own write-access account from approving; it does nothing
+  against a worker on your own token. `doctor` warns when it is unset.
+- **`factory` will not dispatch while `main` is red.** (#274) It reads the
+  default branch's latest completed `ci` runs, looking past cancelled, skipped
+  and neutral ones, and exits 3 naming the failed run's URL; `--dry-run` says
+  the same. When `gh` can't answer, it warns and continues.
+
+### Fixed
+
+- **`pr-feedback` reaches a worker that has just reported.** (#272) herdr shows
+  a finished agent nobody has looked at yet as `done`; notices went only to
+  `idle` agents, so the first review round was always deferred.
+- **`verify`'s full-suite checks no longer read as failing everywhere.** (#275)
+  A test that needs an upstream git checkout now skips inside verify's export.
+
 ## [0.17.0] — 2026-10-16
 
 The first slices of the factory safety plan (#253): the approval and merge
