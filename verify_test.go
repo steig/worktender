@@ -187,6 +187,12 @@ func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 		{"skipped", "func TestDouble(t *testing.T) { t.Skip(\"later\") }", "no changed test ran", exitNeedsHuman},
 		{"unfound", "var _ = testing.Short\n\nfunc TestDouble(t *T) {}\n\ntype T = testing.T",
 			"hold no test verify can find", exitNeedsHuman},
+		// The README beside the Go change is not code, so it keeps head's text
+		// and a test that reads only it passes on the revert.
+		{"README left alone", "import \"os\"\n\nfunc TestReadme(t *testing.T) { if b, _ := os.ReadFile(\"../README.md\"); string(b) != \"head\\n\" { t.Fatal(string(b)) } }",
+			"hollow: tests pass with the change reverted (TestReadme)", exitNeedsHuman},
+		{"go.mod reverted", "import (\"os\"; \"strings\")\n\nfunc TestGoMod(t *testing.T) { if b, _ := os.ReadFile(\"../go.mod\"); !strings.Contains(string(b), \"// head\") { t.Fatal(string(b)) } }",
+			"", exitOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := verifyRepo(t, "`test -f added.txt` exits 0")
@@ -198,6 +204,8 @@ func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
 			repo.Git("checkout", "42-the-thing")
 			repo.Git("rebase", "main")
 			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return 2 * x }\n\nfunc Triple(x int) int { return 3 * x }\n")
+			repo.Write("README.md", "head\n")
+			repo.Write("go.mod", "module example.com/m\n\ngo 1.21\n\n// head\n")
 			repo.Write("lib/lib_test.go", "package lib\n\nimport \"testing\"\n\n"+tc.test+"\n")
 			repo.Git("add", ".")
 			repo.Git("commit", "-m", "double it")
