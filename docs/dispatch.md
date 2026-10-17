@@ -363,6 +363,12 @@ create factory:ready` and `gh label create factory:in-progress`.
   `ls --reports` shows), or when its agent is gone: the pane closed or the
   worktree pruned. A report that cannot be read leaves the slot held. herdr has
   to be running, even for `--dry-run`, because the count comes from herdr.
+- **Nothing starts while the default branch is red.** Each pass asks gh for the
+  latest completed `ci` workflow run on the branch workers fork from
+  (`origin/HEAD`), looking past cancelled, skipped and neutral runs to the last
+  one that judged the code. If it failed, the pass starts nothing, names the
+  run's URL and exits **3**; `--dry-run` does the same. If gh cannot answer,
+  the pass warns and goes on.
 - **Oldest first,** by issue number.
 - **Never twice.** An issue is skipped when any local or remote branch, or any
   checkout herdr knows, is named for its number the way `start` names branches
