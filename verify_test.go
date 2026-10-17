@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +167,65 @@ func TestVerifyRefusesAPullRequestForAnotherIssue(t *testing.T) {
 				t.Fatalf("verify --pr 3 on %s: %v (exit %d); want exit %d\n%s", tc.branch, err, exitCode(err), tc.want, out.String())
 			}
 		})
+	}
+}
+
+// A test the worker wrote is graded only by passing, so verify runs the
+// changed tests with the changed code put back as it was on base: a test that
+// still passes there does not test the change.
+func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
+	t.Setenv("PATH", filepath.Join(runtime.GOROOT(), "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		name, test string
+		want       int
+	}{
+		{"hollow", "if Double(0) != 0 { t.Fatal(Double(0)) }", exitNeedsHuman},
+		{"needs the change", "if Double(2) != 4 { t.Fatal(Double(2)) }", exitOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := verifyRepo(t, "`test -f added.txt` exits 0")
+			repo.Git("checkout", "main")
+			repo.Write("go.mod", "module example.com/m\n\ngo 1.21\n")
+			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return x }\n")
+			repo.Git("add", ".")
+			repo.Git("commit", "-m", "the library")
+			repo.Git("checkout", "42-the-thing")
+			repo.Git("rebase", "main")
+			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return 2 * x }\n")
+			repo.Write("lib/lib_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestDouble(t *testing.T) {\n\t"+tc.test+"\n}\n")
+			repo.Git("add", ".")
+			repo.Git("commit", "-m", "double it")
+
+			var out strings.Builder
+			err := verifyCommand([]string{"42", "--repo", repo.Root}, &out)
+			if exitCode(err) != tc.want {
+				t.Fatalf("verify: %v (exit %d); want exit %d\n%s", err, exitCode(err), tc.want, out.String())
+			}
+			if tc.want == exitNeedsHuman && !strings.Contains(err.Error(), "hollow: tests pass with the change reverted (TestDouble)") {
+				t.Errorf("error = %v; want it to name the hollow test", err)
+			}
+			if tc.want == exitOK && !strings.Contains(out.String(), "revert: the changed tests fail with 2 non-test file(s) put back as on base") {
+				t.Errorf("output does not say the tests failed with the change reverted:\n%s", out.String())
+			}
+		})
+	}
+}
+
+func TestVerifySkipsTheRevertWithNoNonTestChange(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	repo.Git("checkout", "-b", "42-the-thing")
+	repo.Write("lib_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestNothing(t *testing.T) {}\n")
+	repo.Git("add", ".")
+	repo.Git("commit", "-m", "a test alone")
+	body := "## Acceptance\n- [ ] `test -f lib_test.go` exits 0\n"
+	newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, body, comment{"steig", approvalOf(t, readyTitle, body)}),
+		map[string]string{"steig": "admin"})
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {
+		t.Fatalf("verify: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "revert: skipped, the change touches no non-test file") {
+		t.Errorf("output does not say the revert was skipped:\n%s", out.String())
 	}
 }
