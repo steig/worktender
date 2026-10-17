@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
@@ -222,9 +224,11 @@ func factoryCommand(args []string, out io.Writer) error {
 		entry.Start = startDoc
 		if err != nil {
 			entry.Outcome, entry.Reason = factoryFailed, jsonout.String(err.Error())
-			if rErr := releaseClaim(s.root, candidate.Number); rErr != nil {
-				fmt.Fprintf(notes, "warning: #%d did not start and still holds its claim; clear it with `git push origin :%s`: %v\n",
-					candidate.Number, claimRef(candidate.Number), rErr)
+			// A start can fail after the worktree exists, with an agent maybe
+			// live in it. Its branch is not on origin, so the claim is the only
+			// thing keeping another machine off the issue, and it stays.
+			if rErr := releaseFailedClaim(s.root, candidate); rErr != nil {
+				fmt.Fprintf(notes, "warning: #%d did not start and still holds its claim: %v\n", candidate.Number, rErr)
 			}
 			// start is where an issue's approval is checked — factoryApproval:
 			// a write-access account's `worktender approve` hash must match the
@@ -424,22 +428,6 @@ func clearClosedInProgress(root string, dryRun bool, notes io.Writer, doc *facto
 	}
 	slices.SortFunc(closed, func(a, b issue) int { return a.Number - b.Number })
 
-	// Only the claims that exist are deleted: an issue started before claims
-	// were taken has none, and deleting a ref that is not there is not
-	// something every server accepts.
-	var claims []string
-	if len(closed) > 0 && !dryRun {
-		listed, err := factoryGit(root, "ls-remote", "--refs", "origin", claimRefPrefix+"*")
-		if err != nil {
-			return fmt.Errorf("list claims on origin: %w", err)
-		}
-		for _, line := range strings.Split(listed, "\n") {
-			if _, ref, ok := strings.Cut(line, "\t"); ok {
-				claims = append(claims, ref)
-			}
-		}
-	}
-
 	for _, c := range closed {
 		entry := factoryClearedJSON{Issue: c.Number, Title: c.Title}
 		if dryRun {
@@ -450,13 +438,10 @@ func clearClosedInProgress(root string, dryRun bool, notes io.Writer, doc *facto
 		// The claim goes before the label: a pass only finds this issue again
 		// while the label is on it, so a claim left behind a removed label
 		// would never be released.
-		if slices.Contains(claims, claimRef(c.Number)) {
-			if err := releaseClaim(root, c.Number); err != nil {
-				entry.Reason = jsonout.String(err.Error())
-				doc.Cleared = append(doc.Cleared, entry)
-				return fmt.Errorf("release the claim of closed #%d: %w", c.Number, err)
-			}
-			fmt.Fprintf(notes, "released %s of closed #%d\n", claimRef(c.Number), c.Number)
+		if err := releaseClaim(root, c.Number); err != nil {
+			entry.Reason = jsonout.String(err.Error())
+			doc.Cleared = append(doc.Cleared, entry)
+			return fmt.Errorf("release the claim of closed #%d: %w", c.Number, err)
 		}
 		if _, err := factoryGh(root, "issue", "edit", strconv.Itoa(c.Number), "--remove-label", labelFactoryInProgress); err != nil {
 			entry.Reason = jsonout.String(err.Error())
@@ -545,6 +530,10 @@ const claimRefPrefix = "refs/worktender/claims/"
 // that already holds it is "up to date" and exits 0, and two coordinators
 // claiming from the same base push the same commit. So the claim is read from
 // the porcelain status, where only "*" is a ref this push created.
+//
+// Of the refusals, only the lease's own say the ref exists. One from origin —
+// a ruleset, a hook, missing permission — would otherwise read as every issue
+// claimed elsewhere, and a pass that starts nothing would exit 0.
 func claimIssue(root string, number int) (bool, error) {
 	ref := claimRef(number)
 	base := gitx.BaseRef(root)
@@ -558,11 +547,17 @@ func claimIssue(root string, number int) (bool, error) {
 		if len(fields) < 2 || !strings.HasSuffix(fields[1], ":"+ref) {
 			continue
 		}
-		switch fields[0] {
-		case "*":
+		summary := strings.Join(fields[2:], " ")
+		switch {
+		case fields[0] == "*":
 			return true, nil
-		case "=", "!":
+		case fields[0] == "=":
 			return false, nil
+		case fields[0] == "!" && strings.HasPrefix(summary, "[rejected]") &&
+			(strings.Contains(summary, "(stale info)") || strings.Contains(summary, "(already exists)")):
+			return false, nil
+		case fields[0] == "!":
+			return false, withCode(exitEnvironment, fmt.Errorf("origin refused the claim %s: %s", ref, summary))
 		}
 	}
 	if err == nil {
@@ -571,17 +566,42 @@ func claimIssue(root string, number int) (bool, error) {
 	return false, err
 }
 
-// releaseClaim deletes the issue's claim ref from origin.
+// releaseFailedClaim gives back the claim of an issue whose start failed,
+// unless the start got far enough to leave a branch or checkout behind.
+func releaseFailedClaim(root string, candidate issue) error {
+	taken, err := takenBranches(root, nil)
+	if err != nil {
+		return err
+	}
+	if reason := alreadyStarted(candidate, taken); reason != "" {
+		return fmt.Errorf("%s; once nothing is working on it, clear it with `git push origin :%s`", reason, claimRef(candidate.Number))
+	}
+	return releaseClaim(root, candidate.Number)
+}
+
+// releaseClaim deletes the issue's claim ref from origin. A claim that is not
+// there is already released: an issue started before claims existed has none.
 func releaseClaim(root string, number int) error {
 	_, err := factoryGit(root, "push", "--porcelain", "origin", ":"+claimRef(number))
+	if err != nil && strings.Contains(err.Error(), "remote ref does not exist") {
+		return nil
+	}
 	return err
 }
 
+// factoryGitTimeout bounds each call to origin, so a hung remote fails the
+// pass rather than holding it, and the cron line behind it, forever.
+const factoryGitTimeout = time.Minute
+
 // factoryGit runs git in root and returns its stdout, carrying stderr in the
-// error, for the calls that reach origin.
+// error, for the calls that reach origin. It never prompts: from cron there is
+// nobody to answer.
 func factoryGit(root string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), factoryGitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

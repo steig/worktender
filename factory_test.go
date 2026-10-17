@@ -891,3 +891,53 @@ func TestFactoryReleasesTheClaimOfAClosedIssue(t *testing.T) {
 		t.Errorf("label edits = %q, want #3 and #4 cleared", got)
 	}
 }
+
+// A start that fails after its worktree exists may have left an agent live in
+// it, and its branch is not on origin, so the claim is all that keeps another
+// machine off the issue. It stays, and the pass says how to clear it.
+func TestFactoryKeepsTheClaimOfAStartThatFailedAfterItsWorktree(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+	server.Handle("agent.start", func(map[string]any) (any, error) {
+		return nil, &herdrtest.CodedError{Code: "internal", Message: "agent would not start"}
+	})
+
+	var out strings.Builder
+	if err := factoryCommand(nil, &out); err == nil {
+		t.Fatalf("factory succeeded, want start's failure:\n%s", out.String())
+	}
+	if got := createdBranches(server); len(got) != 1 {
+		t.Fatalf("started %v, want the worktree made before the failure:\n%s", got, out.String())
+	}
+	if got, want := claims(repo), []string{claimRef(5)}; !slices.Equal(got, want) {
+		t.Errorf("claims on origin = %q, want %q kept:\n%s", got, want, out.String())
+	}
+	if !strings.Contains(out.String(), "git push origin :"+claimRef(5)) {
+		t.Errorf("the pass should say how to clear the kept claim:\n%s", out.String())
+	}
+}
+
+// A refusal from origin itself — here a hook, as a ruleset or missing
+// permission would be — is not another coordinator's claim. Read as one, every
+// issue would be skipped and the pass would exit 0 having started nothing.
+func TestFactoryTreatsARefusalFromOriginAsAnEnvironmentError(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}, {6, "Six", nil}})
+	hook := filepath.Join(repo.Git("remote", "get-url", "origin"), "hooks", "pre-receive")
+	herdrtest.WriteFile(t, hook, "#!/bin/sh\nexit 1\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	err := factoryCommand(nil, &out)
+	if got := exitCode(err); got != exitEnvironment {
+		t.Errorf("exit %d (%v), want exitEnvironment:\n%s", got, err, out.String())
+	}
+	if got := createdBranches(server); len(got) != 0 {
+		t.Errorf("started %v with no claim taken", got)
+	}
+	if strings.Contains(out.String(), factoryClaimedElsewhere) {
+		t.Errorf("a refusal from origin is not a claim held elsewhere:\n%s", out.String())
+	}
+}

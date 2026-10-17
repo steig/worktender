@@ -420,8 +420,10 @@ create factory:ready` and `gh label create factory:in-progress`.
   already there, another coordinator holds the issue: the pass skips it
   (`claimed-elsewhere` in the notes and in `--json`) without spending a slot.
   Claims live under `refs/worktender/`, so they never show up as branches. A
-  start that fails deletes its claim again. A pass that cannot push the claim
-  at all (no origin, no access) stops there and exits **2**.
+  start that fails before it made a branch or checkout deletes its claim
+  again; one that fails later keeps it, since a worker may be live there, and
+  says so. A pass that cannot push the claim at all (no origin, no access, a
+  ruleset or hook refusing it) stops there and exits **2**.
 - **Claim, start, then relabel.** If the relabel fails after a successful
   start, the issue stays labelled `factory:ready`, the pass exits **2**, and the
   next pass skips it because its branch and claim exist. The other order would
@@ -446,8 +448,9 @@ create factory:ready` and `gh label create factory:in-progress`.
   A failed removal is a warning: the pass still works the queue, then exits
   **2**.
 - **A stale claim is cleared by hand.** Claims do not expire. One left behind —
-  a pass killed mid-start, or a closed issue that never got its in-progress
-  label — keeps that issue off every queue until you delete it:
+  a pass killed mid-start, a start that failed after making its checkout, or a
+  closed issue that never got its in-progress label — keeps that issue off
+  every queue until you delete it:
   `git push origin :refs/worktender/claims/<issue>`. List them with
   `git ls-remote origin 'refs/worktender/claims/*'`.
 
