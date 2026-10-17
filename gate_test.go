@@ -797,14 +797,14 @@ func TestGateWaitsThroughAProgressReport(t *testing.T) {
 // --require-pr is the other half of the predicate surface, and it is checked
 // against the validated slot rather than against anything the worker wrote.
 func TestGateHoldsForAPullRequestNumber(t *testing.T) {
-	fakePRHead(t, gateHeadA)
+	repo := fakePRHead(t, gateHeadA)
 	w := newGateWorker(t, "working", "")
 	go func() {
 		w.prints(report{status: "done", sha: gateHeadA, note: "green, pr is 12 honest"})
 		w.prints(report{status: "done", pr: 12, sha: gateHeadA, note: "green"})
 	}()
 
-	out, err, _ := w.gate(t, "--target", "worker", "--require-pr", "--timeout", "10s")
+	out, err, _ := w.gate(t, "--target", "worker", "--require-pr", "--repo", repo, "--timeout", "10s")
 	if err != nil {
 		t.Fatalf("gate did not release: %v\n%s", err, out)
 	}
@@ -818,11 +818,13 @@ const (
 	gateHeadB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
-// fakePRHead is gh answering that PR #12's head is head.
-func fakePRHead(t *testing.T, head string) {
+// fakePRHead is gh answering that PR #12's head is head, and a repository of
+// the test's own for --repo, so the gate never depends on where tests run.
+func fakePRHead(t *testing.T, head string) string {
 	t.Helper()
 	herdrtest.FakeGh(t, herdrtest.CatScript(t,
 		`{"number":12,"state":"OPEN","headRefName":"12-x","headRefOid":"`+head+`","baseRefOid":"`+gateHeadB+`","labels":[]}`))
+	return herdrtest.NewRepo(t).Root
 }
 
 // A push after the done is the head nobody verified, so under --require-pr a
@@ -838,11 +840,11 @@ func TestGateRefusesADoneForACommitThatIsNotTheHead(t *testing.T) {
 		{"no commit named", "", []string{"names no commit"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fakePRHead(t, gateHeadB)
+			repo := fakePRHead(t, gateHeadB)
 			w := newGateWorker(t, "working", "")
 			go w.attaches(report{status: "done", pr: 12, sha: tc.sha, note: "green"})
 
-			out, err, _ := w.gate(t, "--target", "worker", "--require-pr", "--json", "--timeout", "10s")
+			out, err, _ := w.gate(t, "--target", "worker", "--require-pr", "--repo", repo, "--json", "--timeout", "10s")
 			if exitCode(err) != exitNeedsHuman {
 				t.Fatalf("gate exited %d (%v), want %d\n%s", exitCode(err), err, exitNeedsHuman, out)
 			}
