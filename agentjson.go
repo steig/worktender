@@ -47,6 +47,11 @@ type startJSON struct {
 	// Launch is the role the agent was started as and why, null when no role
 	// applied — no configuration, or nothing in it that matched.
 	Launch *roles.LaunchJSON `json:"launch"`
+	// Model is what the agent was started with --model as, and ModelReason
+	// why: "flag", "label model:<name>" or "default". Both null when claude
+	// was left to pick its own.
+	Model       *string `json:"model"`
+	ModelReason *string `json:"model_reason"`
 	// Briefed records that the agent took the brief up, which is a separate
 	// fact from the agent having started: herdr answering ok means keystrokes
 	// were delivered, not that anything received them.

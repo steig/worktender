@@ -941,3 +941,80 @@ func TestFactoryTreatsARefusalFromOriginAsAnEnvironmentError(t *testing.T) {
 		t.Errorf("a refusal from origin is not a claim held elsewhere:\n%s", out.String())
 	}
 }
+
+// agentModels is the --model each agent.start was given, in order, "" for one
+// started without it.
+func agentModels(server *herdrtest.Server) []string {
+	var models []string
+	for _, call := range server.Calls() {
+		if call.Method != "agent.start" {
+			continue
+		}
+		args, _ := call.Params["args"].([]any)
+		model := ""
+		if i := slices.Index(args, any("--model")); i >= 0 && i+1 < len(args) {
+			model, _ = args[i+1].(string)
+		}
+		models = append(models, model)
+	}
+	return models
+}
+
+// A model: label picks the model of that issue's worker and no other's, and
+// the start line says where the choice came from.
+func TestFactoryLaunchesTheModelAnIssueLabelNames(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{10, "Ten", []string{"model:sonnet"}}, {11, "Eleven", nil}})
+
+	out := passFactory(t, "--max", "2")
+
+	if got := agentModels(server); !slices.Equal(got, []string{"sonnet", ""}) {
+		t.Errorf("models = %q, want sonnet for #10 and claude's own for #11", got)
+	}
+	if !strings.Contains(out, "model: sonnet (label model:sonnet)") {
+		t.Errorf("the pass did not say which model #10 runs on:\n%s", out)
+	}
+}
+
+// factory --model is every start's --model, so it wins over a label as the
+// flag does on start.
+func TestFactoryModelFlagWinsOverALabel(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{10, "Ten", []string{"model:sonnet"}}, {11, "Eleven", nil}})
+
+	passFactory(t, "--max", "2", "--model", "haiku")
+
+	if got := agentModels(server); !slices.Equal(got, []string{"haiku", "haiku"}) {
+		t.Errorf("models = %q, want haiku for both", got)
+	}
+}
+
+// With no label, default_model is the model, and the JSON start carries it.
+func TestFactoryFallsBackToTheConfiguredDefaultModel(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, _ := factoryFleet(t, repo, nil, []queued{{10, "Ten", nil}})
+	writeRoles(t, `{"default_model": "sonnet"}`)
+
+	var out strings.Builder
+	if err := factoryCommand([]string{"--max", "1", "--json"}, &out); err != nil {
+		t.Fatalf("factory --json: %v\n%s", err, out.String())
+	}
+
+	if got := agentModels(server); !slices.Equal(got, []string{"sonnet"}) {
+		t.Errorf("models = %q, want default_model's sonnet", got)
+	}
+	var doc struct {
+		Issues []struct {
+			Start struct {
+				Model       *string `json:"model"`
+				ModelReason *string `json:"model_reason"`
+			} `json:"start"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil || len(doc.Issues) != 1 {
+		t.Fatalf("decode %v: %s", err, out.String())
+	}
+	if s := doc.Issues[0].Start; s.Model == nil || *s.Model != "sonnet" || s.ModelReason == nil || *s.ModelReason != "default" {
+		t.Errorf("start's document carries model %v (%v), want sonnet (default)", s.Model, s.ModelReason)
+	}
+}

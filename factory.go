@@ -36,7 +36,7 @@ import (
 // arguments a person would type. The queue decides which issue and when; how an
 // issue becomes a worker stays in one place.
 
-const factoryUsage = "usage: worktender factory [--max <n>] [--repo <path>] [--dry-run] [--json]"
+const factoryUsage = "usage: worktender factory [--max <n>] [--model <model>] [--repo <path>] [--dry-run] [--json]"
 
 // factoryDefaultMax is small on purpose. The cap is a bet on how many workers
 // a person can review behind, and it is not worth raising until the metrics
@@ -65,6 +65,7 @@ func factoryCommand(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("factory", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	maxWorkers := fs.Int("max", factoryDefaultMax, "start issues until this many workers hold a slot")
+	model := fs.String("model", "", "model to pass to every agent the pass starts, over any model: label")
 	repo := fs.String("repo", "", "repository to act on, instead of the one herdr is currently in")
 	dryRun := fs.Bool("dry-run", false, "say which issues would be started, and start none")
 	asJSON := jsonFlag(fs)
@@ -220,7 +221,7 @@ func factoryCommand(args []string, out io.Writer) error {
 		}
 
 		fmt.Fprintf(notes, "\nstarting #%d: %s\n", candidate.Number, candidate.Title)
-		startDoc, err := runStart(s.root, candidate.Number, *asJSON, out)
+		startDoc, err := runStart(s.root, candidate.Number, *model, *asJSON, out)
 		entry.Start = startDoc
 		if err != nil {
 			entry.Outcome, entry.Reason = factoryFailed, jsonout.String(err.Error())
@@ -285,8 +286,11 @@ func factoryCommand(args []string, out io.Writer) error {
 // and start resolving it a second time from herdr's context could land
 // somewhere else. In JSON mode start's own document is captured and carried
 // in the factory's, rather than becoming a second document on stdout.
-func runStart(root string, number int, asJSON bool, out io.Writer) (json.RawMessage, error) {
+func runStart(root string, number int, model string, asJSON bool, out io.Writer) (json.RawMessage, error) {
 	args := []string{strconv.Itoa(number), "--repo", root}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
 	if !asJSON {
 		return nil, startCommand(args, out)
 	}

@@ -248,3 +248,22 @@ func TestDoctorPluralisesWorktrees(t *testing.T) {
 		}
 	}
 }
+
+// With no default_model, a worker with no model: label runs on whatever model
+// the user's own sessions do, and doctor says so until one is set.
+func TestDoctorWarnsWhenWorkersInheritYourModel(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if got := modelCheck(); got.state != stateWarn || !strings.Contains(got.note, "workers inherit your default model") {
+		t.Errorf("no configuration: %+v; want a warning that workers inherit your model", got)
+	}
+
+	writeRoles(t, `{"roles": {}}`)
+	if got := modelCheck(); got.state != stateWarn {
+		t.Errorf("no default_model: %+v; want a warning", got)
+	}
+
+	writeRoles(t, `{"default_model": "sonnet"}`)
+	if got := modelCheck(); got.state != stateOK || got.value != "sonnet" {
+		t.Errorf("default_model sonnet: %+v; want ok naming sonnet", got)
+	}
+}

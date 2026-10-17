@@ -129,6 +129,10 @@ func startCommand(args []string, out io.Writer) error {
 	if err == nil {
 		err = launch.CheckAgent(s.root)
 	}
+	agentModel, modelReason := "", ""
+	if err == nil {
+		agentModel, modelReason, err = config.Model(*model, issue.labelNames(), launch)
+	}
 	if err != nil {
 		err = withCode(exitUsage, err)
 		if wErr := emit(doc.finish(err)); wErr != nil {
@@ -139,6 +143,10 @@ func startCommand(args []string, out io.Writer) error {
 	doc.Launch = launch.JSON()
 	if line := launch.Line(); line != "" {
 		fmt.Fprintln(notes, line)
+	}
+	if agentModel != "" {
+		doc.Model, doc.ModelReason = jsonout.String(agentModel), jsonout.String(modelReason)
+		fmt.Fprintf(notes, "model: %s (%s)\n", agentModel, modelReason)
 	}
 
 	branch := issueBranch(issue)
@@ -216,7 +224,7 @@ func startCommand(args []string, out io.Writer) error {
 		WorkspaceID: workspace,
 		PaneID:      pane,
 		AgentName:   agent,
-		AgentArgs:   append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...),
+		AgentArgs:   append(launch.Args(), agentArgsFor(agentModel, *permissionMode, os.Stderr)...),
 	}})
 	fmt.Fprint(notes, execute.Render(results))
 	doc.Staffing = execute.JSON(results)

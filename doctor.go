@@ -52,7 +52,7 @@ func doctorCommand(args []string, out io.Writer) error {
 		herdr.note = clientErr.Error()
 	}
 
-	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), approversCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
+	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), approversCheck(), eventsCheck(), rolesCheck(), modelCheck(), lessonsCheck()}
 
 	// Nothing below the checks is answerable without herdr, and saying so once
 	// is better than four repetitions of the same cause.
@@ -457,6 +457,22 @@ func rolesCheck() check {
 		return check{name: "roles", value: value, state: stateWarn, note: strings.Join(problems, "; ")}
 	}
 	return check{name: "roles", value: value, state: stateOK, note: strings.Join(names, ", ")}
+}
+
+// modelCheck warns while a worker with no model: label and no agent file
+// starts on whatever model the user's own sessions run on, which is often the
+// most expensive one. An invalid configuration is rolesCheck's to report.
+func modelCheck() check {
+	config, err := roles.Load()
+	if err != nil {
+		return check{name: "model", value: "unknown", state: stateOff, note: "see roles"}
+	}
+	if config == nil || config.DefaultModel == "" {
+		return check{name: "model", value: "unset", state: stateWarn,
+			note: "workers inherit your default model; set default_model in " + roles.Path()}
+	}
+	return check{name: "model", value: config.DefaultModel, state: stateOK,
+		note: "for workers with no " + roles.ModelLabel + " label and no role agent"}
 }
 
 // repositories reads what herdr currently holds. The scope is herdr's open
