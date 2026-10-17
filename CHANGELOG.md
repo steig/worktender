@@ -6,6 +6,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.19.1] — 2026-10-17
+
+### Changed
+
+- **Docs and skills match 0.17–0.19.** (#293) The coordinator skill's loop
+  now runs `worktender verify N --pr P`, has a fresh reviewer read every PR,
+  picks the worker's model per slice, merges with `--match-head-commit <full
+  sha>`, and never approves on the owner's behalf. The issue template and
+  `docs/dispatch.md` show the acceptance-check form verify can judge, and name
+  the outcomes it judges. The README and the site's patterns page describe
+  `verify`.
+
 ## [0.19.0] — 2026-10-17
 
 The rest of the factory safety plan (#253), and model choice per slice. The
