@@ -270,6 +270,12 @@ fails the command.
 Start several, then wait on the lot of them. `start` deliberately does not wait;
 `gate` is the other half.
 
+A `done` is a claim. `worktender verify 42 --pr 17` runs the issue's approved
+checks on the merge-base and on the PR's head, and exits 0 only when the checks
+prove the change: none fails on the head, and at least one fails on the base and
+passes on the head. See
+[Verifying that the checks prove the change](docs/dispatch.md#verifying-that-the-checks-prove-the-change).
+
 **`--base <ref>` forks from something other than the trunk**, which is how a
 second slice starts while the first is still in review. The fork point is
 printed because a ref name is not a fixed point: this repository squash-merges,
@@ -660,7 +666,7 @@ thread, with five worked examples — which has no markdown source here.
 
 | | |
 | --- | --- |
-| [Dispatching a worker](docs/dispatch.md) | `dispatch`, `report` and `gate` — handing a slice to another agent and waiting for it, and why the report has fixed slots. |
+| [Dispatching a worker](docs/dispatch.md) | `dispatch`, `report`, `gate` and `verify` — handing a slice to another agent, waiting for it, checking its checks prove the change, and why the report has fixed slots. |
 | [Reviewing a PR](docs/review.md) | `review` — green CI, then a second agent judging the diff against the issue's acceptance checks; `verified` only when both pass. |
 | [Roles](docs/roles.md) | Starting a worker as a Claude Code agent with a brief style — design, analysis or code — chosen by flag or issue label. |
 | [Watching the fleet](docs/watch.md) | A Claude Code mod: a status line count, a band and a toast when a worker reports done or blocked; `pr-feedback` routing a PR's new reviews and failing checks to its worker; `refocus` re-delivering a worker's goal chain after compaction. |
@@ -696,10 +702,12 @@ npx skills add steig/worktender --skill coordinator -g
 ```
 
 It encodes what a session running as a router needs and keeps getting wrong:
-never read a worker's diff, verify with targeted commands instead of relaying
-claims, ask whether something was run or merely reasoned, pass a brief inline so
-no worker stalls on a file-read prompt, and keep anything touching live or shared
-state out of a dispatch entirely.
+never read a worker's diff, verify with targeted commands and `worktender verify`
+instead of relaying claims, use a fresh reviewer per PR, merge only the commit
+that was verified, never approve on the owner's behalf, ask whether something was
+run or merely reasoned, pass a brief inline so no worker stalls on a file-read
+prompt, and keep anything touching live or shared state out of a dispatch
+entirely.
 
 Or install through the [`steig/skills`](https://github.com/steig/skills) Claude Code
 marketplace, which lists both skills under a `worktender` plugin sourced from this

@@ -43,14 +43,16 @@ and agent in place. Do not press keys in that pane, and do not `herdr agent
 prompt` it: approving trust or settings is the human's call, not yours. Tell
 them which pane; once they have answered it, brief the agent yourself.
 
-**Pick the worker by role, not by model.** A role in the user's
+**Pick the worker by role, and the model by slice.** A role in the user's
 `~/.config/worktender/config.json` names a Claude Code agent — which carries its
 own model — a brief style (`code`, `design`, `analysis`) and directories to read.
 `start` prints `role: <name> (<why>) · agent: <agent> (<repo|user>)`; check that
 line, because a label can choose the role and a repository's `.claude/agents`
-can redefine the agent. `--model` still overrides the agent's model for one
-start. With no configuration, `start` behaves as it always has. See
-`docs/roles.md`.
+can redefine the agent. The model follows the slice: `--model` (on `factory`,
+for every start in the pass), else the issue's `model:<name>` label, else
+`default_model`, unless the role names an agent. `start` prints
+`model: <name> (<why>)`; read it, since a slice with no label, no
+`default_model` and no agent runs on whatever your own default is. See `docs/roles.md`.
 
 **When the slice is not an issue**, the older four-step path is still there:
 `herdr worktree create`, then `dispatch --pane <pane> --name <agent>`, then
@@ -91,7 +93,7 @@ The mod also does two things for workers that you would otherwise do by hand,
 both from its own look rather than from you:
 
 - **`worktender pr-feedback`** (setting `prFeedback`, off by default) types one
-  line into an idle worker's pane when its branch's PR gets new reviews,
+  line into an idle or `done` worker's pane when its branch's PR gets new reviews,
   comments or failing checks — counts, logins and check names only, never the
   text. The worker reads the text itself with `gh`. It stops after
   `prFeedbackRounds` notices per PR (2 by default) and toasts you instead:
@@ -158,7 +160,13 @@ fresh-context reviewer subagent on the strongest model, given the diff,
 `CLAUDE.md` and the pinned acceptance checks, and asked: what would you delete;
 what new type, field or helper did this add, and how many callers has each; would
 this test survive a rewrite? Its findings go back through `worktender pr-feedback`;
-only its conclusions enter your context.
+only its conclusions enter your context. A fresh reviewer per PR.
+
+**Run `worktender verify <issue> --pr <N>` before you name a PR for merge.** It
+exits 0 only when the checks prove the change: none fails on the head, and at
+least one fails on the base and passes on the head. Exit 3 is a person's call,
+not a retry. It runs the head's code as you. Check forms and outcomes:
+`docs/dispatch.md`.
 
 ```bash
 PASS=$(go test -count=1 -v ./... | grep -cE "^--- PASS")
@@ -255,8 +263,8 @@ gh pr view <N> --json state,mergeable,mergeStateStatus,statusCheckRollup
 ```
 
 **You do not run `gh pr merge`.** That stays a human action. When you name a
-PR to merge, hand the human `gh pr merge <N> --match-head-commit <sha>` with the
-done's `sha`, so a head nobody verified cannot merge. Your job is to
+PR to merge, hand the human `gh pr merge <N> --match-head-commit <full sha>` with
+`<full sha>` of the head you verified, so a head nobody verified cannot merge. Your job is to
 name which PR merges next and why — a stacked slice before its base, whatever
 clears fastest among unrelated slices — and to flag one that looks mergeable
 but isn't (checks red, still-computing `mergeable: UNKNOWN`, conflicts).
@@ -378,5 +386,6 @@ Nothing else.
 - **Check the PR a `done` names** before acting as though work landed.
 - **Sequence merges, never execute them.** Name which PR merges next; the
   human clicks merge.
+- **Never approve on the owner's behalf.** `worktender approve` is a person's.
 - **Be the fleet's inbox.** Cross-workspace herdr activity and GitHub PR/issue
   activity route through you, triaged before you relay or escalate.
