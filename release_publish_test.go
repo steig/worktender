@@ -29,6 +29,12 @@ type ghCall []string
 type gh struct {
 	releaseExists bool
 	createFails   bool
+	// view is what `release view` prints for the script's --jq, and checksums
+	// what `release download` prints for checksums.txt; empty means the release
+	// has no such asset, which the real gh reports by failing. The fake ignores
+	// the query, so each test spells the answer the real gh would give it.
+	view      string
+	checksums string
 }
 
 // runPublish runs the script against that gh, which records its argv per call.
@@ -37,6 +43,11 @@ type gh struct {
 // matters is the sequence of calls, and herdrtest's fakes answer a single
 // question. Recording argv per call is the whole assertion.
 func runPublish(t *testing.T, fake gh, args ...string) ([]ghCall, error) {
+	t.Helper()
+	return runReleaseScript(t, "scripts/release-publish.sh", fake, args...)
+}
+
+func runReleaseScript(t *testing.T, path string, fake gh, args ...string) ([]ghCall, error) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -53,7 +64,8 @@ func runPublish(t *testing.T, fake gh, args ...string) ([]ghCall, error) {
 	script := "#!/bin/sh\n" +
 		"echo \"$*\" >> " + log + "\n" +
 		"case \"$1 $2\" in\n" +
-		"'release view') exit " + exit(!fake.releaseExists) + " ;;\n" +
+		"'release view') printf '%s' '" + fake.view + "'; exit " + exit(!fake.releaseExists) + " ;;\n" +
+		"'release download') printf '%s' '" + fake.checksums + "'; exit " + exit(fake.checksums == "") + " ;;\n" +
 		"'release create') echo 'a release with the same tag name already exists' >&2; exit " + exit(fake.createFails) + " ;;\n" +
 		"esac\n" +
 		"exit 0\n"
@@ -61,10 +73,10 @@ func runPublish(t *testing.T, fake gh, args ...string) ([]ghCall, error) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("sh", append([]string{"scripts/release-publish.sh"}, args...)...)
+	cmd := exec.Command("sh", append([]string{path}, args...)...)
 	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
-	t.Logf("release-publish.sh %v:\n%s", args, out)
+	t.Logf("%s %v:\n%s", path, args, out)
 
 	raw, readErr := os.ReadFile(log)
 	if readErr != nil && !os.IsNotExist(readErr) {
@@ -161,7 +173,7 @@ func assertUploads(t *testing.T, call ghCall, tag string, paths []string) {
 func TestPublishUploadsToAReleaseThatAlreadyExists(t *testing.T) {
 	paths := assets(t, "worktender_linux_amd64", "checksums.txt")
 
-	calls, err := runPublish(t, gh{releaseExists: true}, append([]string{"v1.2.3"}, paths...)...)
+	calls, err := runPublish(t, gh{releaseExists: true, view: "false true"}, append([]string{"v1.2.3"}, paths...)...)
 	if err != nil {
 		t.Fatalf("release-publish.sh failed on an existing release: %v", err)
 	}
@@ -285,4 +297,59 @@ func TestReleaseWorkflowRunsThePublishScript(t *testing.T) {
 			"failure: it is fatal when a release already exists for the tag. Go through " +
 			"scripts/release-publish.sh.")
 	}
+}
+
+// releases/latest is what scripts/install.sh hands every fresh install, so a
+// tag that lands there directly reaches everyone with no soak and nothing to
+// roll back to. release.yml publishes through release-publish.sh, so the
+// equivalent of `--prerelease` in the workflow is the script marking the
+// release one before it uploads — whether it creates the release or finds a
+// draft someone else made.
+func TestReleaseWorkflowPublishesAPrerelease(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "scripts/release-publish.sh") {
+		t.Fatal("release.yml does not publish through scripts/release-publish.sh, so nothing " +
+			"here says whether a tag soaks as a prerelease")
+	}
+
+	for _, fake := range []gh{{}, {releaseExists: true, view: "true false"}} {
+		paths := assets(t, "worktender_linux_amd64", "checksums.txt")
+		calls, err := runPublish(t, fake, append([]string{"v1.2.3"}, paths...)...)
+		if err != nil {
+			t.Fatalf("%+v: release-publish.sh failed: %v", fake, err)
+		}
+		marked := false
+		for _, c := range calls {
+			if c.subcommand() == "release upload" {
+				break
+			}
+			if (c.subcommand() == "release create" || c.subcommand() == "release edit") &&
+				c.has("v1.2.3") && c.has("--prerelease") {
+				marked = true
+			}
+		}
+		if !marked {
+			t.Errorf("%+v: gh calls %v never mark v1.2.3 --prerelease before the upload, so "+
+				"releases/latest moves to it the moment it is published", fake, subcommands(calls))
+		}
+	}
+}
+
+// "Re-run jobs" on a tag release-promote.sh already made latest finds a stable
+// release. Marking it a prerelease would silently move releases/latest back to
+// the tag before it, so a stable release only gets its assets.
+func TestPublishLeavesAStableReleaseStable(t *testing.T) {
+	paths := assets(t, "worktender_linux_amd64", "checksums.txt")
+
+	calls, err := runPublish(t, gh{releaseExists: true, view: "false false"}, append([]string{"v1.2.3"}, paths...)...)
+	if err != nil {
+		t.Fatalf("release-publish.sh failed on a stable release: %v", err)
+	}
+	if got, want := subcommands(calls), "release view, release upload"; got != want {
+		t.Fatalf("gh calls = %v, want %v; a `release edit` here demotes a promoted tag", got, want)
+	}
+	assertUploads(t, last(t, calls), "v1.2.3", paths)
 }

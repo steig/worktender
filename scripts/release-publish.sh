@@ -26,6 +26,14 @@
 # Notes already on an existing release are never touched — whoever wrote them
 # meant them, and --generate-notes would replace a curated CHANGELOG excerpt
 # with a commit list.
+#
+# A release this script creates is a prerelease, and so is a draft it finds.
+# releases/latest skips prereleases, so scripts/install.sh keeps handing out the
+# last promoted tag while this one soaks; scripts/release-promote.sh is what
+# makes it latest. A release that is already stable is left alone: it is either
+# one release-promote.sh promoted, which a re-run of this workflow must not
+# quietly move releases/latest off, or one created from a laptop without
+# --prerelease, which has already reached installers and is warned about.
 set -eu
 
 if [ "$#" -lt 2 ]; then
@@ -51,16 +59,28 @@ for asset in "$@"; do
 done
 
 # `gh release view` is the only way to ask whether a release exists; it exits
-# non-zero when there is none. Its stdout is noise here — the exit code is the
-# answer — but its stderr is not: a token problem or a network hiccup fails the
+# non-zero when there is none, and prints "<isDraft> <isPrerelease>" when there
+# is one. Its stderr matters too: a token problem or a network hiccup fails the
 # same way "no release" does, and throwing the message away turns a diagnosable
 # outage into a confusing `create` failure further down. So it is captured and
 # printed rather than sunk into /dev/null.
 view_err=$(mktemp)
 trap 'rm -f "$view_err"' EXIT
 
-if gh release view "$tag" >/dev/null 2>"$view_err"; then
-	echo "release-publish: $tag already has a release; uploading assets to it" >&2
+if state=$(gh release view "$tag" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"' 2>"$view_err"); then
+	case "$state" in
+	"false false")
+		# Workflow commands are read from stdout, so the annotation goes there.
+		echo "::warning::release-publish: $tag is already a stable release; leaving it stable rather than moving releases/latest off it, and uploading assets to it"
+		;;
+	*" false")
+		echo "release-publish: $tag is a draft; marking it a prerelease and uploading assets to it" >&2
+		gh release edit "$tag" --prerelease
+		;;
+	*)
+		echo "release-publish: $tag is already a prerelease; uploading assets to it" >&2
+		;;
+	esac
 else
 	echo "release-publish: no release for $tag yet ($(tr -d '\n' <"$view_err")); creating one" >&2
 
@@ -74,8 +94,9 @@ else
 	# work, and it is the honest test of whether a release is there to upload
 	# to. A create that failed for a real reason — no token, no permission —
 	# fails the upload too, with a message about the thing that actually
-	# matters.
-	if ! gh release create "$tag" --generate-notes --title "$tag"; then
+	# matters. Whatever won the race made the release, prerelease or not, and
+	# this run does not second-guess it any more than it does on the path above.
+	if ! gh release create "$tag" --prerelease --generate-notes --title "$tag"; then
 		echo "release-publish: creating $tag failed; trying the upload anyway in case something else created it" >&2
 	fi
 fi

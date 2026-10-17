@@ -346,7 +346,9 @@ curl -fsSL https://raw.githubusercontent.com/steig/worktender/main/scripts/insta
 
 - `--version <vX.Y.Z>` installs that release rather than resolving the newest.
   The default follows `releases/latest`, which is a *moving* pointer — pin it if
-  you are reproducing an environment.
+  you are reproducing an environment. A new tag is published as a prerelease and
+  only becomes latest once `scripts/release-promote.sh <tag>` promotes it after a
+  soak; rolling back is promoting the previous tag.
 - `--dir <path>` puts the binary somewhere else. `~/.local/bin` is the default
   because it is the user's own and on the default `PATH` of most distributions;
   the script says so when it is not on yours.
