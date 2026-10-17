@@ -374,9 +374,13 @@ var briefSubmitRetry = 2 * time.Second
 // back false — the state in which the submit works. `start` was reading a
 // readiness signal backwards and paying five seconds for it.
 //
-// Nothing is typed until the pane has been read and found not to be one of
+// Nothing is typed until herdr says an agent is taking input — see
+// awaitInteractive — and the pane has been read and found not to be one of
 // Claude Code's gatekeeper screens — see refuseGatekeeper.
 func deliverBrief(client *herdrapi.Client, pane, text string) error {
+	if err := awaitInteractive(client, pane); err != nil {
+		return err
+	}
 	if err := refuseGatekeeper(client, pane); err != nil {
 		return err
 	}
@@ -384,6 +388,53 @@ func deliverBrief(client *herdrapi.Client, pane, text string) error {
 		return fmt.Errorf("type the brief into %s: %w", pane, err)
 	}
 	return submitBrief(client, pane)
+}
+
+// agentReadyWait bounds the wait for the launched agent to take input. It is
+// the bound herdr itself was given for the launch. A var so the suite can prove
+// the never-ready path without sitting through it.
+var agentReadyWait = execute.AgentStartTimeout
+
+// awaitInteractive waits for herdr to report the agent it launched in pane as
+// ready for input, and refuses to go on if it never is.
+//
+// agent.start answering ok means herdr typed the launch command, not that an
+// agent came up. When something else has already typed into that shell — a
+// layout command racing for the root pane gave zsh `claudeclaude` in #296 —
+// the command fails and the pane sits at a shell prompt. A brief typed there is
+// a command line, and its backticks are command substitution. So the brief
+// waits on interactive_ready, the signal `herdr agent start` waits on before
+// it prompts.
+//
+// `blocked` is let through: it is a startup dialog, and refuseGatekeeper is
+// what reads it and decides. A herdr that predates interactive_ready says
+// nothing either way, and is let through as before.
+func awaitInteractive(client *herdrapi.Client, pane string) error {
+	deadline := time.Now().Add(agentReadyWait)
+	for {
+		info, err := client.AgentGet(pane)
+		if err != nil {
+			return fmt.Errorf("confirm an agent started in %s: %w", pane, err)
+		}
+		agent := info.Agent
+		switch {
+		case agent.InteractiveReady == nil || *agent.InteractiveReady,
+			agent.AgentStatus == herdrapi.AgentStatusBlocked:
+			return nil
+		case agent.LaunchPending != nil && !*agent.LaunchPending:
+			return codef(exitNeedsHuman,
+				"no agent came up in %s — herdr's launch ended without one taking input — so no brief was "+
+					"typed; read what the pane shows with `herdr pane read %s --source recent-unwrapped`",
+				pane, pane)
+		case !time.Now().Before(deadline):
+			return codef(exitNeedsHuman,
+				"no agent became ready for input in %s within %s, so no brief was typed — if the pane is at "+
+					"a shell prompt the launch command failed there; read it with "+
+					"`herdr pane read %s --source recent-unwrapped`",
+				pane, agentReadyWait, pane)
+		}
+		time.Sleep(briefConfirmPoll)
+	}
 }
 
 // submitBrief presses Enter until the agent takes the brief up, and fails if it

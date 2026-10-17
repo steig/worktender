@@ -578,6 +578,81 @@ func TestStartAcceptsAnAgentThatWentStraightToBlocked(t *testing.T) {
 	}
 }
 
+// launchState makes agent.get answer with herdr's own view of the launch.
+func launchState(server *herdrtest.Server, workspace, pane, status string, ready, pending bool) {
+	server.HandleResult("agent.get", map[string]any{
+		"type": "agent_info",
+		"agent": map[string]any{
+			"terminal_id": "term_1", "agent": "claude", "agent_status": status,
+			"workspace_id": workspace, "tab_id": "t1", "pane_id": pane,
+			"focused": false, "revision": 1,
+			"interactive_ready": ready, "launch_pending": pending,
+		},
+	})
+}
+
+// typed reports whether anything was typed or pressed in the pane.
+func typed(server *herdrtest.Server) bool {
+	for _, call := range server.Calls() {
+		if call.Method == "pane.send_text" || call.Method == "pane.send_keys" {
+			return true
+		}
+	}
+	return false
+}
+
+// #296: the launch command failed in the shell, so the pane is a zsh prompt
+// and a brief typed into it runs as a command line. herdr never calls that
+// agent ready, and nothing may be typed.
+func TestStartTypesNothingIntoAPaneWhoseAgentNeverBecameReady(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	launchState(server, "w9", "w9:p1", "unknown", false, true)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
+	previous := agentReadyWait
+	agentReadyWait = 0
+	t.Cleanup(func() { agentReadyWait = previous })
+
+	err := startCommand([]string{"42"}, &strings.Builder{})
+	if err == nil {
+		t.Fatal("start must fail when no agent became ready")
+	}
+	if typed(server) {
+		t.Error("nothing may be typed into a pane with no agent ready in it")
+	}
+	if !strings.Contains(err.Error(), "no brief was typed") || strings.Contains(err.Error(), "send-keys") {
+		t.Errorf("the error should say no brief was typed, not send the reader to press enter, got %v", err)
+	}
+}
+
+func TestStartTypesNothingWhenTheLaunchEndedWithoutAnAgent(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	launchState(server, "w9", "w9:p1", "idle", false, false)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err == nil {
+		t.Fatal("start must fail when herdr's launch ended without an agent")
+	}
+	if typed(server) {
+		t.Error("nothing may be typed into a pane whose launch ended without an agent")
+	}
+}
+
+func TestStartBriefsAnAgentHerdrCallsReady(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	launchState(server, "w9", "w9:p1", "working", true, false)
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !typed(server) {
+		t.Error("an agent herdr calls ready should have been briefed")
+	}
+}
+
 // composerScreen is a Claude Code that has started and is waiting for input:
 // the screen every other start test assumes.
 const composerScreen = "╭──────────────────────────────╮\n│ >                            │\n╰──────────────────────────────╯\n  ? for shortcuts\n"
