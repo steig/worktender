@@ -377,6 +377,9 @@ than `--max` workers (default 2) hold a slot, starts the oldest with `start` and
 moves its label to **`factory:in-progress`**. Then it exits. It is not a daemon;
 run it from a loop or from cron.
 
+Keep `--max` at 3 or below until review's catch rate has been measured: see
+[Canaries](canaries.md) for the procedure and the gate.
+
 ```sh
 # See what a pass would do, without starting anything.
 worktender factory --repo ~/code/thing --dry-run
