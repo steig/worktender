@@ -21,10 +21,12 @@
 // refused here; it is reported. CheckAgent records which file will be used, and
 // the printed line and the JSON both say whether it was the repository's.
 //
-// Neither the model nor the permission mode is configurable here. The model
-// belongs to the agent file, and `--model` on the command line overrides it —
-// verified against Claude Code 2.1.296, see #185. Autonomy stays a flag for the
-// reason it is never defaulted anywhere else in this plugin.
+// The permission mode is not configurable here, for the reason autonomy is
+// never defaulted anywhere else in this plugin. The model normally belongs to
+// the agent file, and `--model` on the command line overrides it — verified
+// against Claude Code 2.1.296, see #185. Model resolves the one choice made
+// per slice instead: a model:<name> label or default_model, so a worker with no
+// agent file does not inherit whatever model the user's own sessions run on.
 package roles
 
 import (
@@ -56,9 +58,12 @@ type Config struct {
 	// Path is the file this was read from, for messages and for doctor.
 	Path string `json:"-"`
 
-	DefaultRole string          `json:"default_role"`
-	Labels      []LabelRule     `json:"labels"`
-	Roles       map[string]Role `json:"roles"`
+	DefaultRole string `json:"default_role"`
+	// DefaultModel is the model a worker starts on when neither --model nor a
+	// model: label chose one, and its role names no agent.
+	DefaultModel string          `json:"default_model"`
+	Labels       []LabelRule     `json:"labels"`
+	Roles        map[string]Role `json:"roles"`
 }
 
 // LabelRule maps an issue label to a role. Match is a label name, or a prefix
@@ -118,6 +123,18 @@ func (c *Config) AnyRefocus() bool {
 // agentName is what a Claude Code agent file may be called. It is checked
 // because the name becomes a path segment in the preflight.
 var agentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// modelName is what a model alias or ID may look like: `sonnet`,
+// `claude-opus-5-5[1m]`. A label is text whoever can edit the issue wrote, and
+// it becomes an argument to claude, so it may not start with a dash.
+var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$`)
+
+// IsModelName is whether s may be passed to claude as --model: a value, never
+// another flag.
+func IsModelName(s string) bool { return modelName.MatchString(s) }
+
+// ModelLabel is the label prefix that picks a slice's model: model:sonnet.
+const ModelLabel = "model:"
 
 // Path is where the configuration lives: $XDG_CONFIG_HOME/worktender/config.json,
 // falling back to ~/.config — on darwin too, the rule herdr uses for its own
@@ -185,6 +202,9 @@ func (c *Config) validate() error {
 				return fmt.Errorf("roles.%s.add_dirs[%d] is empty", name, i)
 			}
 		}
+	}
+	if c.DefaultModel != "" && !modelName.MatchString(c.DefaultModel) {
+		return fmt.Errorf("default_model: %q is not a model name", c.DefaultModel)
 	}
 	if c.DefaultRole != "" {
 		if _, ok := c.Roles[c.DefaultRole]; !ok {
@@ -282,6 +302,43 @@ func (c *Config) Resolve(flagRole string, labels []string, repoRoot string) (*La
 		launch.AddDirs = append(launch.AddDirs, abs)
 	}
 	return launch, nil
+}
+
+// Model picks the model for one slice: the flag, else a model:<name> label,
+// else default_model, else "" — claude's own choice, as before. reason says
+// which, in the words Launch.Reason uses.
+//
+// default_model gives way to a role that names an agent, because the agent
+// file is where that role's model was written, and --model would override it.
+// A label does not give way: it is a choice made for this slice.
+func (c *Config) Model(flagModel string, labels []string, launch *Launch) (model, reason string, err error) {
+	if flagModel != "" {
+		if !IsModelName(flagModel) {
+			return "", "", fmt.Errorf("--model %q is not a model name", flagModel)
+		}
+		return flagModel, "flag", nil
+	}
+	label := ""
+	for _, l := range labels {
+		name, ok := strings.CutPrefix(l, ModelLabel)
+		if !ok {
+			continue
+		}
+		if !modelName.MatchString(name) {
+			return "", "", fmt.Errorf("label %q does not name a model", l)
+		}
+		if model != "" && name != model {
+			return "", "", fmt.Errorf("labels %q and %q name two models; remove one", label, l)
+		}
+		model, label = name, l
+	}
+	if model != "" {
+		return model, "label " + label, nil
+	}
+	if c != nil && c.DefaultModel != "" && (launch == nil || launch.Agent == "") {
+		return c.DefaultModel, "default", nil
+	}
+	return "", "", nil
 }
 
 func (c *Config) roleList() string {

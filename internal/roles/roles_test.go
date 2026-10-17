@@ -82,14 +82,15 @@ func TestPathFallsBackToDotConfig(t *testing.T) {
 
 func TestParseRefuses(t *testing.T) {
 	for name, tc := range map[string]struct{ data, want string }{
-		"an unknown key":               {`{"roles":{"a":{"add_dir":["x"]}}}`, `unknown field "add_dir"`},
-		"an unknown brief":             {`{"roles":{"a":{"brief":"poetry"}}}`, `roles.a.brief: "poetry" is not a brief style`},
-		"a default that is not a role": {`{"default_role":"nope","roles":{}}`, `default_role: "nope"`},
-		"a label pointing nowhere":     {`{"labels":[{"match":"x","role":"nope"}],"roles":{}}`, `labels[0].role: "nope"`},
-		"a label matching everything":  {`{"labels":[{"match":"*","role":"a"}],"roles":{"a":{}}}`, `matches every label`},
-		"a glob that is not a suffix":  {`{"labels":[{"match":"a*b","role":"a"}],"roles":{"a":{}}}`, `single trailing *`},
-		"an agent name that is a path": {`{"roles":{"a":{"agent":"../../etc/x"}}}`, `is not an agent name`},
-		"an empty add_dir":             {`{"roles":{"a":{"add_dirs":[" "]}}}`, `add_dirs[0] is empty`},
+		"an unknown key":                 {`{"roles":{"a":{"add_dir":["x"]}}}`, `unknown field "add_dir"`},
+		"an unknown brief":               {`{"roles":{"a":{"brief":"poetry"}}}`, `roles.a.brief: "poetry" is not a brief style`},
+		"a default that is not a role":   {`{"default_role":"nope","roles":{}}`, `default_role: "nope"`},
+		"a label pointing nowhere":       {`{"labels":[{"match":"x","role":"nope"}],"roles":{}}`, `labels[0].role: "nope"`},
+		"a label matching everything":    {`{"labels":[{"match":"*","role":"a"}],"roles":{"a":{}}}`, `matches every label`},
+		"a glob that is not a suffix":    {`{"labels":[{"match":"a*b","role":"a"}],"roles":{"a":{}}}`, `single trailing *`},
+		"an agent name that is a path":   {`{"roles":{"a":{"agent":"../../etc/x"}}}`, `is not an agent name`},
+		"an empty add_dir":               {`{"roles":{"a":{"add_dirs":[" "]}}}`, `add_dirs[0] is empty`},
+		"a default_model that is a flag": {`{"default_model":"--help"}`, `default_model: "--help" is not a model name`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse("config.json", []byte(tc.data))
@@ -390,5 +391,59 @@ func TestTheExampleConfigurationLoads(t *testing.T) {
 		if path, _ := FindAgent(filepath.Join(root, "agents"), role.Agent); path == "" {
 			t.Errorf("role %s names agent %s, and examples/roles/agents defines no agent by that name", name, role.Agent)
 		}
+	}
+}
+
+// The flag beats a label, a label beats default_model, and default_model gives
+// way to a role whose agent file is where its model was written.
+func TestModelOrder(t *testing.T) {
+	c := parse(t, `{"default_model": "sonnet", "roles": {"ux": {"agent": "ux-designer"}}}`)
+	agent := &Launch{Role: "ux", Agent: "ux-designer"}
+	for name, tc := range map[string]struct {
+		config       *Config
+		flag         string
+		labels       []string
+		launch       *Launch
+		model, cause string
+	}{
+		"the flag":                  {c, "opus", []string{"model:haiku"}, nil, "opus", "flag"},
+		"a label":                   {c, "", []string{"bug", "model:haiku"}, nil, "haiku", "label model:haiku"},
+		"a label over an agent":     {c, "", []string{"model:haiku"}, agent, "haiku", "label model:haiku"},
+		"the default":               {c, "", []string{"bug"}, nil, "sonnet", "default"},
+		"no default for an agent":   {c, "", nil, agent, "", ""},
+		"no configuration":          {nil, "", nil, nil, "", ""},
+		"one model, labelled twice": {nil, "", []string{"model:opus", "model:opus"}, nil, "opus", "label model:opus"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			model, reason, err := tc.config.Model(tc.flag, tc.labels, tc.launch)
+			if err != nil || model != tc.model || reason != tc.cause {
+				t.Errorf("Model = %q, %q, %v; want %q, %q", model, reason, err, tc.model, tc.cause)
+			}
+		})
+	}
+}
+
+// A label is text whoever can edit the issue wrote. One that is not a model
+// name, or two that disagree, start nothing rather than guess.
+func TestModelRefusesALabelItCannotUse(t *testing.T) {
+	for name, labels := range map[string][]string{
+		"a flag":     {"model:--dangerously-skip-permissions"},
+		"empty":      {"model:"},
+		"a space":    {"model:opus now"},
+		"two models": {"model:opus", "model:haiku"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if model, _, err := (*Config)(nil).Model("", labels, nil); err == nil {
+				t.Errorf("Model(%q) = %q, want an error", labels, model)
+			}
+		})
+	}
+}
+
+// --model is typed by whoever runs start or factory, but it still becomes an
+// argument to claude, so it may not be a flag either.
+func TestModelRefusesAFlagThatIsNotAModel(t *testing.T) {
+	if model, _, err := (*Config)(nil).Model("-x", nil, nil); err == nil {
+		t.Errorf("Model(--model -x) = %q, want an error", model)
 	}
 }

@@ -26,6 +26,7 @@ changes: no role, the brief `start` has always typed, and `launch: null` in
 ```json
 {
   "default_role": "engineer",
+  "default_model": "sonnet",
   "labels": [
     { "match": "role:ux", "role": "ux" },
     { "match": "area:checkout*", "role": "cro" }
@@ -46,6 +47,7 @@ changes: no role, the brief `start` has always typed, and `launch: null` in
 | `roles.<name>.refocus` | `{ "turns": N, "minutes": M }`, either or both: hand a worker in this role its goal chain again every N prompts or M minutes, whichever comes first. Omitted, or 0, is never. Needs the [worktender-watch mod](watch.md#refocusing-a-worker-on-an-interval). |
 | `labels` | Rules from an issue label to a role. `match` is a label, or a prefix ending in a single `*`. |
 | `default_role` | The role when neither the flag nor a label chose one. Omit it to keep bare starts. |
+| `default_model` | The model when neither `--model` nor a `model:` label chose one, for a role with no agent. Omit it and workers run on claude's default. |
 
 Unknown keys, an unknown brief style, a label or default naming no role, and an
 agent name that is not a plain name are all refused, naming the file and key. A
@@ -74,8 +76,32 @@ Both were measured against Claude Code 2.1.296. Use an alias — `opus`,
 `sonnet`, `haiku` — and a new model generation needs no edit; use a full model
 ID to pin one.
 
-Nothing here sets a model or a permission mode. `--model` and
-`--permission-mode` stay flags, and autonomy is never defaulted.
+A worker's model is picked per slice, by `start` and `factory`:
+
+1. `--model <name>` on `start`, or on `factory` for every start in the pass.
+2. Otherwise a `model:<name>` label on the issue: `model:sonnet`,
+   `model:opus`, `model:haiku`. Two labels naming different models refuse
+   the start.
+3. Otherwise `default_model`, unless the role names an agent: that agent's
+   file is where its model was written, and `--model` would override it.
+4. Otherwise no `--model`, and claude's own default.
+
+The start line says `model: sonnet (label model:sonnet)`, and `--json`
+carries `model` and `model_reason`. A `--model` that is not a model name is
+refused, as a label's is. `worktender doctor` warns while no `default_model`
+is set, because then a worker with no label runs on whatever model your own
+sessions do, often the most expensive one — unless `default_role` is set and
+every role names an agent, so every worker's model comes from its agent file.
+
+`--permission-mode` stays a flag, and autonomy is never defaulted.
+
+### Choosing a model
+
+- **Sonnet by default** for workers: set `"default_model": "sonnet"`.
+- **Opus** for trust-boundary code (the paths in `CODEOWNERS`) or slices that
+  need design judgment: label them `model:opus`.
+- **Haiku** for mechanical edits — a rename, a regenerated file, a version
+  string: `model:haiku`.
 
 ## Brief styles
 
@@ -110,8 +136,15 @@ until `worktender lessons approve`. See [Lessons](lessons.md).
 
 **A label chooses among your roles and nothing else.** Whoever can label an
 issue can pick which of the roles you defined it runs as. No label can name an
-agent, a directory or a model of its own, and nothing from a label reaches the
-brief. The label is escaped before it is printed.
+agent or a directory of its own, and nothing from a label reaches the brief.
+The label is escaped before it is printed.
+
+**A `model:` label picks a model.** That is a cost choice, not a capability:
+whoever can label an issue can put its worker on Opus. Its name must look like
+a model alias or ID — letters, digits, `.`, `_`, `-`, `[`, `]`, not starting
+with `-` — so it cannot become another flag on the `claude` command line. A
+label that fails that, or two that disagree, refuses the start: whoever can
+label an issue can also hold its slice until the label is fixed.
 
 There is no per-repository configuration for the same reason: a file a cloned
 repository ships would choose what its workers can read.

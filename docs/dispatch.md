@@ -414,6 +414,10 @@ create factory:ready` and `gh label create factory:in-progress`.
   run's URL and exits **3**; `--dry-run` does the same. If gh cannot answer,
   the pass warns and goes on.
 - **Oldest first,** by issue number.
+- **Each worker's model follows its slice.** `--model` is passed to every
+  start in the pass; without it, an issue's `model:<name>` label, then
+  `default_model`, picks it, as on `start`. See
+  [choosing a model](roles.md#choosing-a-model).
 - **Never twice.** An issue is skipped when any local or remote branch, or any
   checkout herdr knows, is named for its number the way `start` names branches
   (`42` or `42-…`), or when it already carries `factory:in-progress`. Matching
@@ -458,7 +462,7 @@ create factory:ready` and `gh label create factory:in-progress`.
   `git ls-remote origin 'refs/worktender/claims/*'`.
 
 ```sh
-worktender factory [--max <n>] [--repo <path>] [--dry-run] [--json]
+worktender factory [--max <n>] [--model <model>] [--repo <path>] [--dry-run] [--json]
 ```
 
 ## A durable, global inbox for agent-to-agent messages

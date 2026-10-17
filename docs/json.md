@@ -684,6 +684,9 @@ $ worktender start 42 --repo . --json
   "base": "origin/main",
   "fork_point": "31db5d1c9b7e4a02f6c1d8e5a3b90f2c4d6e8a10",
   "stacked": false,
+  "launch": null,
+  "model": "sonnet",
+  "model_reason": "label model:sonnet",
   "briefed": true,
   "staffing": [ { "status": "done", "kind": "staff", "…": "…" } ],
   "gate_command": "…/worktender gate --target w9:p1 --until done --require-pr",
@@ -702,6 +705,9 @@ $ worktender start 42 --repo . --json
   branch sits on commits the base does not have — the case worth noticing before
   the base is squash-merged, which would land none of them. Same test the
   printed `stacked:` warning makes.
+- **`model`** is the `--model` the agent was started with, and
+  **`model_reason`** why: `flag`, `label model:<name>` or `default`. Both null
+  when claude picked its own; see [Roles](roles.md#models).
 - **`briefed`** is a separate fact from an agent having started. herdr answering
   ok means keystrokes were delivered, not that anything received them.
 - **Null fields are progress.** `branch` is null until the issue has been read,

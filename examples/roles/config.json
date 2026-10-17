@@ -1,5 +1,6 @@
 {
   "default_role": "engineer",
+  "default_model": "sonnet",
   "labels": [
     { "match": "role:ux", "role": "ux" },
     { "match": "role:cro", "role": "cro" },

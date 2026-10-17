@@ -926,3 +926,19 @@ func TestStartGivesTheWorkerItsOwnToken(t *testing.T) {
 		t.Errorf("settings = %s (%v); want env.GH_TOKEN set to the worker's token", raw, err)
 	}
 }
+
+// A --model that is not a model name is refused before a worktree exists.
+func TestStartRefusesAModelFlagThatIsAFlag(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w5", "w5:p1", "working")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":5,"title":"t","body":"b"}`))
+
+	err := startCommand([]string{"5", "--model=-x"}, &strings.Builder{})
+
+	if exitCode(err) != exitUsage {
+		t.Fatalf("err = %v; want a usage error", err)
+	}
+	if called(t, server, "worktree.create") {
+		t.Error("a worktree was created for a refused --model")
+	}
+}
