@@ -110,6 +110,7 @@ a machine can run, in a section of its own:
 - [ ] `go test ./...` exits 0
 - [ ] `test -f docs/acceptance.md` exits 0
 - [ ] `worktender doctor` exits 0
+- [ ] `go test -count=1 -run TestX -v . | grep -q -- '--- PASS: TestX'` exits 0
 ```
 
 The grammar is strict:
@@ -289,7 +290,11 @@ the same as for an unreadable issue.
 
 A check that already passes before the work proves nothing about it. `go test
 -run TestX` exits 0 with "no tests to run" until the worker writes `TestX`.
-`worktender verify` runs the approved checks on both sides of a change:
+`worktender verify` runs the approved checks on both sides of a change. The
+form that guards against it is the last line of the example above, which exits 0
+only when `TestX` ran and passed. Write it by hand: a check runs under `sh -c`,
+so the pipe works there, but `draft` drops any shell character and will not
+propose it.
 
 ```sh
 worktender verify 42 --repo .            # this checkout's HEAD against its merge-base

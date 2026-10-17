@@ -21,12 +21,19 @@ read. One check per line, exactly like this:
 - [ ] `go test ./...` exits 0
 - [ ] `test -f docs/acceptance.md` exits 0
 - [ ] `worktender doctor` exits 0
+- [ ] `go test -count=1 -run TestX -v . | grep -q -- '--- PASS: TestX'` exits 0
 
 That is "- [ ] " (or "- [x] "), the command in single backticks, a space, and
 the outcome it should give, in plain words. Use printable ASCII only, and no
 backtick except the two around the command. Blank lines are fine. Anything
 else in the section is an error, including a comment like this one, so put
 explanation under Problem or Proposal. The section ends at the next heading.
+
+Prefer a check that fails until the work is done, in the last form above:
+`worktender verify` runs each check on the merge-base and on the PR, and `go
+test -run TestX` alone exits 0 with "no tests to run" before TestX exists. A
+`prints X` outcome needs X to match ^[A-Za-z0-9._-]{1,40}$; any other outcome is
+unjudged.
 
 PROBLEM: what is wrong or missing, and who it affects.
 PROPOSAL: what to build. Describe the outcome, and leave the approach to the

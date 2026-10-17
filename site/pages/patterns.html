@@ -22,6 +22,14 @@
 
 <pre><code>PASS=$(go test -count=1 -v ./... | grep -cE "^--- PASS")</code></pre>
 
+<p>
+  For a pull request, <code>worktender verify &lt;issue&gt; --pr &lt;N&gt;</code>
+  asks the same of the issue's own checks: each must fail on the merge-base and
+  pass on the head, and the worker's new tests must fail with the change
+  reverted. A fresh reviewer reads each diff, and the merge names the verified
+  commit with <code>--match-head-commit</code>.
+</p>
+
 <div class="callout">
   <span class="label">The question worth the most</span>
   <p>
