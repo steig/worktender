@@ -136,11 +136,35 @@ type issueSnapshot struct {
 // two are the whole of "can push to this repository".
 var writePermissions = []string{"admin", "write"}
 
+// approversEnv names the people whose approvals count, as comma-separated
+// GitHub logins. A worker's own account needs write access to push, so write
+// access alone does not tell it from a person; a list that names only people
+// does. A worker on a person's own token approves as that person, and no list
+// stops it: that is execute.WorkerTokenEnv's to prevent.
+const approversEnv = "WORKTENDER_APPROVERS"
+
+// approverAllowlist is approversEnv's logins, and whether it is set at all.
+// Set but blank, or nothing but commas, it is an empty list, which nobody is
+// on: an export whose expansion came out empty refuses every approval rather
+// than reverting to none.
+func approverAllowlist() (logins []string, set bool) {
+	raw, set := os.LookupEnv(approversEnv)
+	if !set {
+		return nil, false
+	}
+	for login := range strings.SplitSeq(raw, ",") {
+		if login = strings.TrimPrefix(strings.TrimSpace(login), "@"); login != "" {
+			logins = append(logins, login)
+		}
+	}
+	return logins, true
+}
+
 // factoryApproval is the single test of whether a factory:ready issue may be
 // started: the issue as it stands now hashes to a payload that an account with
-// write access approved with `worktender approve`. start calls it, and so
-// should anything that pulls ready issues from a queue, rather than restating
-// any part of it.
+// write access, and on approversEnv's list when that is set, approved with
+// `worktender approve`. start calls it, and so should anything that pulls
+// ready issues from a queue, rather than restating any part of it.
 //
 // Every refusal is exitNeedsHuman: the repair is a person reading the payload
 // and approving it, which no retry and no coordinator can do for them. Only
@@ -164,6 +188,10 @@ func factoryApproval(root string, number int) (approvedIssue, error) {
 	// whose author cannot be shown to have write access is passed over, not
 	// fatal: a drive-by copy of a real approval's hash is just noise.
 	want := approvalCommentPrefix + hash
+	allowed, allowlisted := approverAllowlist()
+	// refused says why each matching approval did not count, for the refusal
+	// when an allowlist is set; without one the reason is always write access.
+	var refused []string
 	checked := map[string]bool{}
 	nodes := snap.Comments.Nodes
 	for i := len(nodes) - 1; i >= 0; i-- {
@@ -172,11 +200,23 @@ func factoryApproval(root string, number int) (approvedIssue, error) {
 			continue
 		}
 		checked[c.Author.Login] = true
+		// GitHub logins are case-insensitive, so the list is too. Checked
+		// first, so an unlisted author costs no permission lookup.
+		if allowlisted && !slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, c.Author.Login) }) {
+			refused = append(refused, "@"+c.Author.Login+" is not listed")
+			continue
+		}
 		permission, err := collaboratorPermission(root, owner, name, c.Author.Login)
 		if err != nil || !slices.Contains(writePermissions, permission) {
+			refused = append(refused, "@"+c.Author.Login+" is listed but cannot be shown to have write access")
 			continue
 		}
 		return approvedIssue{Number: number, Payload: payload, Hash: hash, Approver: c.Author.Login, Checks: checks}, nil
+	}
+	if allowlisted && len(refused) > 0 {
+		return approvedIssue{}, codef(exitNeedsHuman,
+			"issue #%d was not approved by anyone in %s with write access: of the approvals of sha256 %s, %s; "+
+				"have someone listed run `worktender approve %d`", number, approversEnv, hash, strings.Join(refused, ", "), number)
 	}
 	return approvedIssue{}, codef(exitNeedsHuman,
 		"issue #%d changed since approval, or was not approved: no comment from an account with write access "+

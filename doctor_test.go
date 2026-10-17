@@ -63,6 +63,29 @@ func TestDoctorWarnsWhenWorkersShareYourToken(t *testing.T) {
 	}
 }
 
+// Without an allowlist any write-access account's approval counts, a worker's
+// own account among them, and doctor says so.
+func TestDoctorWarnsWhenAnyWriterCanApprove(t *testing.T) {
+	for _, tc := range []struct {
+		raw   string
+		state state
+		value string
+	}{
+		{"", stateWarn, "none"},
+		{",", stateWarn, "none"},
+		{"steig, @alice", stateOK, "steig,alice"},
+	} {
+		t.Setenv(approversEnv, tc.raw)
+		if got := approversCheck(); got.state != tc.state || got.value != tc.value {
+			t.Errorf("%q: %+v; want %s %s", tc.raw, got, tc.state, tc.value)
+		}
+	}
+	unsetApprovers(t)
+	if got := approversCheck(); got.state != stateWarn || got.value != "unset" {
+		t.Errorf("unset: %+v; want warn unset", got)
+	}
+}
+
 // Staffing never deletes the token file, so one left behind after the variable
 // is unset is doctor's to name, with the way to remove it.
 func TestDoctorNamesAWorkerTokenLeftOnDisk(t *testing.T) {
