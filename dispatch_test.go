@@ -2,8 +2,14 @@ package main
 
 import (
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/steig/worktender/internal/execute"
+	"github.com/steig/worktender/internal/herdrtest"
 )
 
 // The reconciler must never route models or autonomy. `sync` runs from a
@@ -72,5 +78,53 @@ func TestDispatchRequiresPaneAndName(t *testing.T) {
 		if err := dispatchCommand(args, io.Discard); err == nil {
 			t.Errorf("dispatch(%q) returned nil; both --pane and --name are required", args)
 		}
+	}
+}
+
+// dispatch staffs workers too, so it gives them the same token start does.
+func TestDispatchGivesTheWorkerItsOwnToken(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	server.HandleResult("pane.get", map[string]any{"type": "pane_info", "pane": map[string]any{
+		"pane_id": "w9:p1", "workspace_id": "w9", "tab_id": "t1",
+		"terminal_id": "term_1", "agent_status": "idle", "focused": false, "revision": 1,
+	}})
+
+	if err := dispatchCommand([]string{"--pane", "w9:p1", "--name", "w1"}, io.Discard); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if args := agentStartArgs(t, server); !slices.Contains(args, "--settings") {
+		t.Errorf("agent args = %v; want --settings carrying the worker's token", args)
+	}
+}
+
+// A token dispatch cannot store fails the dispatch, and --json still answers
+// with a document saying so rather than nothing.
+func TestDispatchJSONReportsAWorkerTokenItCannotStore(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	server.HandleResult("pane.get", map[string]any{"type": "pane_info", "pane": map[string]any{
+		"pane_id": "w9:p1", "workspace_id": "w9", "tab_id": "t1",
+		"terminal_id": "term_1", "agent_status": "idle", "focused": false, "revision": 1,
+	}})
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	notADir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", notADir)
+
+	var out strings.Builder
+	if err := dispatchCommand([]string{"--pane", "w9:p1", "--name", "w1", "--json"}, &out); err == nil {
+		t.Fatal("dispatch staffed an agent with nowhere to keep its token")
+	}
+	var doc dispatchJSON
+	decodeOne(t, out.String(), &doc)
+	if doc.Error == nil || len(doc.Staffing) != 1 || !strings.Contains(doc.Staffing[0].Detail, "worker token") {
+		t.Errorf("doc = %+v; want the failed staffing and its reason", doc)
+	}
+	if strings.Contains(out.String(), "github_pat_worker_only") {
+		t.Errorf("the token was shown:\n%s", out.String())
 	}
 }

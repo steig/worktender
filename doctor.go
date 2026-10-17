@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/jsonout"
@@ -51,7 +52,7 @@ func doctorCommand(args []string, out io.Writer) error {
 		herdr.note = clientErr.Error()
 	}
 
-	checks := []check{versionCheck(client), herdr, ghCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
+	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
 
 	// Nothing below the checks is answerable without herdr, and saying so once
 	// is better than four repetitions of the same cause.
@@ -341,6 +342,27 @@ func ghCheck() check {
 			note: "reads as \"no pull request\", so prune will keep almost everything"}
 	}
 	return check{name: "gh", value: "authenticated", state: stateOK}
+}
+
+// workerTokenCheck says whether workers get a token of their own, and never
+// the token: this table gets pasted wherever someone asks for help. Set is not
+// safe, and the note says so. A worker runs as you, so your own login is still
+// within its reach; what stops it merging is branch protection.
+func workerTokenCheck() check {
+	if os.Getenv(execute.WorkerTokenEnv) == "" {
+		note := "workers' gh uses your token, so one can approve and merge; set " + execute.WorkerTokenEnv + " to narrow it"
+		// Staffing leaves the file when the variable is unset, so a token
+		// withdrawn or rotated stays on disk until someone removes it.
+		if dir := pluginStateDir(); dir != "" {
+			left := filepath.Join(dir, execute.WorkerSettingsFile)
+			if _, err := os.Stat(left); err == nil {
+				note += "; a previous worker token is still on disk: rm " + left
+			}
+		}
+		return check{name: "worker-gh", value: "your token", state: stateWarn, note: note}
+	}
+	return check{name: "worker-gh", value: "narrowed", state: stateOK,
+		note: "workers' gh defaults to " + execute.WorkerTokenEnv + "; your login is still within reach, so branch protection is the control"}
 }
 
 // eventsCheck reports the opt-in as the gate actually parses it, not as it is

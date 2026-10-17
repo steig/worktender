@@ -1,9 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/herdrtest"
 	"github.com/steig/worktender/internal/wt"
@@ -37,6 +40,49 @@ func TestDoctorReportsEventsAsTheGateParsesThem(t *testing.T) {
 				t.Errorf("%q should mention %q, got %q", tc.raw, tc.says, line)
 			}
 		})
+	}
+}
+
+// Workers holding your token is the default, and the reason "a human approves
+// and merges" is not a control. doctor says so without changing its exit code,
+// and once a worker token is set it says what that buys and not the token.
+func TestDoctorWarnsWhenWorkersShareYourToken(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "")
+	if got := workerTokenCheck(); got.state != stateWarn || !strings.Contains(got.note, execute.WorkerTokenEnv) {
+		t.Errorf("unset: %+v; want a warning naming %s", got, execute.WorkerTokenEnv)
+	}
+
+	const token = "github_pat_worker_only"
+	t.Setenv(execute.WorkerTokenEnv, token)
+	got := workerTokenCheck()
+	if got.state != stateOK || !strings.Contains(got.note, "branch protection") {
+		t.Errorf("set: %+v; want ok, naming branch protection as the control", got)
+	}
+	if strings.Contains(got.value+got.note, token) {
+		t.Errorf("doctor printed the token: %+v", got)
+	}
+}
+
+// Staffing never deletes the token file, so one left behind after the variable
+// is unset is doctor's to name, with the way to remove it.
+func TestDoctorNamesAWorkerTokenLeftOnDisk(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "")
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	if got := workerTokenCheck(); strings.Contains(got.note, "still on disk") {
+		t.Errorf("no file, yet: %+v", got)
+	}
+
+	left := filepath.Join(dir, execute.WorkerSettingsFile)
+	if err := os.WriteFile(left, []byte(`{"env":{"GH_TOKEN":"github_pat_withdrawn"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := workerTokenCheck()
+	if got.state != stateWarn || !strings.Contains(got.note, "rm "+left) {
+		t.Errorf("%+v; want a warning saying how to remove %s", got, left)
+	}
+	if strings.Contains(got.note, "github_pat_withdrawn") {
+		t.Errorf("doctor printed the old token: %+v", got)
 	}
 }
 

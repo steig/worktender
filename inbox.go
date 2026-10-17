@@ -278,10 +278,7 @@ func validInboxText(flagName, value string, limit int) error {
 // to — durability at a shared location is the entire feature — so an unusable
 // state directory is an error here.
 func inboxDir() (string, error) {
-	base := stateDir()
-	if base == "" {
-		base = defaultStateDir()
-	}
+	base := pluginStateDir()
 	if base == "" {
 		return "", withCode(exitEnvironment, errors.New(
 			"no plugin state directory: HERDR_PLUGIN_STATE_DIR is unset and no default location could be derived"))
@@ -292,6 +289,15 @@ func inboxDir() (string, error) {
 		return "", withCode(exitEnvironment, fmt.Errorf("create inbox directory: %w", err))
 	}
 	return dir, nil
+}
+
+// pluginStateDir is HERDR_PLUGIN_STATE_DIR, else defaultStateDir: "" only when
+// neither can be told.
+func pluginStateDir() string {
+	if dir := stateDir(); dir != "" {
+		return dir
+	}
+	return defaultStateDir()
 }
 
 // defaultStateDir stands in for HERDR_PLUGIN_STATE_DIR when it is unset.

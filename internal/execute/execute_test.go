@@ -1,7 +1,9 @@
 package execute_test
 
 import (
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -476,6 +478,94 @@ func TestStaffColdStartSendsNoArgs(t *testing.T) {
 	}
 	if _, ok := callTo(t, server, "agent.start").Params["args"]; ok {
 		t.Error("a cold start should not pass --continue")
+	}
+}
+
+// Every staffing goes through here — sync, the event hooks and review as well as
+// start and dispatch — so this is where the worker token is given, and a
+// worker a reconcile restarts after herdr does is not left on your token.
+func TestStaffGivesTheAgentTheWorkerToken(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	repo := herdrtest.NewRepo(t)
+	exec, server := fixture(t, repo)
+	exec.StateDir = t.TempDir()
+
+	action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a",
+		PaneID: "w2:p1", AgentName: "a", AgentArgs: []string{"--model", "sonnet"}}
+
+	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	want := []any{"--model", "sonnet", "--settings", filepath.Join(exec.StateDir, "worker-settings.json")}
+	if got := callTo(t, server, "agent.start").Params["args"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("args = %v, want %v", got, want)
+	}
+}
+
+// Unset does not delete the file. A hook staffing without the variable would
+// pull it from under a launch that was just handed it, and that agent would
+// start on your login.
+func TestStaffWithoutAWorkerTokenLeavesTheFileAlone(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "")
+	repo := herdrtest.NewRepo(t)
+	exec, server := fixture(t, repo)
+	exec.StateDir = t.TempDir()
+	path := filepath.Join(exec.StateDir, execute.WorkerSettingsFile)
+	if err := os.WriteFile(path, []byte(`{"env":{"GH_TOKEN":"another launch's"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a", PaneID: "w2:p1", AgentName: "a"}
+
+	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	if _, ok := callTo(t, server, "agent.start").Params["args"]; ok {
+		t.Error("an agent was given settings with no worker token set")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the settings file another launch was handed is gone: %v", err)
+	}
+}
+
+// A role that brings its own --settings is refused rather than started with
+// two, when which one claude takes GH_TOKEN from is the whole question.
+func TestStaffRefusesASecondSettingsFlag(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	repo := herdrtest.NewRepo(t)
+	for _, own := range [][]string{{"--settings", "/role.json"}, {"--settings=/role.json"}} {
+		exec, server := fixture(t, repo)
+		exec.StateDir = t.TempDir()
+		action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a", PaneID: "w2:p1", AgentName: "a",
+			AgentArgs: own}
+
+		result := only(t, exec.Run([]reconcile.Action{action}))
+		if result.Status != execute.StatusFailed || !strings.Contains(result.Detail, "--settings") {
+			t.Errorf("%v: status = %q (%s), want failed naming --settings", own, result.Status, result.Detail)
+		}
+		for _, call := range server.Calls() {
+			if call.Method == "agent.start" {
+				t.Errorf("%v: an agent was started with two --settings", own)
+			}
+		}
+	}
+}
+
+// Nowhere to keep the token is a failed staffing, not an agent on your token.
+func TestStaffRefusesAWorkerTokenItCannotStore(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	repo := herdrtest.NewRepo(t)
+	exec, server := fixture(t, repo)
+
+	action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a", PaneID: "w2:p1", AgentName: "a"}
+
+	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusFailed {
+		t.Fatalf("status = %q, want failed: %s", result.Status, result.Detail)
+	}
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			t.Fatal("an agent was started on your token")
+		}
 	}
 }
 

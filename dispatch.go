@@ -77,7 +77,7 @@ func dispatchCommand(args []string, out io.Writer) error {
 		return err
 	}
 
-	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir}
+	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
 	results := executor.Run([]reconcile.Action{{
 		Kind:        reconcile.KindStaff,
 		WorkspaceID: workspace,

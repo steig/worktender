@@ -6,11 +6,12 @@ Exit codes, errors, keybindings, and the behaviours that do not belong anywhere 
 
 ```sh
 $ worktender doctor
-version  0.5.0 @f074c65  warn  origin/main is at @a1b2c3d; run `worktender update`
-herdr    0.7.5          ok
-gh       authenticated  ok
-events   unset          off
-roles    none           off    no /home/you/.config/worktender/config.json
+version    0.5.0 @f074c65  warn  origin/main is at @a1b2c3d; run `worktender update`
+herdr      0.7.5           ok
+gh         authenticated   ok
+worker-gh  your token      warn  workers' gh uses your token, so one can approve and merge; set WORKTENDER_WORKER_GH_TOKEN to narrow it
+events     unset           off
+roles      none            off   no /home/you/.config/worktender/config.json
 
 repos
   worktender    3 worktrees  1 working
@@ -38,6 +39,10 @@ right question first:
   and an origin that cannot be reached leaves drift reported as unknown rather
   than as fine.
 
+It also warns while workers share your `gh` token; see
+[Giving workers their own GitHub token](#giving-workers-their-own-github-token).
+The warning does not change the exit code.
+
 It also reports the role configuration `start` and `dispatch --role` read: the
 file, whether it parses, and any agent or directory a role names that does not
 exist. See [Roles](roles.md).
@@ -50,6 +55,41 @@ caller is standing.
 `doctor` is a command rather than an action, and deliberately: an action's
 output lands in the plugin log, which is exactly the indirection a diagnostic
 should not have.
+
+## Giving workers their own GitHub token
+
+```sh
+export WORKTENDER_WORKER_GH_TOKEN=github_pat_...
+```
+
+Unset, a worker's `gh` runs on your login, and a prompt-injected worker can post
+a valid `worktender approve` comment or run `gh pr merge`. Set, every agent this
+plugin starts gets it as `GH_TOKEN` instead — from `start`, `dispatch`, `sync`,
+the event hooks and `review` alike, so a worker a reconcile restarts after herdr
+does is not back on your token. Like `WORKTENDER_EVENTS`, the hooks read it from
+herdr's own environment, so export it before starting herdr.
+
+**This narrows what a worker does by default; it does not isolate one.** The
+worker runs as your OS user, so `env -u GH_TOKEN gh …`, `gh auth token` and
+`git credential fill` all still reach your own credentials. It stops a worker
+using your login by accident or in passing, not one set on using it. The control
+is on GitHub's side: branch protection requiring a review from someone other
+than the worker's account. Make the token as narrow as you can as well: it needs
+to push branches and open pull requests, and `approve` counts a comment from any
+account with write access, so it should not be able to comment on issues as one.
+
+The token never goes on a command line, which `ps` and the pane would show. It
+is written to `worker-settings.json`, mode 0600, in the plugin state directory —
+`HERDR_PLUGIN_STATE_DIR`, else `~/.local/state/herdr/plugins/steig.worktender`
+— and handed to `claude` as `--settings`, whose `env` reaches every command the
+agent runs. **The file persists**: through the worker finishing and through
+prune, and it is rewritten with the current token at each launch. Unsetting
+the variable does not remove it — a launch without the variable deleting a file
+another was just handed would start that agent on your login — so remove it
+yourself; `doctor` warns while it is there with the variable unset. A state directory that cannot be
+written fails the launch rather than starting an agent on your token, and so
+does a role whose agent arguments already carry a `--settings` of their own. `doctor`
+never prints the value.
 
 ## Staying current
 

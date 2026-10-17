@@ -275,7 +275,7 @@ func reviewCommand(args []string, out io.Writer) error {
 	// pushes is a new agent rather than a clash with the last reviewer, whose
 	// pane is left open for a person to read.
 	agent := reconcile.AgentName(s.root, "review-"+pr.HeadRefName+"-"+shortOid(pr.HeadRefOid))
-	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir}
+	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
 	results := executor.Run([]reconcile.Action{{
 		Kind:      reconcile.KindStaff,
 		Branch:    pr.HeadRefName,

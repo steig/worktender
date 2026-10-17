@@ -10,11 +10,13 @@
 package execute
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -102,6 +104,67 @@ type Executor struct {
 	// BusyRetryFor bounds how long staffing keeps re-offering a pane herdr
 	// reports busy. Zero means AgentStartTimeout; tests set it short.
 	BusyRetryFor time.Duration
+	// StateDir holds the settings file that hands WorkerTokenEnv to an agent.
+	// Empty, with the token set, fails every staffing, because the alternative
+	// is an agent on your token.
+	StateDir string
+}
+
+// WorkerTokenEnv names a GitHub token for agents in place of yours. Every
+// agent this package starts gets it as GH_TOKEN, so `sync`, the event hooks and
+// `review` give it as surely as `start` and `dispatch` do: a worker restarted
+// by a reconcile after herdr restarts is still a worker.
+//
+// It narrows what an agent's gh does by default; it isolates nothing. The
+// agent runs as you, so your stored gh login is one `env -u GH_TOKEN` away.
+const WorkerTokenEnv = "WORKTENDER_WORKER_GH_TOKEN"
+
+// WorkerSettingsFile is the settings file in StateDir. Exported for doctor,
+// which names one left behind after the variable is unset.
+const WorkerSettingsFile = "worker-settings.json"
+
+// workerTokenArgs are the agent arguments that give the agent WorkerTokenEnv
+// as GH_TOKEN, or none when it is unset.
+//
+// The token goes through a settings file because there is nowhere else it is
+// not shown: agent.start takes no environment, an argument is visible to `ps`
+// and in the pane the agent is started in, and typing an export would put it
+// on screen.
+//
+// Unset does not remove the file. A hook running without the variable would
+// delete it from under a launch that was handed it a moment earlier, and that
+// agent would start on your login; doctor names a file left behind instead.
+func workerTokenArgs(dir string) ([]string, error) {
+	token := os.Getenv(WorkerTokenEnv)
+	if token == "" {
+		return nil, nil
+	}
+	if dir == "" {
+		return nil, fmt.Errorf("%s is set but there is no plugin state directory to keep it in", WorkerTokenEnv)
+	}
+	path := filepath.Join(dir, WorkerSettingsFile)
+	raw, _ := json.Marshal(map[string]any{"env": map[string]string{"GH_TOKEN": token}})
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("store the worker token: %w", err)
+	}
+	// Through a rename, so an agent starting beside this one never reads half
+	// a file. CreateTemp makes it 0600.
+	tmp, err := os.CreateTemp(dir, "worker-settings-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("store the worker token: %w", err)
+	}
+	_, err = tmp.Write(raw)
+	if cErr := tmp.Close(); err == nil {
+		err = cErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return nil, fmt.Errorf("store the worker token: %w", err)
+	}
+	return []string{"--settings", path}, nil
 }
 
 // Run performs every action in order and returns one Result each.
@@ -180,6 +243,19 @@ func (e *Executor) staff(action reconcile.Action, busyUntil time.Time) Result {
 	// Caller arguments go last so they cannot displace --continue: whether to
 	// resume is this executor's decision, not the caller's.
 	args = append(args, action.AgentArgs...)
+	tokenArgs, err := workerTokenArgs(e.StateDir)
+	if err != nil {
+		return Result{action, StatusFailed, err.Error()}
+	}
+	// Which of two --settings claude honours for GH_TOKEN is not something to
+	// find out from a worker that got the wrong one.
+	if len(tokenArgs) > 0 && slices.ContainsFunc(action.AgentArgs, func(a string) bool {
+		return a == "--settings" || strings.HasPrefix(a, "--settings=")
+	}) {
+		return Result{action, StatusFailed, fmt.Sprintf(
+			"%s is set and the agent already has --settings; refusing to start it with two", WorkerTokenEnv)}
+	}
+	args = append(args, tokenArgs...)
 
 	started := time.Now()
 	for attempt := 1; ; attempt++ {
