@@ -126,9 +126,10 @@ func setFactoryWorktrees(server *herdrtest.Server, repo *herdrtest.Repo, linked 
 const factoryBody = "## Problem\nIt is broken.\n\n## Acceptance\n- [ ] `go test ./...` exits 0\n"
 
 // fakeFactoryGh answers `issue list` with the queue, `issue view N` with that
-// issue, and records every `issue edit`. It also answers the calls start's
-// approval check makes: the repository, the issue snapshot, and the
-// permission of the account that approved it. Every issue is approved by
+// issue, `run list` with a green ci run on main, and records every `issue
+// edit`. It also answers the calls start's approval check makes: the
+// repository, the issue snapshot, and the permission of the account that
+// approved it. Every issue is approved by
 // steig, an admin, unless unapprove says otherwise.
 //
 // Answers are files the script cats: echo under dash mangles the backslashes
@@ -160,6 +161,7 @@ func fakeFactoryGh(t *testing.T, ready []queued) string {
 	}
 	write("list.json", list)
 	write("closed.json", []any{})
+	write("runs.json", []map[string]any{{"conclusion": "success", "url": "https://github.com/steig/worktender/actions/runs/1"}})
 	write("repo.json", map[string]any{"name": "worktender", "owner": map[string]any{"login": "steig"}})
 	write("perm-steig.json", map[string]any{"permission": "admin"})
 
@@ -169,6 +171,7 @@ answer() { [ -f "$D/$1" ] || { printf 'gh: HTTP 404\n' >&2; exit 1; }; cat "$D/$
 case "$1 $2" in
 "issue list") case "$*" in *"--state closed"*) answer closed.json ;; *) answer list.json ;; esac ;;
 "issue view") answer "issue-$3.json" ;;
+"run list") case "$*" in *"--workflow ci --branch main --status completed --limit 1"*) answer runs.json ;; *) exit 1 ;; esac ;;
 "repo view") answer repo.json ;;
 "api graphql")
   for a in "$@"; do case "$a" in number=*) n=${a#number=} ;; esac; done
@@ -226,6 +229,26 @@ func closeInProgress(t *testing.T, edits string, numbers ...int) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(filepath.Dir(edits), "closed.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setMainCI makes gh's latest completed ci run on main the run given, or, with
+// a nil run, makes gh fail to list runs at all.
+func setMainCI(t *testing.T, edits string, run map[string]any) {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(edits), "runs.json")
+	if run == nil {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	raw, err := json.Marshal([]map[string]any{run})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -569,6 +592,46 @@ func TestFactoryFailedClearStillStartsAndExitsNonZero(t *testing.T) {
 	}
 	if len(doc.Cleared) != 1 || doc.Cleared[0].Issue != 7 || doc.Cleared[0].Removed || doc.Cleared[0].Reason == nil {
 		t.Errorf("cleared = %+v, want #7 not removed, with a reason", doc.Cleared)
+	}
+}
+
+// A red main is a reason to start nothing at all, dry run or not: every worker
+// would fork from it, and its checks could not tell its failures from main's.
+func TestFactoryWillNotDispatchWhileMainIsRed(t *testing.T) {
+	const url = "https://github.com/steig/worktender/actions/runs/9"
+	for _, args := range [][]string{nil, {"--dry-run"}} {
+		repo := herdrtest.NewRepo(t)
+		server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+		setMainCI(t, edits, map[string]any{"conclusion": "failure", "url": url})
+
+		var out strings.Builder
+		err := factoryCommand(args, &out)
+		if exitCode(err) != exitNeedsHuman || !strings.Contains(fmt.Sprint(err), url) {
+			t.Errorf("factory %v: exit %d (%v), want %d naming %s", args, exitCode(err), err, exitNeedsHuman, url)
+		}
+		if got := createdBranches(server); len(got) != 0 {
+			t.Errorf("factory %v started %v while main was red", args, got)
+		}
+		if strings.Contains(out.String(), "would start") {
+			t.Errorf("factory %v planned a start while main was red:\n%s", args, out.String())
+		}
+	}
+}
+
+// A gh that cannot say how main stands is warned about, not obeyed: the pass
+// works the queue as it would have without the check.
+func TestFactoryStartsWhenMainsCIIsUnknown(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server, edits := factoryFleet(t, repo, nil, []queued{{5, "Five", nil}})
+	setMainCI(t, edits, nil)
+
+	out := passFactory(t)
+
+	if got := createdBranches(server); len(got) != 1 || got[0] != "5-five" {
+		t.Errorf("started %v, want 5-five:\n%s", got, out)
+	}
+	if !strings.Contains(out, "warning: could not read the default branch's latest ci run") {
+		t.Errorf("an unknown ci state should be warned about:\n%s", out)
 	}
 }
 

@@ -126,6 +126,15 @@ func factoryCommand(args []string, out io.Writer) error {
 		firstErr = err
 	}
 
+	// Checked before the cap, so every pass while main is red says so, and a
+	// dry run refuses where a real pass would. A gh that cannot answer is a
+	// warning: the gate is a safety net, not a reason to stall the queue.
+	if url, err := redMain(s.root); err != nil {
+		fmt.Fprintf(notes, "warning: could not read the default branch's latest ci run: %v\n", err)
+	} else if url != "" {
+		return fail(withCode(exitNeedsHuman, fmt.Errorf("the latest ci run on the default branch failed, so a worker would start from a red base; starting nothing until it is green: %s", url)))
+	}
+
 	rows, err := factoryRows(s.client, s.root)
 	if err != nil {
 		return fail(err)
@@ -406,6 +415,32 @@ func clearClosedInProgress(root string, dryRun bool, notes io.Writer, doc *facto
 		fmt.Fprintf(notes, "removed %s from closed #%d: %s\n", labelFactoryInProgress, c.Number, c.Title)
 	}
 	return nil
+}
+
+// redMainConclusions are the conclusions of a run that failed. A cancelled run
+// is not among them: nothing was found wrong with the code.
+var redMainConclusions = []string{"failure", "timed_out", "startup_failure"}
+
+// redMain is the URL of the latest completed ci run on the branch workers fork
+// from when that run failed, and "" when it did not or there is none.
+func redMain(root string) (string, error) {
+	branch := strings.TrimPrefix(gitx.BaseRef(root), "origin/")
+	raw, err := factoryGh(root, "run", "list", "--workflow", "ci", "--branch", branch,
+		"--status", "completed", "--limit", "1", "--json", "conclusion,url")
+	if err != nil {
+		return "", err
+	}
+	var runs []struct {
+		Conclusion string `json:"conclusion"`
+		URL        string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &runs); err != nil {
+		return "", withCode(exitEnvironment, fmt.Errorf("read the ci runs gh listed: %w", err))
+	}
+	if len(runs) == 0 || !slices.Contains(redMainConclusions, runs[0].Conclusion) {
+		return "", nil
+	}
+	return runs[0].URL, nil
 }
 
 // factoryGh runs gh against the repository's origin, as start's issue lookup
