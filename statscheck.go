@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/steig/worktender/internal/gitx"
@@ -36,13 +37,15 @@ type statsThresholds struct {
 	proofLoop int
 
 	// escapeRate is the share of merged pull requests reverted or blamed
-	// within the escape window. 0.2 — one in five — is past what published
-	// change-failure-rate surveys put even middling teams at, so crossing it
-	// is a factory merging work that is not done, not bad luck.
+	// within the escape window, and unlike the others it is a gate rather
+	// than a smoke alarm: it fires until the 95% interval's upper bound is
+	// under it, so a fleet has to show it is safe, not merely look it. At
+	// 0.05 that takes 73 escape-free merges. Escapes are found by
+	// revert and blame phrasing, so the true rate is no lower than measured.
 	escapeRate float64
 }
 
-var defaultThresholds = statsThresholds{ceremonyRatio: 20, proofLoop: 3, escapeRate: 0.2}
+var defaultThresholds = statsThresholds{ceremonyRatio: 20, proofLoop: 3, escapeRate: 0.05}
 
 // ceremonyAlertFloor is the least ceremony a dispatch must have before its
 // ratio can alert. Per hundred lines, a one-line fix gated once is 100: the
@@ -51,8 +54,8 @@ var defaultThresholds = statsThresholds{ceremonyRatio: 20, proofLoop: 3, escapeR
 const ceremonyAlertFloor = 5
 
 // escapeAlertFloor is the fewest merged pull requests the escape rate must be
-// over before it can alert. One revert in the first two merges is 50% and
-// says nothing yet.
+// over before it can alert. Under it the interval is near the whole range, so
+// the summary says there is not enough data instead.
 const escapeAlertFloor = 5
 
 // defaultCheckSince is how far back --check looks when --since is not given.
@@ -107,14 +110,34 @@ func checkStats(dispatches []*statsDispatch, th statsThresholds, window time.Dur
 	}
 
 	s := summarise(dispatches)
-	if s.EscapeRate != nil && s.EscapesChecked >= escapeAlertFloor && *s.EscapeRate > th.escapeRate {
-		alerts = append(alerts, statsAlert{
-			Kind: alertEscapeRate, Value: *s.EscapeRate, Threshold: th.escapeRate,
-			Message: fmt.Sprintf("escape rate: %d of %d merged PRs (%.0f%%) reverted or blamed for a regression within %s, over %.0f%%",
-				*s.Escapes, s.EscapesChecked, *s.EscapeRate*100, days(window), th.escapeRate*100),
-		})
+	if s.Escapes != nil && s.EscapesChecked >= escapeAlertFloor {
+		if _, hi := wilson(*s.Escapes, s.EscapesChecked); hi > th.escapeRate {
+			alerts = append(alerts, statsAlert{
+				Kind: alertEscapeRate, Value: round2(hi), Threshold: th.escapeRate,
+				Message: fmt.Sprintf("escape rate %s of merged PRs reverted or blamed for a regression within %s: the 95%% interval reaches past %.4g%%",
+					escapeFigure(*s.Escapes, s.EscapesChecked), days(window), th.escapeRate*100),
+			})
+		}
 	}
 	return alerts
+}
+
+// wilson is the 95% Wilson score interval for k successes in n trials. It
+// stays inside [0, 1] and is not zero-width at k = 0, which is the case that
+// matters here: no escapes in 13 merges is 0–23%, not 0%.
+func wilson(k, n int) (lo, hi float64) {
+	const z = 1.96
+	p, nf := float64(k)/float64(n), float64(n)
+	d := 1 + z*z/nf
+	centre := (p + z*z/(2*nf)) / d
+	half := z * math.Sqrt(p*(1-p)/nf+z*z/(4*nf*nf)) / d
+	return math.Max(0, centre-half), math.Min(1, centre+half)
+}
+
+// escapeFigure prints k escapes of n with its interval, as "0/13 (0–23%)".
+func escapeFigure(k, n int) string {
+	lo, hi := wilson(k, n)
+	return fmt.Sprintf("%d/%d (%.0f–%.0f%%)", k, n, lo*100, hi*100)
 }
 
 // sinceProgress counts the gate runs and reports a dispatch has had since it
