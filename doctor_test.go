@@ -40,6 +40,26 @@ func TestDoctorReportsEventsAsTheGateParsesThem(t *testing.T) {
 	}
 }
 
+// Workers holding your token is the default, and the reason "a human approves
+// and merges" is not a control (#253). doctor says so without changing its exit
+// code, and once a worker token is set it says that much and not the token.
+func TestDoctorWarnsWhenWorkersShareYourToken(t *testing.T) {
+	t.Setenv(workerTokenEnv, "")
+	if got := workerTokenCheck(); got.state != stateWarn || !strings.Contains(got.note, workerTokenEnv) {
+		t.Errorf("unset: %+v; want a warning naming %s", got, workerTokenEnv)
+	}
+
+	const token = "github_pat_worker_only"
+	t.Setenv(workerTokenEnv, token)
+	got := workerTokenCheck()
+	if got.state != stateOK {
+		t.Errorf("set: state = %q, want %q", got.state, stateOK)
+	}
+	if strings.Contains(got.value+got.note, token) {
+		t.Errorf("doctor printed the token: %+v", got)
+	}
+}
+
 // A repository that does not use pull requests is entitled to no `gh` at all,
 // so a missing or unauthenticated one must never read as a failure. It must not
 // read as fine either: it silently costs prune everything a merged pull request

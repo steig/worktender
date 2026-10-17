@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/jsonout"
@@ -70,7 +72,12 @@ func dispatchCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return withCode(exitUsage, err)
 	}
+	tokenArgs, err := workerTokenArgs()
+	if err != nil {
+		return err
+	}
 	agentArgs := append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...)
+	agentArgs = append(agentArgs, tokenArgs...)
 
 	workspace, err := workspaceForPane(s, *pane)
 	if err != nil {
@@ -141,6 +148,59 @@ func agentArgsFor(model, permissionMode string, warn io.Writer) []string {
 		args = append(args, "--permission-mode", permissionMode)
 	}
 	return args
+}
+
+// workerTokenEnv names a GitHub token for workers in place of yours: one that
+// can push a branch and open a pull request, but not approve or merge one. With
+// your token, a prompt-injected worker can approve its own issue and merge its
+// own PR, and "a human approves and merges" is policy rather than a control.
+const workerTokenEnv = "WORKTENDER_WORKER_GH_TOKEN"
+
+// workerTokenArgs are the agent arguments that give the worker
+// workerTokenEnv as GH_TOKEN, or none when it is unset.
+//
+// The token goes through a settings file because there is nowhere else it is
+// not shown: agent.start takes no environment, an argument is visible to `ps`
+// and in the pane the agent is started in, and typing an export would put it
+// on screen. A file that cannot be written fails the launch, because the
+// fallback is a worker holding your token.
+func workerTokenArgs() ([]string, error) {
+	token := os.Getenv(workerTokenEnv)
+	if token == "" {
+		return nil, nil
+	}
+	base := stateDir()
+	if base == "" {
+		base = defaultStateDir()
+	}
+	if base == "" {
+		return nil, withCode(exitEnvironment, fmt.Errorf(
+			"%s is set but there is no plugin state directory to keep it in: HERDR_PLUGIN_STATE_DIR is unset and no default location could be derived",
+			workerTokenEnv))
+	}
+	raw, _ := json.Marshal(map[string]any{"env": map[string]string{"GH_TOKEN": token}})
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return nil, withCode(exitEnvironment, fmt.Errorf("store the worker token: %w", err))
+	}
+	// Through a rename, so an agent starting beside this one never reads half
+	// a file. CreateTemp makes it 0600.
+	tmp, err := os.CreateTemp(base, "worker-settings-*.json")
+	if err != nil {
+		return nil, withCode(exitEnvironment, fmt.Errorf("store the worker token: %w", err))
+	}
+	_, err = tmp.Write(raw)
+	if cErr := tmp.Close(); err == nil {
+		err = cErr
+	}
+	path := filepath.Join(base, "worker-settings.json")
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return nil, withCode(exitEnvironment, fmt.Errorf("store the worker token: %w", err))
+	}
+	return []string{"--settings", path}, nil
 }
 
 // unsandboxedModes are the permission modes that stop an agent asking before it

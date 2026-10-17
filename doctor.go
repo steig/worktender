@@ -51,7 +51,7 @@ func doctorCommand(args []string, out io.Writer) error {
 		herdr.note = clientErr.Error()
 	}
 
-	checks := []check{versionCheck(client), herdr, ghCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
+	checks := []check{versionCheck(client), herdr, ghCheck(), workerTokenCheck(), eventsCheck(), rolesCheck(), lessonsCheck()}
 
 	// Nothing below the checks is answerable without herdr, and saying so once
 	// is better than four repetitions of the same cause.
@@ -341,6 +341,17 @@ func ghCheck() check {
 			note: "reads as \"no pull request\", so prune will keep almost everything"}
 	}
 	return check{name: "gh", value: "authenticated", state: stateOK}
+}
+
+// workerTokenCheck says whether workers get a token of their own. It says
+// "set" and nothing more: the value is a credential, and this table gets pasted
+// wherever someone asks for help.
+func workerTokenCheck() check {
+	if os.Getenv(workerTokenEnv) == "" {
+		return check{name: "worker-gh", value: "your token", state: stateWarn,
+			note: "workers share your gh token, so one can approve and merge; set " + workerTokenEnv + " to one that cannot"}
+	}
+	return check{name: "worker-gh", value: "set", state: stateOK, note: "workers run with " + workerTokenEnv}
 }
 
 // eventsCheck reports the opt-in as the gate actually parses it, not as it is

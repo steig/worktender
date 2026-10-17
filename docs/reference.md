@@ -6,11 +6,12 @@ Exit codes, errors, keybindings, and the behaviours that do not belong anywhere 
 
 ```sh
 $ worktender doctor
-version  0.5.0 @f074c65  warn  origin/main is at @a1b2c3d; run `worktender update`
-herdr    0.7.5          ok
-gh       authenticated  ok
-events   unset          off
-roles    none           off    no /home/you/.config/worktender/config.json
+version    0.5.0 @f074c65  warn  origin/main is at @a1b2c3d; run `worktender update`
+herdr      0.7.5           ok
+gh         authenticated   ok
+worker-gh  your token      warn  workers share your gh token, so one can approve and merge; set WORKTENDER_WORKER_GH_TOKEN to one that cannot
+events     unset           off
+roles      none            off   no /home/you/.config/worktender/config.json
 
 repos
   worktender    3 worktrees  1 working
@@ -38,6 +39,10 @@ right question first:
   and an origin that cannot be reached leaves drift reported as unknown rather
   than as fine.
 
+It also warns while workers share your `gh` token; see
+[Giving workers their own GitHub token](#giving-workers-their-own-github-token).
+The warning does not change the exit code.
+
 It also reports the role configuration `start` and `dispatch --role` read: the
 file, whether it parses, and any agent or directory a role names that does not
 exist. See [Roles](roles.md).
@@ -50,6 +55,33 @@ caller is standing.
 `doctor` is a command rather than an action, and deliberately: an action's
 output lands in the plugin log, which is exactly the indirection a diagnostic
 should not have.
+
+## Giving workers their own GitHub token
+
+```sh
+export WORKTENDER_WORKER_GH_TOKEN=github_pat_...
+```
+
+Unset, a worker runs with your `gh` login, and a prompt-injected one can post a
+valid `worktender approve` comment or run `gh pr merge` — so "a human approves
+and merges" is a policy, not a control. Set, `start` and `dispatch` launch the
+worker's agent with `GH_TOKEN` set to this token instead.
+
+The token is only as narrow as you make it. It needs to push branches and open
+pull requests. It must not be able to post an approval `start` counts — one
+from an account with write access to the repository, so give it no permission to
+comment on issues, or issue it to an account that has no write access — nor
+merge, which branch protection requiring someone else's review is what stops.
+
+The token never goes on a command line, which `ps` and the pane would show. It
+is written to `worker-settings.json` (mode 0600) in the plugin state directory
+and handed to `claude` as `--settings`, whose `env` reaches every command the
+agent runs. A state directory that cannot be written fails the launch rather
+than starting a worker on your token. `doctor` says `set`, never the value.
+
+It replaces the token `gh` reads, not your machine's other credentials: a
+worker that unsets `GH_TOKEN` falls back to your stored `gh` login. Closing
+that takes a separate user or sandbox, which this plugin cannot install.
 
 ## Staying current
 

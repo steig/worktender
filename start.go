@@ -137,6 +137,13 @@ func startCommand(args []string, out io.Writer) error {
 		return err
 	}
 	doc.Launch = launch.JSON()
+	tokenArgs, err := workerTokenArgs()
+	if err != nil {
+		if wErr := emit(doc.finish(err)); wErr != nil {
+			return wErr
+		}
+		return err
+	}
 	if line := launch.Line(); line != "" {
 		fmt.Fprintln(notes, line)
 	}
@@ -216,7 +223,7 @@ func startCommand(args []string, out io.Writer) error {
 		WorkspaceID: workspace,
 		PaneID:      pane,
 		AgentName:   agent,
-		AgentArgs:   append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...),
+		AgentArgs:   append(append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...), tokenArgs...),
 	}})
 	fmt.Fprint(notes, execute.Render(results))
 	doc.Staffing = execute.JSON(results)

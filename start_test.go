@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -411,6 +413,7 @@ func TestStartSurvivesABaseItCannotResolve(t *testing.T) {
 // Nothing is defaulted. Without --permission-mode, start changes nothing about
 // what the agent it creates may do.
 func TestStartPassesNoAgentArgsByDefault(t *testing.T) {
+	t.Setenv(workerTokenEnv, "")
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w5", "w5:p1", "working")
 	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":5,"title":"t","body":"b"}`))
@@ -425,7 +428,7 @@ func TestStartPassesNoAgentArgsByDefault(t *testing.T) {
 		}
 		args, _ := call.Params["args"].([]any)
 		for _, a := range args {
-			if s, _ := a.(string); s == "--model" || s == "--permission-mode" {
+			if s, _ := a.(string); s == "--model" || s == "--permission-mode" || s == "--settings" {
 				t.Errorf("start passed %s without being asked: %v", s, args)
 			}
 		}
@@ -877,5 +880,48 @@ func TestStartWithoutAContextSaysHowToNameARepository(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--repo") {
 		t.Errorf("the refusal must name the way past it, got %v", err)
+	}
+}
+
+// A worker holding your token can approve its own issue and merge its own PR
+// (#253). The token it is given instead reaches it as GH_TOKEN through a
+// settings file only it and you can read, and never through an argument or
+// anything start prints, either of which would put it on screen.
+func TestStartGivesTheWorkerItsOwnToken(t *testing.T) {
+	const token = "github_pat_worker_only"
+	t.Setenv(workerTokenEnv, token)
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w5", "w5:p1", "working")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":5,"title":"t","body":"b"}`))
+
+	var out strings.Builder
+	if err := startCommand([]string{"5"}, &out); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	args := agentStartArgs(t, server)
+	i := slices.Index(args, "--settings")
+	if i < 0 || i+1 == len(args) {
+		t.Fatalf("agent args = %v; want --settings <file>", args)
+	}
+	if strings.Contains(strings.Join(args, " "), token) || strings.Contains(out.String(), token) {
+		t.Errorf("the token was shown: args %v, output:\n%s", args, out.String())
+	}
+	info, err := os.Stat(args[i+1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("settings file mode = %v, want 0600", perm)
+	}
+	raw, err := os.ReadFile(args[i+1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(raw, &settings); err != nil || settings.Env["GH_TOKEN"] != token {
+		t.Errorf("settings = %s (%v); want env.GH_TOKEN set to the worker's token", raw, err)
 	}
 }
