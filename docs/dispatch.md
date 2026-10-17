@@ -328,6 +328,23 @@ One line per check, with both commits. It exits **0** only when no check fails
 on head, none is unjudged, and at least one discriminates. Otherwise it exits
 **3**: a change whose checks all passed before it started is a person's call.
 
+The worker's own tests get the same question. Once the checks pass, `verify`
+takes the head's export, puts every changed `.go` file not named `*_test.go`,
+`go.mod` and `go.sum` back as they were on the merge-base, keeps the changed
+test files, and runs `go test -count=1 -v` on their `Test` functions there.
+Only a test that ran and failed shows the tests need the change. Otherwise it
+exits **3**:
+
+- every test passed: `hollow: tests pass with the change reverted`;
+- the tests do not build without the change, which says a test calls
+  something new, not that it checks it;
+- no test ran to a pass or a failure (all skipped, or excluded by build tags);
+- the run timed out;
+- a changed test file holds no `Test` function `verify` can find.
+
+It skips this, saying so, when the change touches no Go source, `go.mod` or
+`go.sum`, or no `*_test.go` file.
+
 **The worker reads the approved payload, not the live issue.** From that same
 single fetch, `start` writes the payload byte for byte to
 `$(git rev-parse --git-path worktender/issue.md)` in the new worktree. That is

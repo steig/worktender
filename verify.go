@@ -7,8 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -206,6 +210,9 @@ func verifyCommand(args []string, out io.Writer) error {
 		return finish(codef(exitNeedsHuman, "#%d is not verified: every check already passes on base %s, so none shows the change did anything",
 			number, shortOid(base)))
 	}
+	if err := verifyTestsNeedTheChange(root, base, head, *timeout, notes); err != nil {
+		return finish(err)
+	}
 	fmt.Fprintf(notes, "verified: %d discriminating, %d guard\n", counts[verifyDiscriminating], counts[verifyGuard])
 	return finish(nil)
 }
@@ -233,19 +240,33 @@ func runOneCheck(root, commit string, c acceptanceCheck, timeout time.Duration) 
 	}
 	defer cleanup()
 
+	run, output, err := runIn(export, timeout, "sh", "-c", c.Command)
+	if err != nil {
+		return verifyRun{}, err
+	}
+	run.Commit = commit
+	if run.ExitCode != nil {
+		run.Passed, _ = outcomeMet(c.Expect, *run.ExitCode, output)
+	}
+	return run, nil
+}
+
+// runIn runs argv in dir under timeout, with its exit code, or none when it
+// timed out or was killed, and everything it printed.
+func runIn(dir string, timeout time.Duration, argv ...string) (verifyRun, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "-c", c.Command)
-	cmd.Dir = export
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
 	// The timeout kills what the check started, not only sh (killTree), and
 	// stops waiting on a child that escaped it and holds the output open.
 	killTree(cmd)
 	cmd.WaitDelay = 5 * time.Second
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
-	err = cmd.Run()
+	err := cmd.Run()
 
-	run := verifyRun{Commit: commit}
+	var run verifyRun
 	var exit *exec.ExitError
 	switch {
 	// ctx's error, not Run's: a check killed by the cancel exits by signal,
@@ -260,12 +281,9 @@ func runOneCheck(root, commit string, c acceptanceCheck, timeout time.Duration) 
 			run.ExitCode = &code
 		}
 	default:
-		return verifyRun{}, withCode(exitEnvironment, err)
+		return verifyRun{}, "", withCode(exitEnvironment, err)
 	}
-	if run.ExitCode != nil {
-		run.Passed, _ = outcomeMet(c.Expect, *run.ExitCode, output.String())
-	}
-	return run, nil
+	return run, output.String(), nil
 }
 
 // fixedOutcomes are the outcomes verify can judge, and a drafted check may
@@ -302,4 +320,107 @@ func classifyCheck(expect string, base, head verifyRun) string {
 		return verifyGuard
 	}
 	return verifyDiscriminating
+}
+
+// goTestFunc is a test go test runs: TestMain takes a *testing.M and is none.
+var goTestFunc = regexp.MustCompile(`(?m)^func (Test\w*)\(\w+ \*testing\.T\)`)
+
+// verifyTestsNeedTheChange refuses tests that pass without the change they
+// came with. Approved checks are graded on base and head, but the worker's
+// own tests are graded only by passing, and a test that passes with the code
+// change reverted tests nothing. So head's export has every changed Go
+// source file, go.mod and go.sum put back as they were on base, the changed
+// test files kept, and the changed test files' tests run there: at least one
+// has to fail. A README edit beside a test-only change is not code the tests
+// could need, so it is left alone.
+//
+// Only a test that ran and failed counts. A build failure on the revert says
+// the test calls something new, not that it checks what the new thing does,
+// and a run where every test skipped or none matched shows nothing either
+// way: both are unjudged.
+func verifyTestsNeedTheChange(root, base, head string, timeout time.Duration, notes io.Writer) error {
+	diff, err := exec.Command("git", "-C", root, "diff", "--name-status", "--no-renames", "-z", base, head).Output()
+	if err != nil {
+		return withCode(exitEnvironment, fmt.Errorf("list what %s changed: %w", shortOid(head), err))
+	}
+	var restore, remove, tests, testFiles []string
+	packages := map[string]bool{}
+	fields := strings.Split(strings.TrimSuffix(string(diff), "\x00"), "\x00")
+	for i := 0; i+1 < len(fields); i += 2 {
+		status, file := fields[i], fields[i+1]
+		switch {
+		case strings.HasSuffix(file, "_test.go"):
+			if status == "D" {
+				continue
+			}
+			testFiles = append(testFiles, file)
+			src, err := exec.Command("git", "-C", root, "show", head+":"+file).Output()
+			if err != nil {
+				return withCode(exitEnvironment, fmt.Errorf("read %s on %s: %w", file, shortOid(head), err))
+			}
+			for _, m := range goTestFunc.FindAllSubmatch(src, -1) {
+				tests = append(tests, string(m[1]))
+				packages["./"+path.Dir(file)] = true
+			}
+		case !strings.HasSuffix(file, ".go") && path.Base(file) != "go.mod" && path.Base(file) != "go.sum":
+		case status == "A":
+			remove = append(remove, file)
+		default:
+			restore = append(restore, file)
+		}
+	}
+	switch {
+	case len(restore)+len(remove) == 0:
+		fmt.Fprintf(notes, "revert: skipped, the change touches no Go source, go.mod or go.sum\n")
+		return nil
+	case len(testFiles) == 0:
+		fmt.Fprintf(notes, "revert: skipped, the change adds or changes no Go test\n")
+		return nil
+	// A test spelled so the pattern misses it, `*tt.T` from an aliased
+	// import, must not pass for a change with no tests.
+	case len(tests) == 0:
+		return codef(exitNeedsHuman, "the changed test files (%s) hold no test verify can find to run with the change reverted",
+			strings.Join(testFiles, ", "))
+	}
+
+	export, cleanup, err := exportTracked(root, head)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	for _, file := range append(remove, restore...) {
+		if err := os.Remove(filepath.Join(export, filepath.FromSlash(file))); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return withCode(exitEnvironment, err)
+		}
+	}
+	if len(restore) > 0 {
+		archive := exec.Command("git", append([]string{"-C", root, "archive", "--format=tar", base, "--"}, restore...)...)
+		tarball, err := archive.Output()
+		if err == nil {
+			err = extractTar(bytes.NewReader(tarball), export)
+		}
+		if err != nil {
+			return withCode(exitEnvironment, fmt.Errorf("put back what %s changed as it was on %s: %w", shortOid(head), shortOid(base), err))
+		}
+	}
+
+	slices.Sort(tests)
+	tests = slices.Compact(tests)
+	argv := []string{"go", "test", "-count=1", "-v", "-run", "^(" + strings.Join(tests, "|") + ")$"}
+	argv = append(argv, slices.Sorted(maps.Keys(packages))...)
+	run, output, err := runIn(export, timeout, argv...)
+	switch {
+	case err != nil:
+		return err
+	case run.ExitCode == nil:
+		return codef(exitNeedsHuman, "the changed tests did not finish with the change reverted, so whether they need it is unjudged")
+	case strings.Contains(output, "[build failed]") || strings.Contains(output, "[setup failed]"):
+		return codef(exitNeedsHuman, "the changed tests do not build with the change reverted, so whether they need it is unjudged")
+	case *run.ExitCode == 0 && strings.Contains(output, "--- PASS:"):
+		return codef(exitNeedsHuman, "hollow: tests pass with the change reverted (%s)", strings.Join(tests, ", "))
+	case *run.ExitCode == 0 || !strings.Contains(output, "--- FAIL:"):
+		return codef(exitNeedsHuman, "no changed test ran to a pass or a failure with the change reverted, so whether they need it is unjudged")
+	}
+	fmt.Fprintf(notes, "revert: the changed tests fail with %d Go file(s) put back as on base\n", len(restore)+len(remove))
+	return nil
 }

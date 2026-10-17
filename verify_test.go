@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +167,80 @@ func TestVerifyRefusesAPullRequestForAnotherIssue(t *testing.T) {
 				t.Fatalf("verify --pr 3 on %s: %v (exit %d); want exit %d\n%s", tc.branch, err, exitCode(err), tc.want, out.String())
 			}
 		})
+	}
+}
+
+// A test the worker wrote is graded only by passing, so verify runs the
+// changed tests with the changed code put back as it was on base: a test that
+// still passes there does not test the change.
+func TestVerifyRefusesATestThatPassesWithTheCodeReverted(t *testing.T) {
+	t.Setenv("PATH", filepath.Join(runtime.GOROOT(), "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		name, test, says string
+		want             int
+	}{
+		{"hollow", "func TestDouble(t *testing.T) { if Double(0) != 0 { t.Fatal(Double(0)) } }",
+			"hollow: tests pass with the change reverted (TestDouble)", exitNeedsHuman},
+		{"needs the change", "func TestDouble(t *testing.T) { if Double(2) != 4 { t.Fatal(Double(2)) } }", "", exitOK},
+		{"calls something new", "func TestTriple(t *testing.T) { if Triple(2) != 6 { t.Fatal(Triple(2)) } }",
+			"do not build with the change reverted", exitNeedsHuman},
+		{"skipped", "func TestDouble(t *testing.T) { t.Skip(\"later\") }", "no changed test ran", exitNeedsHuman},
+		{"unfound", "var _ = testing.Short\n\nfunc TestDouble(t *T) {}\n\ntype T = testing.T",
+			"hold no test verify can find", exitNeedsHuman},
+		// The README beside the Go change is not code, so it keeps head's text
+		// and a test that reads only it passes on the revert.
+		{"README left alone", "import \"os\"\n\nfunc TestReadme(t *testing.T) { if b, _ := os.ReadFile(\"../README.md\"); string(b) != \"head\\n\" { t.Fatal(string(b)) } }",
+			"hollow: tests pass with the change reverted (TestReadme)", exitNeedsHuman},
+		{"go.mod reverted", "import (\"os\"; \"strings\")\n\nfunc TestGoMod(t *testing.T) { if b, _ := os.ReadFile(\"../go.mod\"); !strings.Contains(string(b), \"// head\") { t.Fatal(string(b)) } }",
+			"", exitOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := verifyRepo(t, "`test -f added.txt` exits 0")
+			repo.Git("checkout", "main")
+			repo.Write("go.mod", "module example.com/m\n\ngo 1.21\n")
+			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return x }\n")
+			repo.Git("add", ".")
+			repo.Git("commit", "-m", "the library")
+			repo.Git("checkout", "42-the-thing")
+			repo.Git("rebase", "main")
+			repo.Write("lib/lib.go", "package lib\n\nfunc Double(x int) int { return 2 * x }\n\nfunc Triple(x int) int { return 3 * x }\n")
+			repo.Write("README.md", "head\n")
+			repo.Write("go.mod", "module example.com/m\n\ngo 1.21\n\n// head\n")
+			repo.Write("lib/lib_test.go", "package lib\n\nimport \"testing\"\n\n"+tc.test+"\n")
+			repo.Git("add", ".")
+			repo.Git("commit", "-m", "double it")
+
+			var out strings.Builder
+			err := verifyCommand([]string{"42", "--repo", repo.Root}, &out)
+			if exitCode(err) != tc.want {
+				t.Fatalf("verify: %v (exit %d); want exit %d\n%s", err, exitCode(err), tc.want, out.String())
+			}
+			if tc.want == exitNeedsHuman && !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("error = %v; want it to say %q", err, tc.says)
+			}
+			if tc.want == exitOK && !strings.Contains(out.String(), "revert: the changed tests fail with") {
+				t.Errorf("output does not say the tests failed with the change reverted:\n%s", out.String())
+			}
+		})
+	}
+}
+
+func TestVerifySkipsTheRevertWithNoGoSourceChange(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	repo.Git("checkout", "-b", "42-the-thing")
+	repo.Write("lib_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestNothing(t *testing.T) {}\n")
+	repo.Write("README.md", "a README edit is not code the test could need\n")
+	repo.Git("add", ".")
+	repo.Git("commit", "-m", "a test alone")
+	body := "## Acceptance\n- [ ] `test -f lib_test.go` exits 0\n"
+	newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, body, comment{"steig", approvalOf(t, readyTitle, body)}),
+		map[string]string{"steig": "admin"})
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {
+		t.Fatalf("verify: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "revert: skipped, the change touches no Go source, go.mod or go.sum") {
+		t.Errorf("output does not say the revert was skipped:\n%s", out.String())
 	}
 }
