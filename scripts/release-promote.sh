@@ -41,13 +41,10 @@ names=$(printf '%s\n' "$view" | tail -n +2)
 # install.sh downloads checksums.txt and the binary it names from whatever
 # latest resolves to, and refuses to install without both. A release that
 # release.yml never finished uploading to (#182) would turn every fresh install
-# into a failure, so every file checksums.txt names has to be there too.
-if ! printf '%s\n' "$names" | grep -qx checksums.txt; then
-	echo "release-promote: $tag has no checksums.txt asset; refusing to make it latest" >&2
-	exit 1
-fi
+# into a failure, so checksums.txt has to be there — the download fails when it
+# is not — and so does every file it names.
 if ! sums=$(gh release download "$tag" --pattern checksums.txt --output -); then
-	echo "release-promote: could not download checksums.txt for $tag" >&2
+	echo "release-promote: could not download checksums.txt for $tag; refusing to make it latest" >&2
 	exit 1
 fi
 if [ -z "$sums" ]; then

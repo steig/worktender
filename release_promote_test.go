@@ -37,7 +37,7 @@ func TestPromoteRefusesAnIncompleteRelease(t *testing.T) {
 			view:          "false\nworktender_linux_amd64\nchecksums.txt\n",
 			checksums:     "abc  worktender_linux_amd64\ndef  worktender_darwin_arm64\n",
 		},
-		"empty checksums.txt": {releaseExists: true, view: "false\nchecksums.txt\n"},
+		"empty checksums.txt": {releaseExists: true, view: "false\nchecksums.txt\n", checksums: "\n"},
 		"a draft": {
 			releaseExists: true,
 			view:          "true\nworktender_linux_amd64\nchecksums.txt\n",

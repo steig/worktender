@@ -30,8 +30,9 @@ type gh struct {
 	releaseExists bool
 	createFails   bool
 	// view is what `release view` prints for the script's --jq, and checksums
-	// what `release download` prints for checksums.txt. The fake ignores the
-	// query, so each test spells the answer the real gh would give it.
+	// what `release download` prints for checksums.txt; empty means the release
+	// has no such asset, which the real gh reports by failing. The fake ignores
+	// the query, so each test spells the answer the real gh would give it.
 	view      string
 	checksums string
 }
@@ -64,7 +65,7 @@ func runReleaseScript(t *testing.T, path string, fake gh, args ...string) ([]ghC
 		"echo \"$*\" >> " + log + "\n" +
 		"case \"$1 $2\" in\n" +
 		"'release view') printf '%s' '" + fake.view + "'; exit " + exit(!fake.releaseExists) + " ;;\n" +
-		"'release download') printf '%s' '" + fake.checksums + "' ;;\n" +
+		"'release download') printf '%s' '" + fake.checksums + "'; exit " + exit(fake.checksums == "") + " ;;\n" +
 		"'release create') echo 'a release with the same tag name already exists' >&2; exit " + exit(fake.createFails) + " ;;\n" +
 		"esac\n" +
 		"exit 0\n"
