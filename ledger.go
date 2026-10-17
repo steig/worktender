@@ -13,7 +13,9 @@ import (
 
 	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/gitx"
+	"github.com/steig/worktender/internal/herdrapi"
 	"github.com/steig/worktender/internal/roles"
+	"github.com/steig/worktender/internal/wt"
 )
 
 // The dispatch ledger is what `worktender stats` is computed from: one JSON
@@ -77,6 +79,9 @@ type ledgerEvent struct {
 	// report only, except that feedback carries PR too.
 	Status string `json:"status,omitempty"`
 	PR     int    `json:"pr,omitempty"`
+	// Session is the worker's agent session id as herdr names it, which is
+	// what its transcript is filed under. Empty when herdr could not say.
+	Session string `json:"session,omitempty"`
 
 	// gate only. Every worker the wait covered, as the caller named it and as
 	// herdr resolved it, because a coordinator may name a worker either way.
@@ -205,6 +210,18 @@ func recordReport(r report) {
 		if root, err := gitx.RepoRoot(dir); err == nil {
 			e.Repository = root
 			e.Branch = gitx.Branch(dir)
+		}
+	}
+	// The session is asked for now, while the worker's pane still holds it:
+	// by the time its pull request merges and stats reads the transcript, the
+	// pane is long gone. Best effort like the rest of the ledger.
+	if e.PaneID != "" && os.Getenv(socketEnv) != "" {
+		if client, err := herdrapi.New(); err == nil {
+			if info, err := client.AgentGet(e.PaneID); err == nil {
+				if s := info.Agent.AgentSession; s != nil && s.Kind == herdrapi.AgentSessionRefKindID && wt.PlainSessionID(s.Value) {
+					e.Session = s.Value
+				}
+			}
 		}
 	}
 	recordLedger(e)

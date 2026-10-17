@@ -508,6 +508,8 @@ ISSUE  BRANCH          ROLE  PR  MERGED  WALL     ATTEMPTS  INBOX  GATES  DIFF  
 
 2 dispatches, 2 with a pull request, 2 merged
 per merged PR: median wall clock 37m30s, 1.50 attempts, rework rate 50%, 3.00 ceremony
+tokens per merged PR, median over the 2 of 2 with a transcript: 395 in, 41800 out, 3120000 cache read, 190500 cache write
+  claude-sonnet-5-5: 790 in, 83600 out, 6240000 cache read, 381000 cache write
 escape rate 1/2 (9–91%) of merged PRs reverted or blamed for a regression within 14d of merging; under 5, not enough data to judge yet
 ```
 
@@ -520,8 +522,9 @@ append one line to as they go:
 - **`start`** records the dispatch once its agent has the brief — issue, branch,
   role, agent, agent kind and agent name. Only dispatches made by `start` are
   counted: a worker staffed by `sync` or `dispatch` has no issue to count against.
-- **`report`** records each status a worker claims, with its time and pull
-  request, keyed by the repository and branch it was made from.
+- **`report`** records each status a worker claims, with its time, pull
+  request and the agent session herdr names for its pane, keyed by the
+  repository and branch it was made from.
 - **`gate`** records each wait a coordinator opens, against every worker it covers.
 - **`pr-feedback`** records each notice it types at a worker, by repository,
   branch and pull request.
@@ -549,6 +552,23 @@ What the columns mean:
   cannot observe itself. `?` is gh failing to answer; `--json` says why.
 - **`ESCAPED`** is whether a merged pull request turned out not to be finished,
   and what showed it; `-` when it has not merged or gh could not be searched.
+
+### Tokens
+
+What a dispatch spent is read from its worker's own Claude Code transcripts,
+`~/.claude/projects/*/<session>.jsonl` and the subagent transcripts beside it.
+The session ids come from the ledger: `report` asks herdr for its pane's
+`agent_session` as it records each report, because by the time a pull request
+merges the pane is gone. A worker restarted mid-dispatch has two sessions, and
+both count.
+
+Each API response is counted once, by its message id — Claude writes one line
+per content block, each repeating the usage — and the counts are kept per
+model: input, output, cache-read and cache-write tokens. They are tokens, not
+dollars; a price table in the binary would be wrong the first time a price
+changed. A transcript that is gone is skipped without a word, and its
+dispatch's tokens are unknown rather than zero, so the summary's totals and
+medians are over the merged pull requests whose transcripts were found.
 
 ### Escapes
 

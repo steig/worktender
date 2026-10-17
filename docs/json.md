@@ -534,6 +534,9 @@ $ worktender stats --json
       "merged_at": "2026-10-01T12:00:00Z",
       "escaped": true,
       "escape": { "kind": "revert", "by": 12, "at": "2026-10-03T09:00:00Z" },
+      "tokens": [
+        { "model": "claude-sonnet-5-5", "input_tokens": 410, "output_tokens": 38200, "cache_read_tokens": 2950000, "cache_write_tokens": 182000 }
+      ],
       "error": null
     }
   ],
@@ -547,7 +550,12 @@ $ worktender stats --json
     "ceremony_per_merged_pr": 5,
     "escapes_checked": 1,
     "escapes": 1,
-    "escape_rate": 1
+    "escape_rate": 1,
+    "tokens_counted": 1,
+    "tokens_by_model": [
+      { "model": "claude-sonnet-5-5", "input_tokens": 410, "output_tokens": 38200, "cache_read_tokens": 2950000, "cache_write_tokens": 182000 }
+    ],
+    "median_tokens_per_merged_pr": { "input_tokens": 410, "output_tokens": 38200, "cache_read_tokens": 2950000, "cache_write_tokens": 182000 }
   },
   "alerts": null
 }
@@ -582,6 +590,16 @@ $ worktender stats --json
 - **`summary.escape_rate`** is `escapes` over `escapes_checked`, the merged
   dispatches whose repository gh could search. Both are null when none could
   be: an unsearchable repository is unknown, not escape-free.
+- **`tokens`** is what the worker's Claude Code sessions spent, one entry per
+  model, sorted by model: input, output, cache-read and cache-write tokens,
+  each response counted once, subagents included. Tokens, not dollars, so no
+  price table goes stale. Null when no report named a session or every
+  transcript is gone — unknown, not zero. How the sessions are found is in
+  [dispatch.md](dispatch.md#tokens).
+- **`summary.tokens_by_model`** totals `tokens` over merged pull requests, and
+  **`summary.median_tokens_per_merged_pr`** is the median of each count per
+  merged pull request, null when none had a transcript. Both are over the
+  **`tokens_counted`** merged pull requests whose transcripts were found.
 - **`alerts`** is null unless `--check` was given, and `[]` when it was and
   nothing crossed a threshold. Each alert is `{kind, issue, branch, value,
   threshold, message}`: `kind` is `ceremony`, `proof_loop` or `escape_rate`;

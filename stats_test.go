@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -279,5 +281,136 @@ func TestStatsShowsTheRoleOfAFactoryStart(t *testing.T) {
 	}
 	if doc == nil || *doc != "ux" {
 		t.Errorf("--json role = %v, want ux", doc)
+	}
+}
+
+// transcriptLine is one assistant line of a Claude Code transcript.
+func transcriptLine(id, model string, in, out, read, write int) string {
+	return fmt.Sprintf(`{"type":"assistant","sessionId":"x","message":{"id":%q,"model":%q,"usage":{"input_tokens":%d,"output_tokens":%d,"cache_read_input_tokens":%d,"cache_creation_input_tokens":%d}}}`,
+		id, model, in, out, read, write)
+}
+
+// Tokens are read from the transcripts of the sessions a dispatch's reports
+// named, counted once per response, totalled by model over merged PRs, and
+// left unknown rather than zero when a transcript is gone (#284). It reports
+// tokens, not dollars, whatever the approved check's name says.
+func TestStatsReportsTokensAndCostPerMergedPR(t *testing.T) {
+	path := withLedger(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	lines := []string{
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"42-a","issue":42}`,
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"43-b","issue":43}`,
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"44-c","issue":44}`,
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"45-d","issue":45}`,
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"46-e","issue":46}`,
+		// #42's worker was restarted, so two sessions spent its tokens.
+		`{"v":1,"event":"report","at":"2026-10-01T10:10:00Z","repository":"/r","branch":"42-a","status":"planned","session":"s1"}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:20:00Z","repository":"/r","branch":"42-a","status":"done","pr":7,"session":"s2"}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:20:00Z","repository":"/r","branch":"43-b","status":"done","pr":8,"session":"gone"}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:20:00Z","repository":"/r","branch":"44-c","status":"done","pr":9,"session":"s4"}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:20:00Z","repository":"/r","branch":"45-d","status":"done","pr":10,"session":"s5"}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:20:00Z","repository":"/r","branch":"46-e","status":"done","pr":11,"session":"s6"}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	projects := filepath.Join(home, ".claude", "projects")
+	herdrtest.WriteFile(t, filepath.Join(projects, "-wt-42", "s1.jsonl"), strings.Join([]string{
+		`{"type":"user","message":{"role":"user","content":"go"}}`,
+		// One response written as two content-block lines, usage repeated.
+		transcriptLine("m1", "opus", 10, 100, 1000, 500),
+		transcriptLine("m1", "opus", 10, 100, 1000, 500),
+		// A message Claude Code made up itself.
+		transcriptLine("m2", "<synthetic>", 0, 0, 0, 0),
+	}, "\n")+"\n")
+	herdrtest.WriteFile(t, filepath.Join(projects, "-wt-42", "s1", "subagents", "agent-a.jsonl"),
+		transcriptLine("m3", "haiku", 1, 2, 3, 4)+"\n")
+	// s2 resumed from another directory is filed twice; its responses count once.
+	herdrtest.WriteFile(t, filepath.Join(projects, "-wt-42", "s2.jsonl"), transcriptLine("m4", "opus", 20, 200, 2000, 0)+"\n")
+	herdrtest.WriteFile(t, filepath.Join(projects, "-elsewhere", "s2.jsonl"), transcriptLine("m4", "opus", 20, 200, 2000, 0)+"\n")
+	herdrtest.WriteFile(t, filepath.Join(projects, "-wt-44", "s4.jsonl"), transcriptLine("m5", "sonnet", 5, 50, 500, 50))
+	herdrtest.WriteFile(t, filepath.Join(projects, "-wt-45", "s5.jsonl"), transcriptLine("m6", "opus", 9, 9, 9, 9)+"\n")
+	// A transcript with no paid response in it is as unknown as a missing one.
+	herdrtest.WriteFile(t, filepath.Join(projects, "-wt-46", "s6.jsonl"), transcriptLine("m7", "<synthetic>", 0, 0, 0, 0)+"\n")
+
+	answers := t.TempDir()
+	for pr, state := range map[string]string{"7": "MERGED", "8": "MERGED", "9": "MERGED", "10": "OPEN", "11": "MERGED"} {
+		herdrtest.WriteFile(t, filepath.Join(answers, pr+".json"), `{"state":"`+state+`","additions":1,"deletions":0}`)
+	}
+	herdrtest.FakeGh(t, `cat '`+answers+`'/"$3".json`)
+
+	var out strings.Builder
+	if err := statsCommand([]string{"--json"}, &out); err != nil {
+		t.Fatalf("stats --json: %v", err)
+	}
+	var doc statsJSON
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("not a document: %v\n%s", err, out.String())
+	}
+
+	want42 := []modelTokens{
+		{"haiku", tokenCounts{1, 2, 3, 4}},
+		{"opus", tokenCounts{30, 300, 3000, 500}},
+	}
+	if got := doc.Dispatches[0].Tokens; !reflect.DeepEqual(got, want42) {
+		t.Errorf("#42 tokens = %+v, want %+v", got, want42)
+	}
+	if got := doc.Dispatches[1].Tokens; got != nil {
+		t.Errorf("#43's transcript is gone, so its tokens are unknown, not %+v", got)
+	}
+	if got := doc.Dispatches[3].Tokens; len(got) != 1 {
+		t.Errorf("#45 has not merged but its tokens are still its own: %+v", got)
+	}
+	if got := doc.Dispatches[4].Tokens; got != nil {
+		t.Errorf("#46's transcript has no paid response, so its tokens are unknown, not %+v", got)
+	}
+
+	s := doc.Summary
+	if s.TokensCounted != 2 {
+		t.Errorf("tokens counted = %d, want 2 — #43 and #46 have no usable transcript and #45 has not merged", s.TokensCounted)
+	}
+	wantByModel := []modelTokens{
+		{"haiku", tokenCounts{1, 2, 3, 4}},
+		{"opus", tokenCounts{30, 300, 3000, 500}},
+		{"sonnet", tokenCounts{5, 50, 500, 50}},
+	}
+	if !reflect.DeepEqual(s.TokensByModel, wantByModel) {
+		t.Errorf("tokens by model = %+v, want %+v", s.TokensByModel, wantByModel)
+	}
+	// #42 is 31/302/3003/504 and #44 5/50/500/50: the medians are the means.
+	if m := s.MedianTokensPerMergedPR; m == nil || *m != (tokenCounts{18, 176, 1751, 277}) {
+		t.Errorf("median tokens per merged PR = %+v, want 18/176/1751/277", m)
+	}
+
+	out.Reset()
+	if err := statsCommand(nil, &out); err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	for _, want := range []string{
+		"tokens per merged PR, median over the 2 of 4 with a transcript: 18 in, 176 out, 1751 cache read, 277 cache write",
+		"  opus: 30 in, 300 out, 3000 cache read, 500 cache write",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output is missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// A dispatch whose reports named no session has no tokens to report, and the
+// summary says so with a null median rather than zeros.
+func TestStatsWithoutSessionsHasNoTokens(t *testing.T) {
+	statsFixture(t)
+	t.Setenv("HOME", t.TempDir())
+
+	var out strings.Builder
+	if err := statsCommand([]string{"--json"}, &out); err != nil {
+		t.Fatalf("stats --json: %v", err)
+	}
+	for _, want := range []string{`"tokens": null`, `"tokens_counted": 0`, `"tokens_by_model": []`, `"median_tokens_per_merged_pr": null`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output is missing %s:\n%s", want, out.String())
+		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +58,12 @@ type statsDispatch struct {
 	// escapeKnown is what separates them.
 	escape      *escapeFinding
 	escapeKnown bool
+
+	// sessions is every agent session its reports named, in the order first
+	// seen: a worker restarted mid-dispatch spent tokens in both. tokens is
+	// nil when none of their transcripts could be found.
+	sessions []string
+	tokens   []modelTokens
 }
 
 // attempts is how many times the worker claimed it was finished.
@@ -254,6 +261,7 @@ func statsCommand(args []string, out io.Writer) error {
 	// which dispatches happen to be shown.
 	dispatches = startedWithin(dispatches, *since)
 	lookupPRs(dispatches)
+	countTokens(dispatches)
 	findEscapes(dispatches, *window)
 
 	var alerts []statsAlert
@@ -320,6 +328,9 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 				continue
 			}
 			d.reports = append(d.reports, e)
+			if e.Session != "" && !slices.Contains(d.sessions, e.Session) {
+				d.sessions = append(d.sessions, e.Session)
+			}
 			if e.PR > 0 {
 				d.pr = e.PR
 			}
@@ -451,6 +462,12 @@ type statsSummary struct {
 	EscapesChecked int      `json:"escapes_checked"`
 	Escapes        *int     `json:"escapes"`
 	EscapeRate     *float64 `json:"escape_rate"`
+
+	// TokensCounted is the merged dispatches whose transcripts were found; the
+	// totals and the median are over those alone.
+	TokensCounted           int           `json:"tokens_counted"`
+	TokensByModel           []modelTokens `json:"tokens_by_model"`
+	MedianTokensPerMergedPR *tokenCounts  `json:"median_tokens_per_merged_pr"`
 }
 
 func summarise(dispatches []*statsDispatch) statsSummary {
@@ -499,6 +516,7 @@ func summarise(dispatches []*statsDispatch) statsSummary {
 		secs := int64(m.Round(time.Second) / time.Second)
 		s.MedianWallClock = &secs
 	}
+	s.TokensByModel, s.MedianTokensPerMergedPR, s.TokensCounted = summariseTokens(dispatches)
 	return s
 }
 
@@ -560,6 +578,14 @@ func renderStats(out io.Writer, dispatches []*statsDispatch, window time.Duratio
 		fmt.Fprintf(out, "per merged PR: median wall clock %s, %.2f attempts, rework rate %.0f%%, %.2f ceremony\n",
 			wall, *s.AttemptsPerMergedPR, *s.ReworkRate*100, *s.CeremonyPerMergedPR)
 	}
+	if m := s.MedianTokensPerMergedPR; m != nil {
+		fmt.Fprintf(out, "tokens per merged PR, median over the %d of %d with a transcript: %d in, %d out, %d cache read, %d cache write\n",
+			s.TokensCounted, s.Merged, m.Input, m.Output, m.CacheRead, m.CacheWrite)
+		for _, t := range s.TokensByModel {
+			fmt.Fprintf(out, "  %s: %d in, %d out, %d cache read, %d cache write\n",
+				safetext.Escape(t.Model), t.Input, t.Output, t.CacheRead, t.CacheWrite)
+		}
+	}
 	if s.Escapes != nil {
 		enough := ""
 		if s.EscapesChecked < escapeAlertFloor {
@@ -612,6 +638,7 @@ type statsDispatchJSON struct {
 	MergedAt      *string           `json:"merged_at"`
 	Escaped       *bool             `json:"escaped"`
 	Escape        *escapeFinding    `json:"escape"`
+	Tokens        []modelTokens     `json:"tokens"`
 	Error         *string           `json:"error"`
 }
 
@@ -631,7 +658,7 @@ func statsDocument(path string, skipped int, dispatches []*statsDispatch, window
 			Issue: d.start.Issue, Repository: d.start.Repository, Branch: d.start.Branch,
 			AgentKind: d.start.AgentKind, AgentName: d.start.AgentName, PaneID: d.start.PaneID,
 			StartedAt: d.start.At, Reports: []statsReportJSON{}, Attempts: d.attempts(), Rounds: d.feedback,
-			Merged: d.merged(), InboxMessages: d.inbox, GateRuns: d.gates,
+			Merged: d.merged(), InboxMessages: d.inbox, GateRuns: d.gates, Tokens: d.tokens,
 		}
 		if d.start.Role != "" {
 			j.Role = jsonout.String(d.start.Role)
