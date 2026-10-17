@@ -660,9 +660,10 @@ func TestNonTestLinesCountsCodeRenamedIntoATestFile(t *testing.T) {
 	diff := "diff --git a/x.go b/x_test.go\nsimilarity index 50%\nrename from x.go\nrename to x_test.go\n" +
 		"--- a/x.go\n+++ b/x_test.go\n@@ -1,2 +1,1 @@\n-func f() {}\n-func g() {}\n+func h() {}\n" +
 		"diff --git a/y_test.go b/y_test.go\n--- a/y_test.go\n+++ b/y_test.go\n@@ -1 +1 @@\n-old\n+new\n" +
+		"diff --git \"a/q\\tq_test.go\" \"b/q\\tq_test.go\"\n--- \"a/q\\tq_test.go\"\n+++ \"b/q\\tq_test.go\"\n@@ -1 +1 @@\n-old\n+new\n" +
 		"diff --git a/z.go b/z.go\ndeleted file mode 100644\n--- a/z.go\n+++ /dev/null\n@@ -1 +0,0 @@\n--- not a header\n"
 	if n := nonTestLines([]byte(diff)); n != 4 {
-		t.Errorf("nonTestLines = %d, want 4: the renamed file's three and the deleted file's one", n)
+		t.Errorf("nonTestLines = %d, want 4: the renamed file's three and the deleted file's one, none from the test files", n)
 	}
 }
 
