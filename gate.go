@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -253,6 +254,14 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 	}
 
 	outcome, evidence, about, released, err := gateWait(client, opts, targets, notes, started, dagr)
+	if err == nil && opts.requirePR && released.status == "done" {
+		if err = gateHead(targets[about].name, *released); err != nil {
+			outcome, evidence = gateOutcomeHeadMoved, gateEvidenceVerified
+			if exitCode(err) != exitNeedsHuman {
+				outcome, evidence = gateOutcomeError, ""
+			}
+		}
+	}
 	waited := time.Since(started)
 
 	if opts.asJSON {
@@ -267,10 +276,37 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 		fmt.Fprintf(out, "gate: %s released after %s (evidence: %s)\n", targets[about].name, waited.Round(time.Second), evidence)
 		fmt.Fprint(out, renderReport(*released))
 	}
-	if err != nil && outcome == gateOutcomeBlocked && released != nil {
+	if err != nil && (outcome == gateOutcomeBlocked || outcome == gateOutcomeHeadMoved) && released != nil {
 		fmt.Fprint(out, renderReport(*released))
 	}
 	return err
+}
+
+// gateHead holds a done to the commit it was made at: the PR it names must
+// still have that commit as its head, or what a person merges is not what the
+// worker reported done. Asked of gh after the release, and never earlier, so a
+// push made after the report is caught here rather than at the merge.
+//
+// gh is asked from the gate's own directory, which is the repository a
+// coordinator gates from.
+func gateHead(name string, r report) error {
+	if r.sha == "" {
+		return codef(exitNeedsHuman, "gate %s: the done for PR #%d names no commit, so nothing binds it to what would merge (evidence: %s)",
+			name, r.pr, gateEvidenceVerified)
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	pr, err := reviewPRFor(dir, strconv.Itoa(r.pr))
+	if err != nil {
+		return fmt.Errorf("gate %s: %w; the done is not bound to PR #%d's head", name, err, r.pr)
+	}
+	if pr.HeadRefOid != r.sha {
+		return codef(exitNeedsHuman, "gate %s: PR #%d's head is %s, but the done was reported at %s; what would merge is not what was reported done (evidence: %s)",
+			name, r.pr, shortOid(pr.HeadRefOid), shortOid(r.sha), gateEvidenceVerified)
+	}
+	return nil
 }
 
 // writeGateJSON writes the document and then returns the gate's own error, so

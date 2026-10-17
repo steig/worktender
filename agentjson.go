@@ -108,7 +108,9 @@ func (d *dispatchJSON) finish(err error) *dispatchJSON {
 type reportEnvelopeJSON struct {
 	Status string `json:"status"`
 	PR     *int   `json:"pr"`
-	Note   string `json:"note"`
+	// Sha is the commit the worker's checkout was at, null outside a checkout.
+	Sha  *string `json:"sha"`
+	Note string  `json:"note"`
 	// NoteLength is the note's length in characters against the cap, so a worker
 	// building one programmatically can see how close it came without counting
 	// runes the way this command counts them.
@@ -128,6 +130,7 @@ type reportEnvelopeJSON struct {
 func newReportEnvelopeJSON(r report, pane string, delivered bool, limit int) *reportEnvelopeJSON {
 	out := &reportEnvelopeJSON{
 		Status:     r.status,
+		Sha:        jsonout.String(r.sha),
 		Note:       r.note,
 		NoteLength: len([]rune(r.note)),
 		NoteLimit:  limit,

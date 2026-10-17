@@ -876,13 +876,21 @@ into faking a report can read the secret out of the same context and include it.
 
 Treat a `done` as a claim. Check the pull request it names.
 
+**A `done` is bound to a commit.** `report` fills a `sha:` slot from `git
+rev-parse HEAD` in the worker's checkout; the worker cannot type it. Under
+`--require-pr` the gate asks gh for the PR's `headRefOid` after it releases, and
+a done whose sha is not that head — the worker pushed after reporting — or that
+names no commit is refused with exit 3, outcome `head_moved`, naming both short
+SHAs. Merge with `gh pr merge <N> --match-head-commit <sha>`, so a push after
+the gate is refused by GitHub too.
+
 The gate says as much on every outcome, as **evidence**: the release line and
 every failure message end with it, and `--json` carries it as a field.
 
 | Evidence | Outcome | What it rests on |
 | --- | --- | --- |
 | `reported` | `released`, `blocked` | The worker's report. The gate checked its shape and that it is new, not that it is true. |
-| `verified` | `timeout`, and `worker_gone` when the pane exited or closed or its workspace closed | The gate's own clock, or herdr announcing the pane gone. Nothing the worker said. |
+| `verified` | `head_moved`, `timeout`, and `worker_gone` when the pane exited or closed or its workspace closed | The gate's own clock, or herdr announcing the pane gone. Nothing the worker said. |
 | `inferred` | `worker_gone` when herdr's agent status went `unknown` | What an agent that has gone away looks like, which is not herdr saying it went. |
 
 ## How a report actually reaches a gate

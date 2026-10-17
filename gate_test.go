@@ -795,10 +795,11 @@ func TestGateWaitsThroughAProgressReport(t *testing.T) {
 // --require-pr is the other half of the predicate surface, and it is checked
 // against the validated slot rather than against anything the worker wrote.
 func TestGateHoldsForAPullRequestNumber(t *testing.T) {
+	fakePRHead(t, gateHeadA)
 	w := newGateWorker(t, "working", "")
 	go func() {
-		w.prints(report{status: "done", note: "green, pr is 12 honest"})
-		w.prints(report{status: "done", pr: 12, note: "green"})
+		w.prints(report{status: "done", sha: gateHeadA, note: "green, pr is 12 honest"})
+		w.prints(report{status: "done", pr: 12, sha: gateHeadA, note: "green"})
 	}()
 
 	out, err, _ := w.gate(t, "--target", "worker", "--require-pr", "--timeout", "10s")
@@ -807,6 +808,55 @@ func TestGateHoldsForAPullRequestNumber(t *testing.T) {
 	}
 	if !strings.Contains(out, "pr: 12") {
 		t.Errorf("the gate released on a report with no pr slot:\n%s", out)
+	}
+}
+
+const (
+	gateHeadA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	gateHeadB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
+
+// fakePRHead is gh answering that PR #12's head is head.
+func fakePRHead(t *testing.T, head string) {
+	t.Helper()
+	herdrtest.FakeGh(t, herdrtest.CatScript(t,
+		`{"number":12,"state":"OPEN","headRefName":"12-x","headRefOid":"`+head+`","baseRefOid":"`+gateHeadB+`","labels":[]}`))
+}
+
+// A push after the done is the head nobody verified, so under --require-pr a
+// done binds only while the PR's head is still the commit it was reported at —
+// and a done that names no commit binds nothing.
+func TestGateRefusesADoneForACommitThatIsNotTheHead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sha  string
+		want []string
+	}{
+		{"pushed after the done", gateHeadA, []string{"PR #12's head is bbbbbbbbbbbb", "reported at aaaaaaaaaaaa"}},
+		{"no commit named", "", []string{"names no commit"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakePRHead(t, gateHeadB)
+			w := newGateWorker(t, "working", "")
+			go w.attaches(report{status: "done", pr: 12, sha: tc.sha, note: "green"})
+
+			out, err, _ := w.gate(t, "--target", "worker", "--require-pr", "--json", "--timeout", "10s")
+			if exitCode(err) != exitNeedsHuman {
+				t.Fatalf("gate exited %d (%v), want %d\n%s", exitCode(err), err, exitNeedsHuman, out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q should say %q", err, want)
+				}
+			}
+			var doc gateJSON
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatalf("gate --json: %v\n%s", err, out)
+			}
+			if doc.Outcome != gateOutcomeHeadMoved || doc.ExitCode != exitNeedsHuman {
+				t.Errorf("outcome %q exit %d, want %q exit %d", doc.Outcome, doc.ExitCode, gateOutcomeHeadMoved, exitNeedsHuman)
+			}
+		})
 	}
 }
 
