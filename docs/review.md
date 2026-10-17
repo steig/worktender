@@ -247,7 +247,7 @@ Written on the failure paths too, like `start --json`.
   "evidence": "verified",
   "ci": { "state": "green", "passing": 4, "failing": [], "pending": [] },
   "verdict": "pass",
-  "report": { "status": "done", "pr": 17, "note": "pass: all three checks met" },
+  "report": { "status": "done", "pr": 17, "sha": null, "note": "pass: all three checks met" },
   "launch": null,
   "workspace_id": "w9",
   "pane_id": "w9:p2",

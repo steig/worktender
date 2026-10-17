@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/jsonout"
 	"github.com/steig/worktender/internal/safetext"
 )
@@ -49,12 +50,18 @@ const (
 	noteClose    = "end of untrusted note"
 )
 
-// report is the envelope itself: three slots, no free text.
+// report is the envelope itself: four slots, no free text.
 type report struct {
 	status string
 	// pr is 0 when the worker gave none; the slot is optional but must never be
 	// unparseable.
-	pr   int
+	pr int
+	// sha is the commit the worker's checkout was at when it reported, empty
+	// when it reported from outside a checkout. report fills it from git, not
+	// from a flag, so a gate can hold the PR's head to it. That catches a push
+	// made after the done, not a hostile worker: anything in the pane can print
+	// an envelope, or set its tokens, with whatever sha it likes.
+	sha  string
 	note string
 }
 
@@ -125,6 +132,9 @@ func parseReport(args []string) (report, bool, error) {
 	}
 
 	r := report{status: *status, note: *note}
+	if dir, err := os.Getwd(); err == nil {
+		r.sha = gitx.Commit(dir, "HEAD")
+	}
 
 	if !isReportStatus(r.status) {
 		return report{}, false, fmt.Errorf("--status %q is not one of %s",
@@ -182,7 +192,7 @@ func reportNote(note string) error {
 // like plugin output.
 func renderReport(r report) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\nstatus: %s\npr: %s\n", reportHeader, r.status, prSlot(r))
+	fmt.Fprintf(&b, "%s\nstatus: %s\npr: %s\nsha: %s\n", reportHeader, r.status, prSlot(r), shaSlot(r))
 	fmt.Fprintf(&b, "%s\n%s%s\n%s\n", noteOpen, noteQuote, r.note, noteClose)
 	return b.String()
 }
@@ -194,6 +204,25 @@ func prSlot(r report) string {
 		return strconv.Itoa(r.pr)
 	}
 	return missing
+}
+
+// shaSlot renders the sha slot, for the reason prSlot is the only thing that
+// renders pr.
+func shaSlot(r report) string {
+	if r.sha != "" {
+		return r.sha
+	}
+	return missing
+}
+
+// parseShaValue reads the sha slot from either channel through the one check
+// gh's own commit ids get, so a slot neither a full commit id nor the dash is
+// no report at all.
+func parseShaValue(raw string) (string, bool) {
+	if raw == missing {
+		return "", true
+	}
+	return raw, isCommitOid(raw)
 }
 
 // missing marks an empty slot, the same dash `worktender ls` prints for one.

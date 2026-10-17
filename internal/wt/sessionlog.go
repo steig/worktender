@@ -32,7 +32,7 @@ import (
 // anything but an id, an id that is not a plain token, and a log that is not
 // where it should be all answer false, and the column stays empty.
 func sessionLogActivity(home string, session *herdrapi.AgentSessionInfo) (time.Time, bool) {
-	if home == "" || session == nil || session.Kind != herdrapi.AgentSessionRefKindID || !plainSessionID(session.Value) {
+	if home == "" || session == nil || session.Kind != herdrapi.AgentSessionRefKindID || !PlainSessionID(session.Value) {
 		return time.Time{}, false
 	}
 
@@ -66,10 +66,10 @@ func sessionLogActivity(home string, session *herdrapi.AgentSessionInfo) (time.T
 	return latest, !latest.IsZero()
 }
 
-// plainSessionID reports whether a session id is safe to put in a glob. The id
+// PlainSessionID reports whether a session id is safe to put in a glob. The id
 // comes from herdr, which had it from the agent, and a separator or a glob
 // metacharacter in it would turn a lookup of one file into a search of others.
-func plainSessionID(id string) bool {
+func PlainSessionID(id string) bool {
 	if id == "" {
 		return false
 	}

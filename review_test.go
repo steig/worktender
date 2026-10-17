@@ -339,6 +339,21 @@ func TestReviewStopsAtAPRWithNoChecks(t *testing.T) {
 	}
 }
 
+// The reviewer reports from the main checkout, so the sha its report carries
+// is that checkout's HEAD; review never shows it beside the commit reviewed.
+func TestReviewDropsTheReviewersOwnSha(t *testing.T) {
+	fakeReview(t, greenPR)
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, sha: baseA, note: "pass: all three checks met"}, nil)
+
+	var out strings.Builder
+	if err := reviewCommand([]string{"17", "--json"}, &out); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	if doc := reviewDoc(t, out.String()); doc.Report == nil || doc.Report.Sha != nil {
+		t.Errorf("review --json carries the reviewer's report %+v, want it with no sha", doc.Report)
+	}
+}
+
 // Green CI and a passing reviewer is the one combination that is verified.
 func TestReviewIsVerifiedWhenCIIsGreenAndTheReviewerPasses(t *testing.T) {
 	server, checkout, _ := fakeReview(t, greenPR)

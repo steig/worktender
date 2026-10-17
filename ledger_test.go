@@ -177,3 +177,35 @@ func equalEvents(a, b ledgerEvent) bool {
 	jb, _ := json.Marshal(b)
 	return string(ja) == string(jb)
 }
+
+// A report records the session herdr names for the worker's pane, which is
+// what stats finds its transcript by; a session given as a path is not one.
+func TestReportRecordsTheWorkersSession(t *testing.T) {
+	for _, tc := range []struct {
+		kind, value, want string
+	}{
+		{"id", "0f3c-sess_1", "0f3c-sess_1"},
+		{"path", "/tmp/x.jsonl", ""},
+		{"id", "../x", ""},
+	} {
+		t.Run(tc.kind+" "+tc.value, func(t *testing.T) {
+			path := withLedger(t)
+			server := herdrtest.NewServer(t)
+			t.Setenv(socketEnv, server.SocketPath)
+			t.Setenv(paneEnv, "w1:p1")
+			server.HandleResult("pane.get", map[string]any{"type": "pane_info", "pane": map[string]any{"pane_id": "w1:p1"}})
+			server.HandleResult("pane.report_metadata", map[string]any{})
+			server.HandleResult("agent.get", map[string]any{"type": "agent_info", "agent": map[string]any{
+				"pane_id": "w1:p1", "agent_status": "working",
+				"agent_session": map[string]any{"agent": "claude", "kind": tc.kind, "source": "herdr", "value": tc.value},
+			}})
+
+			_ = reportCommand([]string{"--status", "planned", "--note", "ok"}, new(strings.Builder))
+
+			events := ledgerEvents(t, path)
+			if len(events) != 1 || events[0].Session != tc.want {
+				t.Errorf("recorded %+v, want session %q", events, tc.want)
+			}
+		})
+	}
+}

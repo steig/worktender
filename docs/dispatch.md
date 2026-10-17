@@ -80,7 +80,7 @@ Branch on the code, not on the message. The full table is in
 worktender start <issue> [--role <role>] [--model <model>] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
 worktender dispatch --pane <id> --name <agent> [--role <role>] [--model <model>] [--permission-mode <mode>] [--resume]
 worktender report --status planned|blocked|done [--pr N] --note <text>
-worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--timeout 15m] [--dagr]
+worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--repo <path>] [--timeout 15m] [--dagr]
 ```
 
 ## Starting a worker as a role
@@ -377,6 +377,9 @@ than `--max` workers (default 2) hold a slot, starts the oldest with `start` and
 moves its label to **`factory:in-progress`**. Then it exits. It is not a daemon;
 run it from a loop or from cron.
 
+Keep `--max` at 3 or below until review's catch rate has been measured: see
+[Canaries](canaries.md) for the procedure and the gate.
+
 ```sh
 # See what a pass would do, without starting anything.
 worktender factory --repo ~/code/thing --dry-run
@@ -520,6 +523,8 @@ ISSUE  BRANCH          ROLE  PR  MERGED  WALL     ATTEMPTS  INBOX  GATES  DIFF  
 
 2 dispatches, 2 with a pull request, 2 merged
 per merged PR: median wall clock 37m30s, 1.50 attempts, rework rate 50%, 3.00 ceremony
+tokens per merged PR, median over the 2 of 2 with a transcript: 395 in, 41800 out, 3120000 cache read, 190500 cache write
+  claude-sonnet-5-5: 790 in, 83600 out, 6240000 cache read, 381000 cache write
 escape rate 1/2 (9–91%) of merged PRs reverted or blamed for a regression within 14d of merging; under 5, not enough data to judge yet
 ```
 
@@ -532,8 +537,9 @@ append one line to as they go:
 - **`start`** records the dispatch once its agent has the brief — issue, branch,
   role, agent, agent kind and agent name. Only dispatches made by `start` are
   counted: a worker staffed by `sync` or `dispatch` has no issue to count against.
-- **`report`** records each status a worker claims, with its time and pull
-  request, keyed by the repository and branch it was made from.
+- **`report`** records each status a worker claims, with its time, pull
+  request and the agent session herdr names for its pane, keyed by the
+  repository and branch it was made from.
 - **`gate`** records each wait a coordinator opens, against every worker it covers.
 - **`pr-feedback`** records each notice it types at a worker, by repository,
   branch and pull request.
@@ -561,6 +567,23 @@ What the columns mean:
   cannot observe itself. `?` is gh failing to answer; `--json` says why.
 - **`ESCAPED`** is whether a merged pull request turned out not to be finished,
   and what showed it; `-` when it has not merged or gh could not be searched.
+
+### Tokens
+
+What a dispatch spent is read from its worker's own Claude Code transcripts,
+`~/.claude/projects/*/<session>.jsonl` and the subagent transcripts beside it.
+The session ids come from the ledger: `report` asks herdr for its pane's
+`agent_session` as it records each report, because by the time a pull request
+merges the pane is gone. A worker restarted mid-dispatch has two sessions, and
+both count.
+
+Each API response is counted once, by its message id — Claude writes one line
+per content block, each repeating the usage — and the counts are kept per
+model: input, output, cache-read and cache-write tokens. They are tokens, not
+dollars; a price table in the binary would be wrong the first time a price
+changed. A transcript that is gone is skipped without a word, and its
+dispatch's tokens are unknown rather than zero, so the summary's totals and
+medians are over the merged pull requests whose transcripts were found.
 
 ### Escapes
 
@@ -891,13 +914,26 @@ into faking a report can read the secret out of the same context and include it.
 
 Treat a `done` as a claim. Check the pull request it names.
 
+**A `done` is bound to a commit.** `report` fills a `sha:` slot from `git
+rev-parse HEAD` in the worker's checkout, not from a flag. Under `--require-pr`
+the gate asks gh for the PR's `headRefOid` after it releases, in the repository
+`--repo` names (default: the one the gate runs in), and a done whose sha is not
+that head — the worker pushed after reporting — or that names no commit is
+refused with exit 3, outcome `head_moved`, naming both short SHAs. Merge with
+`gh pr merge <N> --match-head-commit <sha>`, so a push after the gate is refused
+by GitHub too.
+
+This catches an accidental or late push, not a hostile worker: like every other
+slot, the sha is only as honest as whatever is in the pane, which can print a
+well-formed envelope or set the pane's tokens itself.
+
 The gate says as much on every outcome, as **evidence**: the release line and
 every failure message end with it, and `--json` carries it as a field.
 
 | Evidence | Outcome | What it rests on |
 | --- | --- | --- |
 | `reported` | `released`, `blocked` | The worker's report. The gate checked its shape and that it is new, not that it is true. |
-| `verified` | `timeout`, and `worker_gone` when the pane exited or closed or its workspace closed | The gate's own clock, or herdr announcing the pane gone. Nothing the worker said. |
+| `verified` | `head_moved`, `timeout`, and `worker_gone` when the pane exited or closed or its workspace closed | The gate's own clock, or herdr announcing the pane gone. Nothing the worker said. |
 | `inferred` | `worker_gone` when herdr's agent status went `unknown` | What an agent that has gone away looks like, which is not herdr saying it went. |
 
 ## How a report actually reaches a gate
