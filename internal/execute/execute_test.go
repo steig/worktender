@@ -502,15 +502,16 @@ func TestStaffGivesTheAgentTheWorkerToken(t *testing.T) {
 	}
 }
 
-// With the token unset, the file a previous one was written to goes too: a
-// rotated or withdrawn token does not stay on disk until someone notices.
-func TestStaffWithoutAWorkerTokenRemovesTheLastOne(t *testing.T) {
+// Unset does not delete the file. A hook staffing without the variable would
+// pull it from under a launch that was just handed it, and that agent would
+// start on your login.
+func TestStaffWithoutAWorkerTokenLeavesTheFileAlone(t *testing.T) {
 	t.Setenv(execute.WorkerTokenEnv, "")
 	repo := herdrtest.NewRepo(t)
 	exec, server := fixture(t, repo)
 	exec.StateDir = t.TempDir()
-	stale := filepath.Join(exec.StateDir, "worker-settings.json")
-	if err := os.WriteFile(stale, []byte(`{"env":{"GH_TOKEN":"old"}}`), 0o600); err != nil {
+	path := filepath.Join(exec.StateDir, execute.WorkerSettingsFile)
+	if err := os.WriteFile(path, []byte(`{"env":{"GH_TOKEN":"another launch's"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -522,8 +523,31 @@ func TestStaffWithoutAWorkerTokenRemovesTheLastOne(t *testing.T) {
 	if _, ok := callTo(t, server, "agent.start").Params["args"]; ok {
 		t.Error("an agent was given settings with no worker token set")
 	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Errorf("the last token's file is still there: %v", err)
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the settings file another launch was handed is gone: %v", err)
+	}
+}
+
+// A role that brings its own --settings is refused rather than started with
+// two, when which one claude takes GH_TOKEN from is the whole question.
+func TestStaffRefusesASecondSettingsFlag(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_worker_only")
+	repo := herdrtest.NewRepo(t)
+	for _, own := range [][]string{{"--settings", "/role.json"}, {"--settings=/role.json"}} {
+		exec, server := fixture(t, repo)
+		exec.StateDir = t.TempDir()
+		action := reconcile.Action{Kind: reconcile.KindStaff, Path: "/repo/wt/a", PaneID: "w2:p1", AgentName: "a",
+			AgentArgs: own}
+
+		result := only(t, exec.Run([]reconcile.Action{action}))
+		if result.Status != execute.StatusFailed || !strings.Contains(result.Detail, "--settings") {
+			t.Errorf("%v: status = %q (%s), want failed naming --settings", own, result.Status, result.Detail)
+		}
+		for _, call := range server.Calls() {
+			if call.Method == "agent.start" {
+				t.Errorf("%v: an agent was started with two --settings", own)
+			}
+		}
 	}
 }
 

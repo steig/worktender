@@ -83,9 +83,12 @@ is written to `worker-settings.json`, mode 0600, in the plugin state directory �
 `HERDR_PLUGIN_STATE_DIR`, else `~/.local/state/herdr/plugins/steig.worktender`
 — and handed to `claude` as `--settings`, whose `env` reaches every command the
 agent runs. **The file persists**: through the worker finishing and through
-prune, and it is rewritten with the current token at each launch. The first
-launch with the variable unset removes it. A state directory that cannot be
-written fails the launch rather than starting an agent on your token. `doctor`
+prune, and it is rewritten with the current token at each launch. Unsetting
+the variable does not remove it — a launch without the variable deleting a file
+another was just handed would start that agent on your login — so remove it
+yourself; `doctor` warns while it is there with the variable unset. A state directory that cannot be
+written fails the launch rather than starting an agent on your token, and so
+does a role whose agent arguments already carry a `--settings` of their own. `doctor`
 never prints the value.
 
 ## Staying current

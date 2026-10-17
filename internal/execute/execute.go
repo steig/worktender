@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -118,31 +119,30 @@ type Executor struct {
 // agent runs as you, so your stored gh login is one `env -u GH_TOKEN` away.
 const WorkerTokenEnv = "WORKTENDER_WORKER_GH_TOKEN"
 
-// workerSettingsFile is the settings file in StateDir.
-const workerSettingsFile = "worker-settings.json"
+// WorkerSettingsFile is the settings file in StateDir. Exported for doctor,
+// which names one left behind after the variable is unset.
+const WorkerSettingsFile = "worker-settings.json"
 
 // workerTokenArgs are the agent arguments that give the agent WorkerTokenEnv
-// as GH_TOKEN, or none when it is unset — and then the file a previous token
-// was written to is removed, so an unset or rotated token does not linger.
+// as GH_TOKEN, or none when it is unset.
 //
 // The token goes through a settings file because there is nowhere else it is
 // not shown: agent.start takes no environment, an argument is visible to `ps`
 // and in the pane the agent is started in, and typing an export would put it
 // on screen.
+//
+// Unset does not remove the file. A hook running without the variable would
+// delete it from under a launch that was handed it a moment earlier, and that
+// agent would start on your login; doctor names a file left behind instead.
 func workerTokenArgs(dir string) ([]string, error) {
-	path := filepath.Join(dir, workerSettingsFile)
 	token := os.Getenv(WorkerTokenEnv)
 	if token == "" {
-		if dir != "" {
-			// Best effort: a file that will not go is a stale token on disk,
-			// not a reason to refuse an agent that is not given it.
-			os.Remove(path)
-		}
 		return nil, nil
 	}
 	if dir == "" {
 		return nil, fmt.Errorf("%s is set but there is no plugin state directory to keep it in", WorkerTokenEnv)
 	}
+	path := filepath.Join(dir, WorkerSettingsFile)
 	raw, _ := json.Marshal(map[string]any{"env": map[string]string{"GH_TOKEN": token}})
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("store the worker token: %w", err)
@@ -246,6 +246,14 @@ func (e *Executor) staff(action reconcile.Action, busyUntil time.Time) Result {
 	tokenArgs, err := workerTokenArgs(e.StateDir)
 	if err != nil {
 		return Result{action, StatusFailed, err.Error()}
+	}
+	// Which of two --settings claude honours for GH_TOKEN is not something to
+	// find out from a worker that got the wrong one.
+	if len(tokenArgs) > 0 && slices.ContainsFunc(action.AgentArgs, func(a string) bool {
+		return a == "--settings" || strings.HasPrefix(a, "--settings=")
+	}) {
+		return Result{action, StatusFailed, fmt.Sprintf(
+			"%s is set and the agent already has --settings; refusing to start it with two", WorkerTokenEnv)}
 	}
 	args = append(args, tokenArgs...)
 

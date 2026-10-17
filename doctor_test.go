@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,6 +60,29 @@ func TestDoctorWarnsWhenWorkersShareYourToken(t *testing.T) {
 	}
 	if strings.Contains(got.value+got.note, token) {
 		t.Errorf("doctor printed the token: %+v", got)
+	}
+}
+
+// Staffing never deletes the token file, so one left behind after the variable
+// is unset is doctor's to name, with the way to remove it.
+func TestDoctorNamesAWorkerTokenLeftOnDisk(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "")
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	if got := workerTokenCheck(); strings.Contains(got.note, "still on disk") {
+		t.Errorf("no file, yet: %+v", got)
+	}
+
+	left := filepath.Join(dir, execute.WorkerSettingsFile)
+	if err := os.WriteFile(left, []byte(`{"env":{"GH_TOKEN":"github_pat_withdrawn"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := workerTokenCheck()
+	if got.state != stateWarn || !strings.Contains(got.note, "rm "+left) {
+		t.Errorf("%+v; want a warning saying how to remove %s", got, left)
+	}
+	if strings.Contains(got.note, "github_pat_withdrawn") {
+		t.Errorf("doctor printed the old token: %+v", got)
 	}
 }
 

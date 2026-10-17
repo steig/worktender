@@ -350,8 +350,16 @@ func ghCheck() check {
 // within its reach; what stops it merging is branch protection.
 func workerTokenCheck() check {
 	if os.Getenv(execute.WorkerTokenEnv) == "" {
-		return check{name: "worker-gh", value: "your token", state: stateWarn,
-			note: "workers' gh uses your token, so one can approve and merge; set " + execute.WorkerTokenEnv + " to narrow it"}
+		note := "workers' gh uses your token, so one can approve and merge; set " + execute.WorkerTokenEnv + " to narrow it"
+		// Staffing leaves the file when the variable is unset, so a token
+		// withdrawn or rotated stays on disk until someone removes it.
+		if dir := pluginStateDir(); dir != "" {
+			left := filepath.Join(dir, execute.WorkerSettingsFile)
+			if _, err := os.Stat(left); err == nil {
+				note += "; a previous worker token is still on disk: rm " + left
+			}
+		}
+		return check{name: "worker-gh", value: "your token", state: stateWarn, note: note}
 	}
 	return check{name: "worker-gh", value: "narrowed", state: stateOK,
 		note: "workers' gh defaults to " + execute.WorkerTokenEnv + "; your login is still within reach, so branch protection is the control"}
