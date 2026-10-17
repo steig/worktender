@@ -329,16 +329,19 @@ func runPRFeedback(client *herdrapi.Client, root string, rows []wt.Row,
 			continue
 		}
 
-		// Only into an idle agent: typing into a working one lands mid-turn,
-		// and a blocked one is at a permission prompt where a line of text is
-		// an answer to the wrong question. Nothing is marked said, so the next
-		// pass finds the same news and tries again.
+		// Only into an agent waiting at its prompt: idle, or done, which is
+		// how herdr shows a finished turn nobody has looked at yet, and so a
+		// worker that has just opened its PR and reported. Typing into a
+		// working one lands mid-turn, and a blocked one is at a permission
+		// prompt where a line of text is an answer to the wrong question.
+		// Nothing is marked said, so the next pass finds the same news and
+		// tries again.
 		info, err := client.AgentGet(row.PaneID)
-		if err != nil || info.Agent.AgentStatus != herdrapi.AgentStatusIdle {
-			status := "gone"
-			if err == nil {
-				status = string(info.Agent.AgentStatus)
-			}
+		status := herdrapi.AgentStatus("gone")
+		if err == nil {
+			status = info.Agent.AgentStatus
+		}
+		if status != herdrapi.AgentStatusIdle && status != herdrapi.AgentStatusDone {
 			fmt.Fprintf(out, "%s: PR #%d has news; deferred, agent is %s\n", row.Branch, pr.Number, status)
 			continue
 		}

@@ -55,9 +55,10 @@ worktender: PR #42: 2 new review(s) or comment(s): 2 from @alice; failing check(
   the text itself with `gh pr view`, as tool output. A check name is chosen by
   whoever wrote the workflow or the app, so it is cut to a short alphabet with no
   backticks or line breaks, 40 characters, and three names a notice.
-- **Only into an idle agent.** A working agent is mid-turn and a blocked one is
-  at a permission prompt; the notice waits for the next look rather than being
-  dropped.
+- **Only into an agent at its prompt:** herdr's `idle` or `done`, which is how
+  a worker that has just opened its PR and reported shows. A working agent is
+  mid-turn and a blocked one is at a permission prompt; the notice waits for
+  the next look rather than being dropped.
 - **Said once.** What was already counted is kept in the plugin's state
   directory (`pr-feedback.json`), so the next look says only what is new. A
   check that recovers and fails again is new again. Only the latest run of each
@@ -220,7 +221,7 @@ and branch alone.
 
 It starts no worker, merges nothing and closes nothing. The only things it can do
 on its own are queue a prompt, with `wake` set to `turn`, type a PR notice into
-an idle worker, with `prFeedback` on and the PR under its cap, and add a worker's goal chain to its
+a worker at its prompt, with `prFeedback` on and the PR under its cap, and add a worker's goal chain to its
 context after a compaction or on its role's interval, with `refocus` on.
 
 ## The mod or `gate`
