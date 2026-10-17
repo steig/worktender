@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/steig/worktender/internal/wt"
@@ -123,7 +124,15 @@ func sessionTokens(home string, sessions []string) []modelTokens {
 		}
 		file.Close()
 	}
+	// Transcripts holding no paid response say nothing about what the work
+	// cost, so they are unknown like a missing one, not a zero.
+	if len(byModel) == 0 {
+		return nil
+	}
+	return sortedByModel(byModel)
+}
 
+func sortedByModel(byModel map[string]*tokenCounts) []modelTokens {
 	tokens := []modelTokens{}
 	for model, c := range byModel {
 		tokens = append(tokens, modelTokens{Model: model, tokenCounts: *c})
@@ -137,7 +146,7 @@ func sessionTokens(home string, sessions []string) []modelTokens {
 // were found.
 func summariseTokens(dispatches []*statsDispatch) (byModel []modelTokens, median *tokenCounts, counted int) {
 	totals := map[string]*tokenCounts{}
-	var perPR []tokenCounts
+	var input, output, cacheRead, cacheWrite []int64
 	for _, d := range dispatches {
 		if m := d.merged(); m == nil || !*m || d.tokens == nil {
 			continue
@@ -150,32 +159,20 @@ func summariseTokens(dispatches []*statsDispatch) (byModel []modelTokens, median
 			totals[t.Model].add(t.tokenCounts)
 			sum.add(t.tokenCounts)
 		}
-		perPR = append(perPR, sum)
+		input, output = append(input, sum.Input), append(output, sum.Output)
+		cacheRead, cacheWrite = append(cacheRead, sum.CacheRead), append(cacheWrite, sum.CacheWrite)
 	}
-	byModel = []modelTokens{}
-	for model, c := range totals {
-		byModel = append(byModel, modelTokens{Model: model, tokenCounts: *c})
+	if len(input) == 0 {
+		return sortedByModel(totals), nil, 0
 	}
-	sort.Slice(byModel, func(i, j int) bool { return byModel[i].Model < byModel[j].Model })
-	if len(perPR) == 0 {
-		return byModel, nil, 0
+	median = &tokenCounts{Input: medianInt64(input), Output: medianInt64(output), CacheRead: medianInt64(cacheRead), CacheWrite: medianInt64(cacheWrite)}
+	return sortedByModel(totals), median, len(input)
+}
+
+func medianInt64(vs []int64) int64 {
+	slices.Sort(vs)
+	if len(vs)%2 == 0 {
+		return (vs[len(vs)/2-1] + vs[len(vs)/2]) / 2
 	}
-	medianOf := func(field func(tokenCounts) int64) int64 {
-		vs := make([]int64, len(perPR))
-		for i, c := range perPR {
-			vs[i] = field(c)
-		}
-		sort.Slice(vs, func(i, j int) bool { return vs[i] < vs[j] })
-		if len(vs)%2 == 0 {
-			return (vs[len(vs)/2-1] + vs[len(vs)/2]) / 2
-		}
-		return vs[len(vs)/2]
-	}
-	median = &tokenCounts{
-		Input:      medianOf(func(c tokenCounts) int64 { return c.Input }),
-		Output:     medianOf(func(c tokenCounts) int64 { return c.Output }),
-		CacheRead:  medianOf(func(c tokenCounts) int64 { return c.CacheRead }),
-		CacheWrite: medianOf(func(c tokenCounts) int64 { return c.CacheWrite }),
-	}
-	return byModel, median, len(perPR)
+	return vs[len(vs)/2]
 }
