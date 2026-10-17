@@ -351,7 +351,8 @@ func workerTokenCheck() check {
 		return check{name: "worker-gh", value: "your token", state: stateWarn,
 			note: "workers share your gh token, so one can approve and merge; set " + workerTokenEnv + " to one that cannot"}
 	}
-	return check{name: "worker-gh", value: "set", state: stateOK, note: "workers run with " + workerTokenEnv}
+	return check{name: "worker-gh", value: "set", state: stateOK,
+		note: "workers' gh uses " + workerTokenEnv + ", but your stored gh login is still readable to them"}
 }
 
 // eventsCheck reports the opt-in as the gate actually parses it, not as it is
