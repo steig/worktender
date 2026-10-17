@@ -489,7 +489,7 @@ func TestDraftExportLeavesOutSymlinks(t *testing.T) {
 	repo.Git("add", "link")
 	repo.Git("commit", "-m", "link")
 
-	dir, cleanup, err := exportTracked(repo.Root)
+	dir, cleanup, err := exportTracked(repo.Root, "HEAD")
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}

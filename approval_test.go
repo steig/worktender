@@ -79,6 +79,7 @@ answer() { [ -f "$FAKE_GH_DIR/$1" ] || { printf 'gh: HTTP 404\n' >&2; exit 1; };
 case "$1 $2" in
   "issue view") answer meta.json ;;
   "repo view") answer repo.json ;;
+  "pr view") answer pr.json ;;
   "api graphql")
     if [ -f "$FAKE_GH_DIR/answered" ] && [ -f "$FAKE_GH_DIR/later.json" ]; then answer later.json
     else : > "$FAKE_GH_DIR/answered"; answer snapshot.json; fi ;;

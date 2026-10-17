@@ -201,7 +201,7 @@ func TestStatsPrintsTheEscapeRate(t *testing.T) {
 	if err := statsCommand(nil, &out); err != nil {
 		t.Fatalf("stats: %v", err)
 	}
-	for _, want := range []string{"ESCAPED", "revert #20", "regression #30", "escapes: 3 of 5 merged PRs (60%) reverted or blamed for a regression within 14d"} {
+	for _, want := range []string{"ESCAPED", "revert #20", "regression #30", "escape rate 3/5 (23–88%) of merged PRs reverted or blamed for a regression within 14d"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output is missing %q:\n%s", want, out.String())
 		}

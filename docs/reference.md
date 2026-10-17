@@ -207,7 +207,7 @@ matching on the message.
 | **0** | It happened. | Proceed. |
 | **1** | Usage: an unknown flag, a missing argument, a repository you declined to name, a target that cannot report. | Fix the invocation. Retrying unchanged fails identically. |
 | **2** | Environment: herdr's socket unreachable, git failing, `gh` unauthenticated. **Also every unclassified failure.** | Fix the machine, then retry. |
-| **3** | Needs a human: a worker reported `blocked`, or `start` briefed an agent that never took it up, or found Claude Code's folder-trust, hooks-review or managed-settings approval screen where the brief was due, or was given a `factory:ready` issue whose payload nobody with write access approved, or that changed since, or without [acceptance checks](dispatch.md#acceptance-checks) it can parse; or `draft` kept no proposed check, or found the issue edited while its drafter ran. | Escalate. No retry clears it. |
+| **3** | Needs a human: a worker reported `blocked`, or `start` briefed an agent that never took it up, or found Claude Code's folder-trust, hooks-review or managed-settings approval screen where the brief was due, or was given a `factory:ready` issue whose payload nobody with write access approved, or that changed since, or without [acceptance checks](dispatch.md#acceptance-checks) it can parse; or `draft` kept no proposed check, or found the issue edited while its drafter ran; or `verify` found a check failing on head, or none that fails on base and passes on head. | Escalate. No retry clears it. |
 | **4** | No answer arrived: a gate timed out, a pane died before reporting, `draft`'s drafter did not answer. | The work may simply be unfinished; redispatching is reasonable. |
 
 **2 is the catch-all on purpose.** The alternatives are worse: defaulting to
@@ -272,6 +272,12 @@ Errors you are most likely to meet:
   no proposed check survives or the issue was edited while it ran, **4** when
   the drafter does not answer in ten minutes. See
   [Drafting checks](dispatch.md#drafting-checks).
+- **`worktender verify <issue>` runs the approved checks on base and head.** Each
+  runs in an export of the merge-base and of the head (`--pr N` for a PR's,
+  this checkout's `HEAD` otherwise). Exits **0** only when nothing fails on
+  head and at least one check fails on base and passes on head; **3**
+  otherwise. See
+  [Verifying that the checks prove the change](dispatch.md#verifying-that-the-checks-prove-the-change).
 - **`list` is an alias for `ls`.**
 - **`pr-feedback` and `refocus` are the watch mod's.** It runs them for you, and
   either runs by hand: `pr-feedback` in a repository, `refocus` inside a

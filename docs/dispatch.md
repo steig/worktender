@@ -261,6 +261,49 @@ person has to read the payload and approve it, which no retry and no
 coordinator can do for them. If `gh` cannot answer at all, the exit is **2**,
 the same as for an unreadable issue.
 
+### Verifying that the checks prove the change
+
+A check that already passes before the work proves nothing about it. `go test
+-run TestX` exits 0 with "no tests to run" until the worker writes `TestX`.
+`worktender verify` runs the approved checks on both sides of a change:
+
+```sh
+worktender verify 42 --repo .            # this checkout's HEAD against its merge-base
+worktender verify 42 --repo . --pr 17    # the PR's head against its merge-base
+```
+
+It reads the checks with the same parse and approval check `start` uses, so an
+issue edited since approval is refused with **3**. Each check runs under
+`sh -c` in an export of the merge-base's tracked files, then in an export of
+the head's, the same `git archive` export `draft` uses, never in a checkout.
+Every check gets a fresh export, so a file one check writes is not there for
+the next. Each run has `--timeout` (default ten minutes), which kills the
+check's whole process group. With `--pr`, the PR has to be the issue's: on a
+branch named for it (`42-…`) or closing it, or `verify` exits **3**. Its head
+has to be in the local repository already; `verify` says how to fetch it.
+
+**The export is not a sandbox.** It keeps your checkout's untracked files out of
+the way, nothing more. A check like `go test` runs the head's code as you, with
+your environment, your `$HOME` and your network, so `--pr` on a pull request
+whose code you have not read runs that code with your credentials. Verify heads
+you would run the tests of anyway.
+
+The outcome is judged as written: `exits 0`, `exits 1`, `exits non-zero`,
+`prints nothing` (no output on stdout or stderr), or `prints <word>`, the word
+being one `draft` could propose (at most 40 of `A-Za-z0-9._-`). `prints <word>`
+is a case-sensitive substring match on stdout and stderr together, and ignores
+the exit code. Any other outcome cannot be judged. Each check is then one of:
+
+- **discriminating**: fails on base, passes on head;
+- **guard**: passes on both;
+- **failing**: fails on head;
+- **unjudged**: an outcome `verify` cannot read, or a run that timed out or was
+  killed by a signal on either side.
+
+One line per check, with both commits. It exits **0** only when no check fails
+on head, none is unjudged, and at least one discriminates. Otherwise it exits
+**3**: a change whose checks all passed before it started is a person's call.
+
 **The worker reads the approved payload, not the live issue.** From that same
 single fetch, `start` writes the payload byte for byte to
 `$(git rev-parse --git-path worktender/issue.md)` in the new worktree. That is
@@ -415,7 +458,7 @@ ISSUE  BRANCH          ROLE  PR  MERGED  WALL     ATTEMPTS  INBOX  GATES  DIFF  
 
 2 dispatches, 2 with a pull request, 2 merged
 per merged PR: median wall clock 37m30s, 1.50 attempts, rework rate 50%, 3.00 ceremony
-escapes: 1 of 2 merged PRs (50%) reverted or blamed for a regression within 14d of merging
+escape rate 1/2 (9–91%) of merged PRs reverted or blamed for a regression within 14d of merging; under 5, not enough data to judge yet
 ```
 
 `--since 168h` keeps only dispatches started in the last week; the default is
@@ -488,13 +531,18 @@ zero, and the rate is over the pull requests that could be checked. A pull
 request merged less than a window ago may still escape, so a recent rate reads
 low.
 
+The rate is printed with its 95% Wilson interval, `0/13 (0–23%)`, because a
+handful of merges does not pin a rate down: no escapes in 13 is consistent with
+nearly one in four. Under 5 checked merges the line says there is not enough
+data to judge yet.
+
 ### Alerts: `stats --check`
 
 ```sh
 $ "$worktender" stats --check
 alert: ceremony #70 70-tiny-fix: 60.00 inbox messages and gate runs per 100 changed lines (6 over 10 lines), over 20
 alert: proof loop #60 60-thing: 4 gate runs and reports since it said done, with no new commit on the branch, over 3
-alert: escape rate: 3 of 9 merged PRs (33%) reverted or blamed for a regression within 14d, over 20%
+alert: escape rate 3/9 (12–65%) of merged PRs reverted or blamed for a regression within 14d: the 95% interval reaches past 5%
 $ echo $?
 3
 ```
@@ -509,11 +557,12 @@ dispatch does not raise the same alert every day forever.
 |---|---|---|
 | `ceremony` | a dispatch's inbox messages + gate runs per 100 changed lines exceeds the threshold, and it had at least 5 of them | `--max-ceremony-ratio` (20) |
 | `proof_loop` | a dispatch that reported `done` has had more gate runs and reports than the threshold since its last progress — the first `done`, or a later commit on its branch — with nothing new committed | `--max-proof-loop` (3) |
-| `escape_rate` | more than this fraction of merged pull requests escaped, over at least 5 that could be checked | `--max-escape-rate` (0.2) |
+| `escape_rate` | the upper bound of the escape rate's 95% interval is over this fraction, with at least 5 merged pull requests that could be checked | `--max-escape-rate` (0.05) |
 
-Every default is set to stay quiet on a healthy fleet and fire on one that
-plainly is not, because an alert that fires on ordinary work is switched off
-within a week and then catches nothing:
+Every default but the escape rate's is set to stay quiet on a healthy fleet
+and fire on one that plainly is not, because an alert that fires on ordinary
+work is switched off within a week and then catches nothing. The escape rate is
+a gate instead, and says so when it fires on a fleet that is clean so far:
 
 - **Ceremony 20 per 100 lines** is one coordination event for every five lines
   changed. An ordinary dispatch — a gate or two, a few inbox messages — over a
@@ -526,9 +575,13 @@ within a week and then catches nothing:
   log`, not from gh — an unpushed commit is still the worker moving — and a
   branch that can no longer be read (deleted after merge) is never alerted on,
   because nothing can say it did not move.
-- **Escape rate 0.2**, one merged pull request in five, is past what published
-  change-failure-rate surveys put middling teams at. The **floor of 5** keeps
-  one revert in the first two merges from reading as 50%.
+- **Escape rate 0.05** is the exception: a gate, not an alarm. It fires until
+  the interval's upper bound is under one in twenty, so a fleet has to show it
+  is safe rather than merely look it — with no escapes at all, that takes
+  73 checked merges, and until then the alert ends "no escapes seen, but not
+  yet enough merges to show the rate is under 5%". Escapes are found by revert
+  and blame phrasing, so the true rate is no lower than the measured one. Under the **floor of 5** it
+  stays quiet, and plain `stats` says there is not enough data yet.
 
 The watch mod does not run `--check`; wire it into cron, or a mod, yourself.
 
