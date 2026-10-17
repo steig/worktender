@@ -220,6 +220,19 @@ func TestPRFeedbackWaitsForAnIdleAgent(t *testing.T) {
 	}
 }
 
+// herdr shows a worker that has just opened its PR and reported as done until
+// someone looks at its pane. It is at its prompt, so the first review round
+// reaches it rather than waiting for a human to focus the pane.
+func TestPRFeedbackNotifiesAWorkerThatIsDone(t *testing.T) {
+	server := prFeedbackFleet(t, openPR([]map[string]any{review("r1", "alice", "")}, nil, nil),
+		func() string { return "done" })
+
+	out := passPRFeedback(t)
+	if texts := sentTexts(server); len(texts) != 1 || !strings.Contains(texts[0], "@alice") {
+		t.Fatalf("the notice was not typed into a done agent: %q; it printed:\n%s", texts, out)
+	}
+}
+
 // A branch with no open pull request is asked about and left alone.
 func TestPRFeedbackIgnoresABranchWithNoOpenPR(t *testing.T) {
 	server := prFeedbackFleet(t, []any{}, func() string { return "idle" })
