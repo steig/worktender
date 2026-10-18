@@ -6,6 +6,19 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.19.2] — 2026-10-17
+
+### Fixed
+
+- **`start` and `review` type no brief into a pane with no agent ready.**
+  (#296) herdr's `agent.start` answering ok means it typed the launch
+  command, not that an agent came up. When the launch failed in the shell
+  (seen as `claudeclaude` when a worktree layout also ran `claude` in the
+  root pane), the brief was typed at a zsh prompt and its backticks ran as
+  commands. The brief now waits for herdr's `interactive_ready`, and the
+  command exits 3 without typing anything when no agent becomes ready. A
+  herdr too old to report it behaves as before.
+
 ## [0.19.1] — 2026-10-17
 
 ### Changed
