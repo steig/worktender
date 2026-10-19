@@ -404,6 +404,59 @@ func TestApproveAsksAndOnlyYesApproves(t *testing.T) {
 	}
 }
 
+// --sha256 approves the payload a person was shown, without the prompt.
+func TestApproveSha256Match(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	gh := newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody), nil)
+	_, hash, _, _ := approvalPayload(42, readyTitle, readyBody)
+
+	if err := approveCommand([]string{"42", "--sha256", hash, "--repo", repo.Root}, &strings.Builder{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if gh.read("posted") != approvalOf(t, readyTitle, readyBody) {
+		t.Errorf("approve posted %q, want the approval of what was shown", gh.read("posted"))
+	}
+	if !strings.Contains(gh.read("calls"), "issue edit 42 --add-label factory:ready") {
+		t.Errorf("approve did not apply the label:\n%s", gh.read("calls"))
+	}
+}
+
+// An issue edited since it was shown hashes differently: nothing is approved.
+func TestApproveSha256Mismatch(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	gh := newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody+"- [ ] `true` exits 0\n"), nil)
+	_, shown, _, _ := approvalPayload(42, readyTitle, readyBody)
+
+	err := approveCommand([]string{"42", "--sha256", shown, "--repo", repo.Root}, &strings.Builder{})
+	if err == nil || exitCode(err) != exitNeedsHuman || !strings.Contains(err.Error(), "changed since it was shown") {
+		t.Errorf("want needs-human saying the issue changed; got %v", err)
+	}
+	if gh.read("posted") != "" || strings.Contains(gh.read("calls"), "issue edit") {
+		t.Errorf("a mismatch approved something:\n%s", gh.read("calls"))
+	}
+}
+
+// --sha256 is already an approval without asking, and must be a real hash.
+func TestApproveSha256IsAUsageErrorWhenMisused(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	gh := newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody), nil)
+	_, hash, _, _ := approvalPayload(42, readyTitle, readyBody)
+
+	for _, args := range [][]string{
+		{"42", "--sha256", hash, "--yes"},
+		{"42", "--sha256", "abc"},
+		{"42", "--sha256", strings.ToUpper(hash)},
+	} {
+		err := approveCommand(append(args, "--repo", repo.Root), &strings.Builder{})
+		if err == nil || exitCode(err) != exitUsage {
+			t.Errorf("%v: want a usage error; got %v", args, err)
+		}
+	}
+	if gh.read("posted") != "" {
+		t.Error("a misused --sha256 posted an approval")
+	}
+}
+
 // approve will not put a hash on an issue whose commands are not well defined.
 func TestApproveRefusesAnIssueWithoutRunnableChecks(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
