@@ -149,7 +149,7 @@ func startCommand(args []string, out io.Writer) error {
 		fmt.Fprintf(notes, "model: %s (%s)\n", agentModel, modelReason)
 	}
 
-	branch := issueBranch(issue)
+	branch := hookBranchPrefix(s.root) + issueBranch(issue)
 	baseRef := gitx.BaseRef(s.root)
 	forkFrom := *base
 	if forkFrom == "" {

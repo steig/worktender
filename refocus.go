@@ -72,10 +72,10 @@ const (
 	refocusClose = "End of quoted issue text."
 )
 
-// issueBranchPattern is the shape issueBranch produces: the number, then a
-// slug or nothing. A branch that does not start that way was not made by
+// issueBranchPattern is the shape issueBranch produces, after the `type/` a
+// repo's branch-naming hook may require: the number, then a slug or nothing. A branch that does not start that way was not made by
 // `start` from an issue, and there is no chain to read for it.
-var issueBranchPattern = regexp.MustCompile(`^([0-9]+)(?:-|$)`)
+var issueBranchPattern = regexp.MustCompile(`^(?:[a-z]+/)?([0-9]+)(?:-|$)`)
 
 func refocusCommand(args []string, out io.Writer) error {
 	ifDue := false
