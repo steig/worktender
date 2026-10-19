@@ -6,6 +6,27 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.20.0] — 2026-10-19
+
+### Added
+
+- **`worktender approve --sha256 <hex>` approves exactly the payload you were
+  shown.** (#302) `approve` fetches the issue once and approves only if the
+  payload hashes to `<hex>`. A different hash posts no comment and applies no
+  label, and the command exits 3. The hash must be 64 lowercase hex
+  characters, and the flag cannot be combined with `--yes`.
+- **`/wt approve <issue>` in the watch mod.** (#304) It runs `approve` with no
+  input to print the payload, shows it in a pane, and Approve passes the hash
+  from that screen to `--sha256`. Approving is a click instead of a separate
+  terminal step. It is a convenience and not a boundary: an agent in the same
+  session can still run `approve --yes` (see `docs/watch.md`). Watch mod 0.5.0.
+
+### Changed
+
+- **The coordinator and worktrees skills have short descriptions.** (#299) The
+  old text moved into a "When to use" paragraph in each skill body, so it no
+  longer loads into every session.
+
 ## [0.19.2] — 2026-10-17
 
 ### Fixed
