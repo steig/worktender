@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,8 @@ func approveCommand(args []string, out io.Writer) error {
 	repo := fs.String("repo", ".", "repository the issue belongs to")
 	yes := fs.Bool("yes", false, "approve without asking; you are still approving what is printed")
 
+	shown := fs.String("sha256", "", "approve only if the payload hashes to this; skips the prompt")
+
 	positional, err := parseAround(fs, args)
 	if err != nil {
 		return usagef("%v; %s", err, approveUsage)
@@ -42,6 +45,15 @@ func approveCommand(args []string, out io.Writer) error {
 	number, err := strconv.Atoi(strings.TrimPrefix(positional[0], "#"))
 	if err != nil || number <= 0 {
 		return usagef("%q is not an issue number; want a positive integer like 42", positional[0])
+	}
+
+	if *shown != "" {
+		if !sha256Hex.MatchString(*shown) {
+			return usagef("--sha256 wants 64 lowercase hex characters; %s", approveUsage)
+		}
+		if *yes {
+			return usagef("--sha256 and --yes do not combine: --sha256 already approves without asking; %s", approveUsage)
+		}
 	}
 
 	root, err := gitx.RepoRoot(*repo)
@@ -66,7 +78,12 @@ func approveCommand(args []string, out io.Writer) error {
 	fmt.Fprint(out, payload)
 	fmt.Fprintf(out, "\nsha256: %s\n", hash)
 
-	if !*yes {
+	switch {
+	case *shown != "":
+		if hash != *shown {
+			return withCode(exitNeedsHuman, fmt.Errorf("#%d changed since it was shown (sha256 %s, not %s); nothing was approved", number, hash, *shown))
+		}
+	case !*yes:
 		fmt.Fprint(out, "\nApprove exactly this, and label the issue factory:ready? Type yes: ")
 		answer, _ := bufio.NewReader(approveInput).ReadString('\n')
 		if strings.TrimSpace(answer) != "yes" {
@@ -94,4 +111,6 @@ func approveCommand(args []string, out io.Writer) error {
 // answer it.
 var approveInput io.Reader = os.Stdin
 
-const approveUsage = "usage: worktender approve <issue> [--repo <path>] [--yes]"
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+const approveUsage = "usage: worktender approve <issue> [--repo <path>] [--yes | --sha256 <hex>]"

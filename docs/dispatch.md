@@ -229,6 +229,12 @@ for `yes`, unless you pass `--yes`. On yes, it posts the comment
 `worktender-approved: sha256=<hex>` and applies `factory:ready`, both with your
 own `gh` auth.
 
+To approve exactly what a person was shown, pass the hash they saw:
+`worktender approve 42 --sha256 <hex>`. It fetches and prints as above, and if
+the payload hashes to `<hex>` it approves without asking. If the issue changed
+since, it approves nothing and exits 3. `--sha256` takes 64 lowercase hex
+characters and cannot be combined with `--yes`.
+
 **Read the output.** The approver approves whatever they were shown. That is
 the residual risk, and nothing downstream can catch what they missed.
 
