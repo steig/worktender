@@ -34,6 +34,19 @@ session started in — about 20 ms — and from that draws three things:
 `/wt` looks immediately and lists the same. `/wt undismiss` brings dismissed
 items back.
 
+`/wt approve <issue>` approves an issue without leaving Claude Code. It runs
+`worktender approve <issue>` with nothing on stdin, which prints the payload an
+agent would receive and its `sha256:` line, then declines. The payload opens in a
+pane as plain text, never rendered. **Approve** runs
+`worktender approve <issue> --sha256 <hash>` with the hash from that same
+output; if the issue changed since you read it, worktender refuses (exit 3) and
+approves nothing. **Cancel** closes the pane and runs nothing. If the output has
+no hash line, you see it raw and there is no Approve button.
+
+This makes approval convenient, not impossible for an agent. An agent in the
+same session can still run `worktender approve --yes`, or send keys to the pane
+(see #301). The gate is the coordinator's rule, not the mod.
+
 The session's own pane is not a worker. It is left out of the counts and of
 "waiting at a prompt", since it waits at one every time you are asked to
 approve something.

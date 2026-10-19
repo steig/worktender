@@ -8,6 +8,18 @@ export type Signal = {
   pr: number | null
 }
 
+export type Approval = {
+  issue: string
+  /** `worktender approve` output as printed, shown whether or not it parsed. */
+  output: string
+  /** The payload and hash parsed from `output`; null when it had no hash line. */
+  shown: { payload: string; sha256: string } | null
+  /** Set while Approve runs, so a second press does nothing. */
+  pending: boolean
+  /** What Approve printed, once pressed. */
+  result: string | null
+}
+
 export type Summary = {
   working: number
   idle: number
@@ -26,6 +38,8 @@ declare module 'claude-code' {
       /** What needs attention now, as of the last poll. */
       attention: Signal[]
       summary: Summary | null
+      /** The issue `/wt approve` is showing, while its pane is open. */
+      approval: Approval | null
     }
   }
 }

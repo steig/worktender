@@ -170,3 +170,25 @@ export function fresh(current: Signal[], seen: readonly string[]): Signal[] {
   const known = new Set(seen)
   return current.filter(s => !known.has(s.key))
 }
+
+// What `worktender approve <issue>` printed before it asked: the payload, then
+// a `sha256: <hex>` line, which is the hash `--sha256` must be given back.
+// Null when there is no such line, so a caller never offers to approve what it
+// cannot name. The last line wins: the issue text is prefixed "| " in the
+// payload, but only the final line is worktender's own.
+export function parseApprovalOutput(stdout: string): { payload: string; sha256: string } | null {
+  let found: { index: number; sha256: string } | null = null
+  for (const m of stdout.matchAll(/^sha256: ([0-9a-f]{64})$/gm)) found = { index: m.index, sha256: m[1] }
+  return found ? { payload: stdout.slice(0, found.index), sha256: found.sha256 } : null
+}
+
+// Text from a failed or odd `approve` run, made safe to print in a pane: escape
+// sequences go whole (CSI, and the string kinds OSC, DCS, SOS, PM, APC, in 7-bit
+// and 8-bit forms), then other control characters; newlines and tabs stay.
+// A lone string-introducer byte with no terminator drops the rest of the output.
+export function plain(text: string): string {
+  return text
+    .replace(/(?:\x1b[\]PX^_]|[\x90\x98\x9d-\x9f])[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?/g, '')
+    .replace(/(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]/g, '')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
+}

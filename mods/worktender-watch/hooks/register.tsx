@@ -1,15 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Signal, Summary } from '../types'
-import { capped, describe, fresh, isWorker, parse, signals, statusLine, summarise, wakePrompt } from './fleet'
+import type { Approval, Signal, Summary } from '../types'
+import { capped, describe, fresh, isWorker, parse, parseApprovalOutput, plain, signals, statusLine, summarise, wakePrompt } from './fleet'
 
 const seen = atom({ plugin: 'worktender-watch', key: 'seen' } as const, null as string[] | null)
 const dismissed = atom({ plugin: 'worktender-watch', key: 'dismissed' } as const, [] as string[])
 const attention = atom({ plugin: 'worktender-watch', key: 'attention' } as const, [] as Signal[])
 const summary = atom({ plugin: 'worktender-watch', key: 'summary' } as const, null as Summary | null)
 
+const approval = atom({ plugin: 'worktender-watch', key: 'approval' } as const, null as Approval | null)
+
 const BAND_LINES = 3
+const APPROVE_PANE = 'approve'
 
 // worker is this session's answer to "am I a worker?", kept once known: a
 // pane does not move between worktrees, and the interval asks on every prompt.
@@ -214,6 +217,20 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'wt' }, async ($, e) => {
+    const [sub, issue] = e.args.trim().split(/\s+/)
+    if (sub === 'approve') {
+      if (!/^\d+$/.test(issue ?? '')) return { text: 'usage: /wt approve <issue number>' }
+      // No stdin: approve prints the payload and its hash, then reads an empty
+      // answer and declines. Its exit code is 1 by design; the output is the point.
+      const run = await $.process.run([cfg.bin, 'approve', issue, '--repo', cfg.cwd ?? '.'], { cwd: cfg.cwd, timeoutMs: 30_000 })
+      const output = run.stdout || run.stderr
+      // Close, then replace the state, then open: an open pane redraws on the
+      // state write, and would put the old title over the new body.
+      await $.ui.close({ id: APPROVE_PANE })
+      await update($, approval, () => ({ issue, output: plain(output), shown: parseApprovalOutput(run.stdout), pending: false, result: null }))
+      await $.ui.open({ id: APPROVE_PANE, title: `Approve #${issue}` })
+      return { text: `Read the payload for #${issue} in the pane, then Approve or Cancel.` }
+    }
     if (e.args.trim() === 'undismiss') await update($, dismissed, () => [])
     const look = await poll($, cfg)
     if (look === 'worker') return { text: 'This session is a worker (its pane is in a linked worktree), so the watch stays quiet here; it is for the coordinator.' }
@@ -255,6 +272,81 @@ export const register: Register = (on, options) => {
               await update($, attention, () => [])
             }}
           />
+        </Box>
+      </Box>
+    )
+  })
+
+  // Approvals with an Approve run in flight, by issue and hash: a different
+  // approval is never blocked by this one.
+  const approving = new Set<string>()
+
+  // The payload goes in a Text exactly as worktender printed it, never as
+  // markdown. Approve passes back the hash parsed from this same output, so
+  // what is approved is what is on screen; if the issue changed since, worktender
+  // refuses (exit 3). Without a parsed hash there is nothing to approve.
+  on('ui.render', { component: 'Pane', requestId: APPROVE_PANE }, async ($, e) => {
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const a = await read($, approval)
+    if (!a) return <Text dimColor>Nothing to approve.</Text>
+
+    const close = async () => {
+      await update($, approval, () => null)
+      await $.ui.close({ id: APPROVE_PANE })
+    }
+
+    return (
+      <Box flexDirection="column">
+        <Text>{a.shown ? `${a.shown.payload}sha256: ${a.shown.sha256}` : a.output}</Text>
+        {a.shown ? null : <Text color="red">No sha256 line in that output, so there is nothing to approve.</Text>}
+        {a.result ? <Text bold>{a.result}</Text> : null}
+        <Box>
+          {a.shown && !a.result && !a.pending ? (
+            <>
+              <Button
+                key="approve"
+                label="Approve"
+                onPress={async () => {
+                  const issue = a.issue
+                  const sha256 = a.shown!.sha256
+                  // Checked and set before any await: update() is not atomic across
+                  // two presses, and a second run would post a second approval.
+                  const key = `${issue}:${sha256}`
+                  if (approving.has(key)) {
+                    $.ui.toast(`already approving #${issue}`)
+                    return
+                  }
+                  approving.add(key)
+                  const same = (cur: Approval | null) => cur !== null && cur.issue === issue && cur.shown?.sha256 === sha256
+                  // The key is held until the result is written: a press from a stale
+                  // render landing in between must still find the run in flight.
+                  try {
+                    let result: string
+                    try {
+                      await update($, approval, cur => (same(cur) ? { ...cur!, pending: true } : cur))
+                      const run = await $.process.run([cfg.bin, 'approve', issue, '--repo', cfg.cwd ?? '.', '--sha256', sha256], { cwd: cfg.cwd, timeoutMs: 30_000 })
+                      const lines = plain((run.exitCode === 0 ? run.stdout : run.stderr || run.stdout).trim()).split('\n')
+                      result = lines[lines.length - 1]
+                    } catch (err) {
+                      result = `could not run approve: ${plain(String(err))}`
+                    }
+                    // Only the approval that was clicked gets the result: a newer
+                    // `/wt approve` may have replaced it while this ran.
+                    try {
+                      await update($, approval, cur => (same(cur) ? { ...cur!, pending: false, result } : cur))
+                    } catch (err) {
+                      // Unhide the state rather than leave it pending; the run may have approved.
+                      await update($, approval, cur => (same(cur) ? { ...cur!, pending: false, result: `ran, but could not record the result: ${plain(String(err))}` } : cur))
+                    }
+                  } finally {
+                    approving.delete(key)
+                  }
+                }}
+              />
+              <Text> </Text>
+            </>
+          ) : null}
+          <Button key="cancel" label={a.result ? 'Close' : 'Cancel'} onPress={close} />
         </Box>
       </Box>
     )
