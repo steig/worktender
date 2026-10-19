@@ -318,20 +318,29 @@ export const register: Register = (on, options) => {
                   }
                   approving.add(key)
                   const same = (cur: Approval | null) => cur !== null && cur.issue === issue && cur.shown?.sha256 === sha256
-                  let result: string
+                  // The key is held until the result is written: a press from a stale
+                  // render landing in between must still find the run in flight.
                   try {
-                    await update($, approval, cur => (same(cur) ? { ...cur!, pending: true } : cur))
-                    const run = await $.process.run([cfg.bin, 'approve', issue, '--repo', cfg.cwd ?? '.', '--sha256', sha256], { cwd: cfg.cwd, timeoutMs: 30_000 })
-                    const lines = plain((run.exitCode === 0 ? run.stdout : run.stderr || run.stdout).trim()).split('\n')
-                    result = lines[lines.length - 1]
-                  } catch (err) {
-                    result = `could not run approve: ${plain(String(err))}`
+                    let result: string
+                    try {
+                      await update($, approval, cur => (same(cur) ? { ...cur!, pending: true } : cur))
+                      const run = await $.process.run([cfg.bin, 'approve', issue, '--repo', cfg.cwd ?? '.', '--sha256', sha256], { cwd: cfg.cwd, timeoutMs: 30_000 })
+                      const lines = plain((run.exitCode === 0 ? run.stdout : run.stderr || run.stdout).trim()).split('\n')
+                      result = lines[lines.length - 1]
+                    } catch (err) {
+                      result = `could not run approve: ${plain(String(err))}`
+                    }
+                    // Only the approval that was clicked gets the result: a newer
+                    // `/wt approve` may have replaced it while this ran.
+                    try {
+                      await update($, approval, cur => (same(cur) ? { ...cur!, pending: false, result } : cur))
+                    } catch (err) {
+                      // Unhide the state rather than leave it pending; the run may have approved.
+                      await update($, approval, cur => (same(cur) ? { ...cur!, pending: false, result: `ran, but could not record the result: ${plain(String(err))}` } : cur))
+                    }
                   } finally {
                     approving.delete(key)
                   }
-                  // Only the approval that was clicked gets the result: a newer
-                  // `/wt approve` may have replaced it while this ran.
-                  await update($, approval, cur => (same(cur) ? { ...cur!, pending: false, result } : cur))
                 }}
               />
               <Text> </Text>

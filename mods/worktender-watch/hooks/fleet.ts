@@ -185,6 +185,7 @@ export function parseApprovalOutput(stdout: string): { payload: string; sha256: 
 // Text from a failed or odd `approve` run, made safe to print in a pane: escape
 // sequences go whole (CSI, and the string kinds OSC, DCS, SOS, PM, APC, in 7-bit
 // and 8-bit forms), then other control characters; newlines and tabs stay.
+// A lone string-introducer byte with no terminator drops the rest of the output.
 export function plain(text: string): string {
   return text
     .replace(/(?:\x1b[\]PX^_]|[\x90\x98\x9d-\x9f])[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?/g, '')
