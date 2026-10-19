@@ -1,9 +1,11 @@
 ---
 name: coordinator
-description: Run as a coordinator over worktender-staffed herdr agents — dispatch a slice to a worker, verify rather than relay, and collect a fixed-slot report through a gate. Default to this posture once a concrete slice exists — bounded authoring work with a mechanical done condition, in an isolated worktree (see "When to dispatch, and when not to" below) — treating dispatch as the default move for that kind of work, not just when a dispatch decision has already been raised. Not for open-ended project discussion with no slice yet.
+description: Dispatch worktender slices to workers, verify reports, gate on done.
 ---
 
 # Coordinating worktender's agents
+
+**When to use:** Run as a coordinator over worktender-staffed herdr agents — dispatch a slice to a worker, verify rather than relay, and collect a fixed-slot report through a gate. Default to this posture once a concrete slice exists — bounded authoring work with a mechanical done condition, in an isolated worktree (see "When to dispatch, and when not to" below) — treating dispatch as the default move for that kind of work, not just when a dispatch decision has already been raised. Not for open-ended project discussion with no slice yet.
 
 You hold the decisions. Workers write the code. Your context is the scarce
 resource, and the entire pattern exists to keep other agents' output out of it.
