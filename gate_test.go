@@ -41,6 +41,8 @@ func TestGateRejectsMalformedInvocations(t *testing.T) {
 		{"a zero timeout", []string{"--target", "w", "--timeout", "0"}, "must be positive"},
 		{"a negative timeout", []string{"--target", "w", "--timeout", "-5m"}, "must be positive"},
 		{"a timeout that is not a duration", []string{"--target", "w", "--timeout", "900000"}, "invalid value"},
+		{"a positional pane beside --target", []string{"--target", "a", "b"}, "unexpected argument"},
+		{"two positional words", []string{"my", "worker"}, "unexpected argument"},
 		{"an unquoted target leaves stray words", []string{"--target", "my", "worker"}, "unexpected argument"},
 
 		// The note is not a predicate surface, and the way that is enforced is
@@ -57,6 +59,16 @@ func TestGateRejectsMalformedInvocations(t *testing.T) {
 				t.Errorf("error %q should explain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseGateAcceptsAPositionalPane(t *testing.T) {
+	opts, err := parseGate([]string{"--until", "done", "w-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := opts.names(); got != "w-1" {
+		t.Errorf("targets = %q, want w-1", got)
 	}
 }
 
