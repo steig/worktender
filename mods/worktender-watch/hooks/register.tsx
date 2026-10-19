@@ -1,15 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Signal, Summary } from '../types'
-import { capped, describe, fresh, isWorker, parse, signals, statusLine, summarise, wakePrompt } from './fleet'
+import type { Approval, Signal, Summary } from '../types'
+import { capped, describe, fresh, isWorker, parse, parseApprovalOutput, signals, statusLine, summarise, wakePrompt } from './fleet'
 
 const seen = atom({ plugin: 'worktender-watch', key: 'seen' } as const, null as string[] | null)
 const dismissed = atom({ plugin: 'worktender-watch', key: 'dismissed' } as const, [] as string[])
 const attention = atom({ plugin: 'worktender-watch', key: 'attention' } as const, [] as Signal[])
 const summary = atom({ plugin: 'worktender-watch', key: 'summary' } as const, null as Summary | null)
 
+const approval = atom({ plugin: 'worktender-watch', key: 'approval' } as const, null as Approval | null)
+
 const BAND_LINES = 3
+const APPROVE_PANE = 'approve'
 
 // worker is this session's answer to "am I a worker?", kept once known: a
 // pane does not move between worktrees, and the interval asks on every prompt.
@@ -214,6 +217,17 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'wt' }, async ($, e) => {
+    const [sub, issue] = e.args.trim().split(/\s+/)
+    if (sub === 'approve') {
+      if (!/^\d+$/.test(issue ?? '')) return { text: 'usage: /wt approve <issue number>' }
+      // No stdin: approve prints the payload and its hash, then reads an empty
+      // answer and declines. Its exit code is 1 by design; the output is the point.
+      const run = await $.process.run([cfg.bin, 'approve', issue, '--repo', cfg.cwd ?? '.'], { cwd: cfg.cwd, timeoutMs: 30_000 })
+      const output = run.stdout || run.stderr
+      await update($, approval, () => ({ issue, output, shown: parseApprovalOutput(run.stdout), result: null }))
+      await $.ui.open({ id: APPROVE_PANE, title: `Approve #${issue}` })
+      return { text: `Read the payload for #${issue} in the pane, then Approve or Cancel.` }
+    }
     if (e.args.trim() === 'undismiss') await update($, dismissed, () => [])
     const look = await poll($, cfg)
     if (look === 'worker') return { text: 'This session is a worker (its pane is in a linked worktree), so the watch stays quiet here; it is for the coordinator.' }
@@ -255,6 +269,46 @@ export const register: Register = (on, options) => {
               await update($, attention, () => [])
             }}
           />
+        </Box>
+      </Box>
+    )
+  })
+
+  // The payload goes in a Text exactly as worktender printed it, never as
+  // markdown. Approve passes back the hash parsed from this same output, so
+  // what is approved is what is on screen; if the issue changed since, worktender
+  // refuses (exit 3). Without a parsed hash there is nothing to approve.
+  on('ui.render', { component: 'Pane', requestId: APPROVE_PANE }, async ($, e) => {
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const a = await read($, approval)
+    if (!a) return <Text dimColor>Nothing to approve.</Text>
+
+    const close = async () => {
+      await update($, approval, () => null)
+      await $.ui.close({ id: APPROVE_PANE })
+    }
+
+    return (
+      <Box flexDirection="column">
+        <Text>{a.shown ? `${a.shown.payload}sha256: ${a.shown.sha256}` : a.output}</Text>
+        {a.shown ? null : <Text color="red">No sha256 line in that output, so there is nothing to approve.</Text>}
+        {a.result ? <Text bold>{a.result}</Text> : null}
+        <Box>
+          {a.shown && !a.result ? (
+            <>
+              <Button
+                key="approve"
+                label="Approve"
+                onPress={async () => {
+                  const run = await $.process.run([cfg.bin, 'approve', a.issue, '--repo', cfg.cwd ?? '.', '--sha256', a.shown!.sha256], { cwd: cfg.cwd, timeoutMs: 30_000 })
+                  const lines = (run.exitCode === 0 ? run.stdout : run.stderr || run.stdout).trim().split('\n')
+                  await update($, approval, cur => (cur ? { ...cur, result: lines[lines.length - 1] } : cur))
+                }}
+              />
+              <Text> </Text>
+            </>
+          ) : null}
+          <Button key="cancel" label={a.result ? 'Close' : 'Cancel'} onPress={close} />
         </Box>
       </Box>
     )
