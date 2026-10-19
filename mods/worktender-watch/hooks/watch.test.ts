@@ -161,6 +161,10 @@ describe('parseApprovalOutput', () => {
     expect(parseApprovalOutput(`${real}note sha256: ${'b'.repeat(64)}\n`)?.sha256).toBe(HASH)
   })
 
+  test('a 65-hex hash gives null', () => {
+    expect(parseApprovalOutput(`payload\nsha256: ${'a'.repeat(65)}\n`)).toBeNull()
+  })
+
   test('no sha256 line gives null', () => {
     expect(parseApprovalOutput('This is exactly what an agent will receive\nend of body\n')).toBeNull()
   })
@@ -205,6 +209,15 @@ test('/wt approve with no hash line offers no Approve button and approves nothin
 })
 
 describe('plain', () => {
+  test('strips 8-bit CSI and the string sequences whole', () => {
+    expect(plain('a\x9b31mb\x9b0m')).toBe('ab')
+    expect(plain('a\x90qdata;here\x9cb')).toBe('ab')
+    expect(plain('a\x1bPdata;here\x1b\\b')).toBe('ab')
+    expect(plain('a\x1b_apc params\x07b')).toBe('ab')
+    expect(plain('a\x9fapc params\x9cb')).toBe('ab')
+    expect(plain('a\x1b^pm\x1b\\b\x1bXsos\x9cc')).toBe('abc')
+  })
+
   test('drops escape sequences and control characters, keeps newlines and tabs', () => {
     expect(plain('\x1b[31mred\x1b[0m\x1b]0;title\x07 a\tb\r\nc\x00\x07')).toBe('red a\tb\nc')
   })
