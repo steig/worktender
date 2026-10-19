@@ -181,3 +181,12 @@ export function parseApprovalOutput(stdout: string): { payload: string; sha256: 
   for (const m of stdout.matchAll(/^sha256: ([0-9a-f]{64})$/gm)) found = { index: m.index, sha256: m[1] }
   return found ? { payload: stdout.slice(0, found.index), sha256: found.sha256 } : null
 }
+
+// Text from a failed or odd `approve` run, made safe to print in a pane: escape
+// sequences (CSI, OSC) and other control characters go, newlines and tabs stay.
+export function plain(text: string): string {
+  return text
+    .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
+}

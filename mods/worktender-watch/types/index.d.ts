@@ -14,6 +14,8 @@ export type Approval = {
   output: string
   /** The payload and hash parsed from `output`; null when it had no hash line. */
   shown: { payload: string; sha256: string } | null
+  /** Set while Approve runs, so a second press does nothing. */
+  pending: boolean
   /** What Approve printed, once pressed. */
   result: string | null
 }
