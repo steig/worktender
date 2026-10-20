@@ -28,3 +28,4 @@
 /internal/reconcile/     @steig
 /internal/safetext/      @steig
 /verify.go               @steig
+/wake.go                 @steig
