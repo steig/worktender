@@ -991,6 +991,24 @@ every failure message end with it, and `--json` carries it as a field.
 | `verified` | `head_moved`, `timeout`, and `worker_gone` when the pane exited or closed or its workspace closed | The gate's own clock, or herdr announcing the pane gone. Nothing the worker said. |
 | `inferred` | `worker_gone` when herdr's agent status went `unknown` | What an agent that has gone away looks like, which is not herdr saying it went. |
 
+## Being woken by a report
+
+`start` records the pane it was run from as the worker's coordinator, in the
+worktree's git dir. When the worker later runs `report`, one line is typed into
+that pane and submitted:
+
+```
+worktender: #316 done pr 7 sha 50b3374
+```
+
+- **Only closed slots.** The issue number, status, pr and the first seven
+  characters of the sha. The note is untrusted text and is never typed.
+- **Only into a free coordinator.** Its agent must be idle (or done) with an
+  empty input box. A report waits up to 30 seconds for that; past it the line
+  stays queued, and the next report types everything queued as one line.
+- **Best effort.** A worktree `start` recorded no pane for wakes nobody, and a
+  wake that fails warns on stderr without failing the report.
+
 ## How a report actually reaches a gate
 
 **Two channels, read on every look, and neither wins.**

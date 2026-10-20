@@ -285,6 +285,14 @@ func startCommand(args []string, out io.Writer) error {
 	doc.Briefed = true
 	recordStart(s.root, number, branch, launch, agent, pane)
 
+	// The pane this ran in is the coordinator a report wakes. Losing it costs
+	// only the wake.
+	if coordinator := os.Getenv(paneEnv); coordinator != "" {
+		if err := recordCoordinator(s.root, branch, coordinator, number); err != nil {
+			fmt.Fprintf(notes, "coordinator: not recorded, so its reports will not wake this pane (%v)\n", err)
+		}
+	}
+
 	// The gate is bound to the pane, not the agent name, for the reason review
 	// binds its own: the name is something herdr resolves, and herdr has been
 	// seen to stop resolving it a minute in — after Claude Code retitled its
