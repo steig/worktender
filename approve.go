@@ -34,6 +34,7 @@ func approveCommand(args []string, out io.Writer) error {
 	yes := fs.Bool("yes", false, "approve without asking; you are still approving what is printed")
 
 	shown := fs.String("sha256", "", "approve only if the payload hashes to this; skips the prompt")
+	pane := fs.Bool("pane", false, "open a pane in the issue's herdr space that asks, instead of asking here")
 
 	positional, err := parseAround(fs, args)
 	if err != nil {
@@ -54,6 +55,14 @@ func approveCommand(args []string, out io.Writer) error {
 		if *yes {
 			return usagef("--sha256 and --yes do not combine: --sha256 already approves without asking; %s", approveUsage)
 		}
+	}
+
+	if *pane && (*yes || *shown != "") {
+		return usagef("--pane opens the prompt for a person to answer; it does not combine with --yes or --sha256, which skip it; %s", approveUsage)
+	}
+
+	if *pane {
+		return approvePane(*repo, number, out)
 	}
 
 	root, err := gitx.RepoRoot(*repo)
@@ -107,10 +116,56 @@ func approveCommand(args []string, out io.Writer) error {
 	return nil
 }
 
+// approvePane is for a caller with no TTY, a coordinator tab above all: it
+// opens a shell in the issue's own herdr space and runs the plain
+// `worktender approve` there, so the person types yes at the same prompt they
+// would have seen. The command it types is built here from the issue number and
+// the repository root alone, never with --yes or --sha256, so the caller cannot
+// make the pane approve; the approval stays the person's keystroke.
+func approvePane(repo string, number int, out io.Writer) error {
+	s, err := newSessionIn(repo, herdrRequired)
+	if err != nil {
+		return err
+	}
+	list, err := s.client.WorktreeList(s.root)
+	if err != nil {
+		return fmt.Errorf("list worktrees: %w", err)
+	}
+	workspace := ""
+	for _, w := range list.Worktrees {
+		if w.Branch != nil && w.OpenWorkspaceID != nil && issueFromBranch(*w.Branch) == number {
+			workspace = *w.OpenWorkspaceID
+			break
+		}
+	}
+	if workspace == "" {
+		return withCode(exitEnvironment, fmt.Errorf("no open herdr workspace holds a branch for #%d; run `worktender approve %d` in a terminal instead", number, number))
+	}
+	created, err := s.client.PaneSplit(workspace, s.root)
+	if err != nil {
+		return fmt.Errorf("open a pane in workspace %s: %w", workspace, err)
+	}
+	id := created.Pane.PaneID
+	command := fmt.Sprintf("%s approve %d --repo %s", shellQuote(selfPath()), number, shellQuote(s.root))
+	if err := s.client.PaneSendText(id, command); err != nil {
+		return fmt.Errorf("type the approve command into %s: %w", id, err)
+	}
+	if err := s.client.PaneSendKeys(id, []string{briefSubmitKey}); err != nil {
+		return fmt.Errorf("run the approve command in %s: %w", id, err)
+	}
+	fmt.Fprintf(out, "opened pane %s in workspace %s; type yes there to approve #%d\n", id, workspace, number)
+	return nil
+}
+
+// shellQuote makes s one word to a POSIX shell.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // approveInput is where the confirmation is read from; a var so the suite can
 // answer it.
 var approveInput io.Reader = os.Stdin
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-const approveUsage = "usage: worktender approve <issue> [--repo <path>] [--yes | --sha256 <hex>]"
+const approveUsage = "usage: worktender approve <issue> [--repo <path>] [--yes | --sha256 <hex> | --pane]"
