@@ -145,7 +145,12 @@ func parseGate(args []string) (gateOptions, error) {
 		return gateOptions{}, usagef("%w; %s", err, gateUsage)
 	}
 	if rest := flags.Args(); len(rest) > 0 {
-		return gateOptions{}, usagef("unexpected argument %q; %s", rest[0], gateUsage)
+		// A lone word with no --target is the pane being named bare; anything
+		// else is a stray word from an unquoted target.
+		if len(targets) > 0 || len(rest) > 1 {
+			return gateOptions{}, usagef("unexpected argument %q; %s", rest[0], gateUsage)
+		}
+		targets = append(targets, rest[0])
 	}
 	if len(targets) == 0 {
 		return gateOptions{}, usagef("--target or --any is required; %s", gateUsage)

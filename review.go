@@ -880,16 +880,6 @@ func isCommitOid(oid string) bool {
 	return true
 }
 
-// issueFromBranch is the issue number a branch `start` named begins with, or 0.
-func issueFromBranch(branch string) int {
-	digits, _, _ := strings.Cut(branch, "-")
-	n, err := strconv.Atoi(digits)
-	if err != nil || n <= 0 {
-		return 0
-	}
-	return n
-}
-
 // reviewPR is what gh says about the pull request under review.
 type reviewPR struct {
 	Number      int       `json:"number"`

@@ -153,6 +153,7 @@ func TestVerifyRefusesAPullRequestForAnotherIssue(t *testing.T) {
 	}{
 		{"unrelated", "7-other-work", "[]", exitNeedsHuman},
 		{"named for the issue", "42-the-thing", "[]", exitOK},
+		{"named for the issue under a type/", "feat/42-the-thing", "[]", exitOK},
 		{"closes the issue", "some-branch", `[{"number":42}]`, exitOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

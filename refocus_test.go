@@ -96,6 +96,20 @@ func TestRefocusPrintsTheGoalChain(t *testing.T) {
 	}
 }
 
+func TestRefocusReadsATypePrefixedBranch(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	checkout := repo.AddWorktree("feat-208-refocus", "feat/208-re-deliver-the-goal-chain")
+	refocusGh(t, map[string]any{"number": 208, "title": "Re-deliver the goal chain", "body": refocusBody}, refocusParent, 0)
+
+	out, err := runRefocus(t, checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "  issue: #208\n") {
+		t.Errorf("a feat/ branch should resolve to issue 208, got:\n%s", out)
+	}
+}
+
 // GitHub's "no parent" is a 404 that gh exits 1 for, body on stdout; that is
 // an issue with no project above it, not a failure.
 func TestRefocusWithoutAParentLeavesTheProjectOut(t *testing.T) {

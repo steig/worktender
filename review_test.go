@@ -119,7 +119,8 @@ func TestIssueFromBranch(t *testing.T) {
 	for branch, want := range map[string]int{
 		"42-fix-the-thing": 42,
 		"42":               42,
-		"feat/42-thing":    0,
+		"feat/42-thing":    42,
+		"Feat/42-thing":    0,
 		"fix-42":           0,
 		"0-zero":           0,
 		"":                 0,
@@ -189,9 +190,10 @@ func fakeReview(t *testing.T, steps ...ghAt) (*herdrtest.Server, string, *fakeGi
 	t.Helper()
 
 	repo := herdrtest.NewRepo(t)
-	checkout := repo.AddWorktree("42-fix-the-thing", "42-fix-the-thing")
+	branch := steps[0].branch
+	checkout := repo.AddWorktree(strings.ReplaceAll(branch, "/", "-"), branch)
 	server := fakeSession(t, repo)
-	server.HandleResult("worktree.list", worktreeListReply(repo, checkout, "42-fix-the-thing", "w9"))
+	server.HandleResult("worktree.list", worktreeListReply(repo, checkout, branch, "w9"))
 	server.HandleResult("pane.split", map[string]any{"type": "pane_info", "pane": map[string]any{
 		"pane_id": "w9:p2", "workspace_id": "w9", "tab_id": "w9:t1", "terminal_id": "term_2",
 		"agent_status": "unknown", "focused": false, "revision": 0,
@@ -444,6 +446,19 @@ func TestReviewWantsAnIssueItCanJudgeAgainst(t *testing.T) {
 	err := reviewCommand([]string{"17"}, io.Discard)
 	if code := exitCode(err); code != exitUsage || !strings.Contains(err.Error(), "--issue") {
 		t.Fatalf("exit %d (%v), want a usage error naming --issue", code, err)
+	}
+}
+
+func TestReviewReadsTheIssueFromATypePrefixedBranch(t *testing.T) {
+	fakeReview(t, ghAt{head: headA, ci: "SUCCESS", branch: "feat/42-fix-the-thing"})
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all met"}, nil)
+
+	var out strings.Builder
+	if err := reviewCommand([]string{"17", "--json"}, &out); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	if doc := reviewDoc(t, out.String()); doc.Issue != 42 {
+		t.Errorf("issue = %d, want 42 from feat/42-fix-the-thing", doc.Issue)
 	}
 }
 

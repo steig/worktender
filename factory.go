@@ -672,9 +672,8 @@ func alreadyStarted(candidate issue, taken []string) string {
 	if slices.Contains(candidate.labelNames(), labelFactoryInProgress) {
 		return "already labelled " + labelFactoryInProgress
 	}
-	prefix := strconv.Itoa(candidate.Number)
 	for _, name := range taken {
-		if name == prefix || strings.HasPrefix(name, prefix+"-") {
+		if issueFromBranch(name) == candidate.Number {
 			return fmt.Sprintf("%s already exists, so a worker was started on it before", name)
 		}
 	}

@@ -77,11 +77,25 @@ Branch on the code, not on the message. The full table is in
 [Reference](reference.md#exit-codes-and-errors).
 
 ```sh
-worktender start <issue> [--role <role>] [--model <model>] [--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus]
+worktender start <issue> [--role <role>] [--model <model>] [--permission-mode <mode>] [--base <ref>] [--branch-prefix <type>] [--repo <path>] [--focus]
 worktender dispatch --pane <id> --name <agent> [--role <role>] [--model <model>] [--permission-mode <mode>] [--resume]
 worktender report --status planned|blocked|done [--pr N] --note <text>
 worktender gate --target <agent|pane> | --any <a,b,c> [--until done] [--require-pr] [--repo <path>] [--timeout 15m] [--dagr]
 ```
+
+## Branch names
+
+`start` names the branch `<issue>-<title-slug>`. When the repository has a hook
+that requires a `type/` prefix, `start` finds it and adds one (`feat/` when the
+hook allows it, otherwise the first type listed). It looks in `.husky/` and the
+git hooks directory, only at lines that mention a branch beside a
+`(feat|fix|...)/` alternation. That is best-effort: a hook written another way
+is not seen, and the branch comes out unprefixed. `--branch-prefix fix` (or
+`fix/`) sets the prefix yourself and skips detection; `--branch-prefix ""` forces
+none.
+
+herdr names the checkout directory after the branch with each `/` as `-`, so
+`feat/42-x` lives in `feat-42-x`.
 
 ## Starting a worker as a role
 

@@ -72,10 +72,25 @@ const (
 	refocusClose = "End of quoted issue text."
 )
 
-// issueBranchPattern is the shape issueBranch produces: the number, then a
-// slug or nothing. A branch that does not start that way was not made by
+// issueBranchPattern is the shape issueBranch produces, after the `type/` a
+// repo's branch-naming hook may require: the number, then a slug or nothing. A branch that does not start that way was not made by
 // `start` from an issue, and there is no chain to read for it.
-var issueBranchPattern = regexp.MustCompile(`^([0-9]+)(?:-|$)`)
+var issueBranchPattern = regexp.MustCompile(`^(?:[a-z]+/)?([0-9]+)(?:-|$)`)
+
+// issueFromBranch is the issue number a branch `start` named begins with, or
+// 0. refocus, review, verify and factory all read branches through it, so a
+// `type/` prefix cannot be understood by some and not the others.
+func issueFromBranch(branch string) int {
+	m := issueBranchPattern.FindStringSubmatch(branch)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
 
 func refocusCommand(args []string, out io.Writer) error {
 	ifDue := false
@@ -129,12 +144,8 @@ func refocusTarget(dir string) (root, top string, number int, ok bool) {
 		if w.Path != top || !w.IsLinked {
 			continue
 		}
-		m := issueBranchPattern.FindStringSubmatch(w.Branch)
-		if m == nil {
-			return "", "", 0, false
-		}
-		n, err := strconv.Atoi(m[1])
-		if err != nil || n <= 0 {
+		n := issueFromBranch(w.Branch)
+		if n == 0 {
 			return "", "", 0, false
 		}
 		return root, top, n, true
