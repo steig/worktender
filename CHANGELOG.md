@@ -6,6 +6,42 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.21.0] — 2026-10-20
+
+### Added
+
+- **`worktender start --brief <text|->` sets the worker's first prompt.** (#314)
+  `-` reads stdin. A brief that starts with `!` or `/` is refused, because the
+  composer would run it as a shell command or a slash command, and a multiline
+  brief is folded to one line. A custom brief replaces the generic prompt, so
+  `start` prints a notice naming what it drops (the untrusted-data warning, the
+  pinned-issue pointer, lessons and report instructions).
+- **`worktender approve <issue> --pane` opens the approve prompt in the issue's
+  herdr space.** (#312) You type `yes` there; `--yes` and `--sha256` are refused
+  with `--pane`. It is a convenience and not a boundary: anything that can call
+  herdr can send keys to that pane (see `docs/dispatch.md`).
+- **`start` prefixes the branch with the `type/` the repo's hook requires.**
+  (#308) It reads `.husky/` and the git hooks directory; `--branch-prefix`
+  overrides the detection, and a repo with no such hook behaves as before.
+  `review`, `verify`, `refocus` and `factory` read the issue number through one
+  parser that accepts the prefix.
+- **`gate <pane>` takes the pane as a positional argument.** (#308)
+- **`verify` notes why an install failed.** (#319) The tail of the install
+  output is escaped, capped and token-masked. A `yarn.lock` or `bun.lockb`
+  with no install gets one note line.
+
+### Fixed
+
+- **`verify` installs dependencies before running checks.** (#313) In a pnpm
+  repo the checks failed on base and head because the export had no
+  `node_modules`. Install runs once per commit with `--ignore-scripts`, so a
+  check that needs a postinstall step still fails for that reason. A failed
+  install fails the checks (exit 3). Exit 254, also reported on #307, is not
+  explained.
+- **`start` no longer warns that the brief is stuck when the worker is
+  already running.** (#314) herdr reports a worker mid-turn as idle, so `start`
+  now reads the composer instead.
+
 ## [0.20.0] — 2026-10-19
 
 ### Added
