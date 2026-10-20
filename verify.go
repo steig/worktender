@@ -374,9 +374,9 @@ const (
 	installTailBytes = 2000
 )
 
-var secretShapes = regexp.MustCompile(`(?i)(_authToken|_auth|_password|[A-Z0-9_]*(?:token|secret|password|api_?key)[A-Z0-9_]*)(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)` +
+var secretShapes = regexp.MustCompile(`(?i)(_authToken|_auth|_password|[A-Z0-9_]*(?:token|secret|password|api_?key)[A-Z0-9_]*)(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|["'].*|\S+)` +
 	`|\b(?:npm_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abp]-)[A-Za-z0-9_-]{10,}|\bBearer\s+\S+` +
-	`|\bAuthorization\s*[:=]\s*Basic\s+\S+|(://)[^\s/@]+@`)
+	`|\bAuthorization\s*[:=]\s*(?:Basic|Digest|Token)\s+.*|(://)[^\s]*@`)
 
 // tailLines is the last n lines of output, indented under their note. \r
 // ends a line too, since a progress bar made only of them is one huge line.

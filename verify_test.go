@@ -452,11 +452,16 @@ exit 1`)
 
 func TestTailLinesMasksURLCredentialsBasicAuthAndQuotedValues(t *testing.T) {
 	for in, leaked := range map[string]string{
-		"fetch https://deploy:s3cr3tpw@registry.example.com/pkg": "s3cr3tpw",
-		"fetch https://ghp_onlytokenvalue@registry.example.com/": "onlytokenvalue",
-		"Authorization: Basic dXNlcjpodW50ZXIy":                  "dXNlcjpodW50ZXIy",
-		`NPM_TOKEN="hunter two three" next`:                      "two three",
-		`_password='hunter two'`:                                 "hunter two",
+		"fetch https://deploy:s3cr3tpw@registry.example.com/pkg":    "s3cr3tpw",
+		"fetch https://ghp_onlytokenvalue@registry.example.com/":    "onlytokenvalue",
+		"Authorization: Basic dXNlcjpodW50ZXIy":                     "dXNlcjpodW50ZXIy",
+		"fetch https://u:p@ss@registry.example.com/pkg":             "ss@registry",
+		"fetch https://u:pa/ss@registry.example.com/pkg":            "pa/ss",
+		`TOKEN="unterminated two words`:                             "two words",
+		"Authorization: Digest username=\"u\", response=\"abc123\"": "abc123",
+		"Authorization: Token abcdef123456":                         "abcdef123456",
+		`NPM_TOKEN="hunter two three" next`:                         "two three",
+		`_password='hunter two'`:                                    "hunter two",
 	} {
 		got := tailLines(in, 5)
 		if strings.Contains(got, leaked) || !strings.Contains(got, "***") {
