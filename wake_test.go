@@ -29,6 +29,9 @@ func wakeFleet(t *testing.T, record bool, agentStatus func() string, screen func
 // them after start to make the live pane differ from what start recorded.
 var coordTerminal, coordAgent string
 
+// wakeSuffix is what a human types after the wake line in the composer.
+var wakeSuffix string
+
 func wakeFleetFrom(t *testing.T, record bool, agentStatus func() string, screen func() string) *herdrtest.Server {
 	t.Helper()
 	wakePoll, wakeWait = time.Millisecond, 50*time.Millisecond
@@ -85,7 +88,7 @@ func wakeFleetFrom(t *testing.T, record bool, agentStatus func() string, screen 
 	server.Handle("pane.read", func(map[string]any) (any, error) {
 		text := screen()
 		if typed, ok := sent.Load().(string); ok && text == empty() {
-			text = "───\n❯ " + typed + "\n───"
+			text = "───\n❯ " + typed + wakeSuffix + "\n───"
 		}
 		return map[string]any{"type": "pane_read", "read": map[string]any{
 			"pane_id": "c1:p1", "workspace_id": "c1", "tab_id": "c1:t1",
@@ -248,6 +251,9 @@ func TestWakeTypesNothingIntoAPaneThatIsNotTheRecordedCoordinator(t *testing.T) 
 			if typed := typedInto(server, "c1:p1"); len(typed) != 0 {
 				t.Fatalf("typed %q", typed)
 			}
+			if got := queueFiles(); len(got) != 0 {
+				t.Errorf("queue kept for the wrong pane: %v", got)
+			}
 		})
 	}
 }
@@ -292,5 +298,45 @@ func TestWakeDoesNotPressEnterOverSomethingElseInTheComposer(t *testing.T) {
 	runReport(t, "--status", "done", "--note", "ok")
 	if n := pressed(server); n != 0 {
 		t.Fatalf("pressed Enter %d times over someone else's text", n)
+	}
+}
+
+func queueFiles() []string {
+	got, _ := filepath.Glob(filepath.Join(pluginStateDir(), "wake", "*.queue"))
+	return got
+}
+
+func TestWakeDoesNotPressEnterWhenTextFollowsTheWakeLine(t *testing.T) {
+	wakeSuffix = " and also"
+	t.Cleanup(func() { wakeSuffix = "" })
+	server := wakeFleet(t, true, idle, empty)
+	runReport(t, "--status", "done", "--note", "ok")
+	if n := pressed(server); n != 0 {
+		t.Fatalf("pressed Enter %d times with text after the wake line", n)
+	}
+}
+
+func TestWakeDoesNotPressEnterWhenNoBoxIsFound(t *testing.T) {
+	var typedYet atomic.Bool
+	server := wakeFleet(t, true, idle, func() string {
+		if typedYet.Swap(true) {
+			return "a screen with no prompt line"
+		}
+		return empty()
+	})
+	runReport(t, "--status", "done", "--note", "ok")
+	if n := pressed(server); n != 0 {
+		t.Fatalf("pressed Enter %d times with no box to read", n)
+	}
+}
+
+func TestWakeKeepsTheQueueThroughATransientHerdrError(t *testing.T) {
+	server := wakeFleet(t, true, idle, empty)
+	server.Handle("agent.get", func(map[string]any) (any, error) {
+		return nil, errors.New("socket hiccup")
+	})
+	runReport(t, "--status", "done", "--note", "ok")
+	if got := queueFiles(); len(got) != 1 {
+		t.Fatalf("queue files = %v, want the entry kept", got)
 	}
 }

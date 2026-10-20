@@ -1009,7 +1009,14 @@ worktender: #316 done pr 7 sha 50b3374
 - **Only the coordinator `start` saw.** `start` records the pane's terminal and
   agent as well; the wake is typed only if the live pane is still that terminal
   running `claude`, and only for the issue the branch was started for. Queued
-  lines older than five minutes are dropped.
+  lines older than five minutes are dropped. Enter is pressed only when the
+  input box holds exactly the wake line.
+- **A hint, not an authenticated message.** Any process running as the same
+  user can type into any pane through herdr, so the coordinator must confirm
+  with `worktender ls` or `gate` before acting on a wake. The identity check
+  protects against a plain shell, another agent, or a reused pane id receiving
+  the line. It does not protect against a same-user worker forging a line for a
+  Claude pane.
 - **Best effort.** A worktree `start` recorded no pane for wakes nobody, and a
   wake that fails warns on stderr without failing the report.
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,9 @@ var wakeEntry = regexp.MustCompile(`^([0-9]+) #([0-9]+) (planned|blocked|done) p
 const wakeStale = 5 * time.Minute
 
 var wakeNow = time.Now
+
+// errNotCoordinator marks a live pane that is not who start recorded.
+var errNotCoordinator = errors.New("not the recorded coordinator")
 
 // wakePane bounds a pane id to what herdr issues (`w2:p1`), and so to what can
 // name a file once the colon is swapped out.
@@ -156,10 +160,13 @@ func wakeFor(c coordinator, fragment string) error {
 	deadline := time.Now().Add(wakeWait)
 	for {
 		ready, err := coordinatorReady(client, c)
-		if err != nil {
-			// Not who start recorded, or gone: its pane id can be handed out
-			// again to something that should not read this.
+		if errors.Is(err, errNotCoordinator) {
+			// Its pane id has been handed out again to something that should
+			// not read this. A transport error says nothing of the kind, so the
+			// queue survives it.
 			_ = os.Remove(queue)
+		}
+		if err != nil {
 			return err
 		}
 		if ready {
@@ -229,12 +236,14 @@ func flushWake(client *herdrapi.Client, c coordinator, queue string) error {
 	if err := client.PaneSendText(c.pane, text); err != nil {
 		return requeue(fmt.Errorf("type into %s: %w", c.pane, err))
 	}
-	held, err := composerHoldsText(client, c.pane, text)
+	box, found, err := composerBox(client, c.pane)
 	if err != nil {
 		return requeue(err)
 	}
-	if !held {
-		return requeue(fmt.Errorf("the composer in %s no longer holds the wake line; not submitting", c.pane))
+	// Exactly the wake line: text typed after it, or no box to read, is not
+	// ours to submit.
+	if !found || box != text {
+		return requeue(fmt.Errorf("the composer in %s does not hold exactly the wake line; not submitting", c.pane))
 	}
 	if err := client.PaneSendKeys(c.pane, []string{briefSubmitKey}); err != nil {
 		return requeue(fmt.Errorf("submit in %s: %w", c.pane, err))
@@ -258,23 +267,28 @@ func coordinatorReady(client *herdrapi.Client, c coordinator) (bool, error) {
 		agent = *info.Agent.Agent
 	}
 	if info.Agent.TerminalID != c.terminal || agent != c.agent || agent != execute.AgentKind {
-		return false, fmt.Errorf("%s is not the %s that dispatched this worker", c.pane, execute.AgentKind)
+		return false, fmt.Errorf("%w: %s is not the %s that dispatched this worker", errNotCoordinator, c.pane, execute.AgentKind)
 	}
 	if s := info.Agent.AgentStatus; s != herdrapi.AgentStatusIdle && s != herdrapi.AgentStatusDone {
 		return false, nil
 	}
-	read, err := client.PaneRead(c.pane, herdrapi.ReadSourceVisible)
+	box, found, err := composerBox(client, c.pane)
+	// Claude Code draws a placeholder in an empty box.
+	return found && (box == "" || strings.HasPrefix(box, `Try "`)), err
+}
+
+// composerBox is what the input box on screen in pane holds: the last `❯`
+// line, earlier ones being the transcript. found is false when there is none.
+func composerBox(client *herdrapi.Client, pane string) (string, bool, error) {
+	read, err := client.PaneRead(pane, herdrapi.ReadSourceVisible)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	lines := strings.Split(read.Read.Text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); strings.HasPrefix(line, "❯") {
-			box := strings.TrimSpace(strings.TrimPrefix(line, "❯"))
-			// Claude Code draws a placeholder in an empty box.
-			return box == "" || strings.HasPrefix(box, `Try "`), nil
+			return strings.TrimSpace(strings.TrimPrefix(line, "❯")), true, nil
 		}
 	}
-	// No box on screen says nothing about whether it is empty.
-	return false, nil
+	return "", false, nil
 }
