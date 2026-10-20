@@ -347,6 +347,16 @@ check's whole process group. With `--pr`, the PR has to be the issue's: on a
 branch named for it (`42-…`) or closing it, or `verify` exits **3**. Its head
 has to be in the local repository already; `verify` says how to fetch it.
 
+**Dependencies are installed once per commit, without scripts.** When the
+commit tracks a `pnpm-lock.yaml` or `package-lock.json`, `verify` runs
+`pnpm install --frozen-lockfile --ignore-scripts` or `npm ci --ignore-scripts`
+in an export and links the result into each check's export. Because
+`--ignore-scripts` is on, a check that needs a `postinstall` or `prepare` step
+(esbuild's binary, sharp, `prisma generate`) fails on base and head alike, and
+for that reason. A failed install fails every check on that commit, and the
+notes carry the tail of its output. A `yarn.lock` or `bun.lockb` with no
+supported lockfile beside it is not installed from; the notes say so.
+
 **The export is not a sandbox.** It keeps your checkout's untracked files out of
 the way, nothing more. A check like `go test` runs the head's code as you, with
 your environment, your `$HOME` and your network, so `--pr` on a pull request
