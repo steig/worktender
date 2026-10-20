@@ -41,6 +41,7 @@ func startCommand(args []string, out io.Writer) error {
 	base := fs.String("base", "", "ref to fork from; defaults to the repository's origin/HEAD")
 	repo := fs.String("repo", "", "repository to act on, instead of the one herdr is currently in")
 	focus := fs.Bool("focus", false, "switch to the new workspace")
+	briefFlag := fs.String("brief", "", "text to send as the worker's first prompt, instead of the generic one; - reads stdin")
 	branchPrefix := fs.String("branch-prefix", "", "type/ prefix for the branch, instead of the one the repository's hooks require; empty for none")
 	asJSON := jsonFlag(fs)
 
@@ -59,6 +60,13 @@ func startCommand(args []string, out io.Writer) error {
 	number, err := strconv.Atoi(strings.TrimPrefix(issues[0], "#"))
 	if err != nil || number <= 0 {
 		return usagef("%q is not an issue number; want a positive integer like 42", issues[0])
+	}
+
+	// Read before anything creates a checkout: stdin can only be read once, and a
+	// start that fails afterwards must not have eaten the text.
+	custom, err := customBrief(*briefFlag, briefGiven(fs), os.Stdin)
+	if err != nil {
+		return err
 	}
 
 	// Read before anything else happens, so a configuration that does not parse
@@ -257,7 +265,11 @@ func startCommand(args []string, out io.Writer) error {
 	if approved != nil {
 		checks = len(approved.Checks)
 	}
-	if err := deliverBrief(s.client, pane, withLessons(notes, briefWithChecks(number, branch, style, withDirs, checks), lessonCount, approved != nil)); err != nil {
+	text := custom
+	if text == "" {
+		text = withLessons(notes, briefWithChecks(number, branch, style, withDirs, checks), lessonCount, approved != nil)
+	}
+	if err := deliverBrief(s.client, pane, text); err != nil {
 		if wErr := emit(doc.finish(err)); wErr != nil {
 			return wErr
 		}
@@ -314,8 +326,38 @@ func printForkPoint(out io.Writer, forkFrom, forkPoint, baseRef, basePoint strin
 	fmt.Fprintf(out, "           once it merges. Before that, --onto %s, having rebased that first.\n", forkFrom)
 }
 
+// briefGiven reports whether --brief was passed, so that an empty value is
+// refused rather than read as the flag being absent.
+func briefGiven(fs *flag.FlagSet) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "brief" })
+	return given
+}
+
+// customBrief resolves --brief: the text itself, or stdin for "-". It returns ""
+// when the flag was not given, which is the caller's cue to build the generic
+// brief. The text replaces that brief whole, including its pointers to the
+// pinned issue and lessons; whoever writes one is responsible for what it says.
+func customBrief(value string, given bool, stdin io.Reader) (string, error) {
+	if !given {
+		return "", nil
+	}
+	if value == "-" {
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", withCode(exitUsage, fmt.Errorf("read --brief from stdin: %w", err))
+		}
+		value = string(b)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", usagef("--brief is empty; %s", startUsage)
+	}
+	return value, nil
+}
+
 const startUsage = "usage: worktender start <issue> [--role <role>] [--model <model>] " +
-	"[--permission-mode <mode>] [--base <ref>] [--branch-prefix <type>] [--repo <path>] [--focus] [--json]"
+	"[--permission-mode <mode>] [--base <ref>] [--branch-prefix <type>] [--repo <path>] [--brief <text|->] [--focus] [--json]"
 
 // parseAround parses flags written on either side of the positional arguments,
 // returning the positionals.
@@ -516,6 +558,20 @@ func submitBrief(client *herdrapi.Client, pane string) error {
 		if status != herdrapi.AgentStatusIdle && status != herdrapi.AgentStatusUnknown {
 			return nil
 		}
+		// herdr classifies Claude Code from its screen, and calls it idle whenever
+		// the prompt box is drawn and no spinner line is among the bottom twelve
+		// lines (`herdr agent explain` names the rule). A worker mid-turn with long
+		// tool output on screen is therefore reported idle while it works. So idle
+		// alone does not say the brief is unread; the composer does.
+		if status == herdrapi.AgentStatusIdle {
+			held, err := composerHoldsText(client, pane)
+			if err != nil {
+				return err
+			}
+			if !held {
+				return nil
+			}
+		}
 		if time.Now().After(deadline) {
 			return codef(exitNeedsHuman,
 				"the brief was typed into %s and %s was pressed %s over %s, but herdr still reports that "+
@@ -527,6 +583,28 @@ func submitBrief(client *herdrapi.Client, pane string) error {
 		}
 		time.Sleep(briefConfirmPoll)
 	}
+}
+
+// composerHoldsText reports whether Claude Code's input box in pane has anything
+// typed in it. A submitted brief leaves the box empty; an unsubmitted one sits
+// there, as the text or collapsed to `[Pasted text #1 +N lines]`.
+//
+// The box is the last `❯` line on screen: earlier ones are the transcript echoing
+// prompts already sent. A screen with no such line says nothing, and is read as
+// the box holding the brief — the answer that keeps pressing and, failing that,
+// warns.
+func composerHoldsText(client *herdrapi.Client, pane string) (bool, error) {
+	read, err := client.PaneRead(pane, herdrapi.ReadSourceVisible)
+	if err != nil {
+		return false, fmt.Errorf("read %s to see whether the brief was taken: %w", pane, err)
+	}
+	lines := strings.Split(read.Read.Text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); strings.HasPrefix(line, "❯") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "❯")) != "", nil
+		}
+	}
+	return true, nil
 }
 
 // times counts keypresses for the failure message, which is read by someone
