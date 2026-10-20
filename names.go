@@ -16,25 +16,52 @@ import (
 // bar can tell which worker is which. They are cosmetic: a rename that fails
 // warns and the command goes on.
 
-// nameTitleMax caps the issue title inside a workspace name, in runes. herdr's
-// own limit is unmeasured, so this stays short enough for a tab bar.
-const nameTitleMax = 24
+// Measured against herdr 0.9.5 in a scratch session: workspace, tab and pane
+// labels all took 5000 characters and stored control characters as given, so
+// herdr enforces no limit worth designing to. These caps are for the tab bar.
+// A workspace label survived a server restart; tab and pane labels did not.
+const (
+	nameRepoMax  = 20
+	nameTitleMax = 24
+)
 
-// workspaceName is `<repo> #<issue> <short title>`. The title is third-party
-// text, so unsafe runes are escaped before it is cut.
+// workspaceName is `<repo> #<issue> <short title>`. The repo and the title are
+// third-party text, so each is cut a raw rune at a time and escaped as it goes, so
+// a cut never lands inside a `\u{XXXX}` and leaves a fragment that reads as
+// something else.
 func workspaceName(repo string, number int, title string) string {
-	title = safetext.Escape(strings.TrimSpace(title))
-	if utf8.RuneCountInString(title) > nameTitleMax {
-		title = strings.TrimSpace(string([]rune(title)[:nameTitleMax-1])) + "…"
-	}
-	return strings.TrimSpace(fmt.Sprintf("%s #%d %s", repo, number, title))
+	return strings.TrimSpace(fmt.Sprintf("%s #%d %s",
+		cutEscaped(repo, nameRepoMax), number, cutEscaped(title, nameTitleMax)))
 }
 
-// A status prefix is a marker, and for done a PR slot after it. Only names
-// worktender gave carry one, and a name without `#<issue>` is a person's own.
+// cutEscaped escapes s into at most max runes, marking a cut. It takes raw runes
+// whole while their escaped form fits, so the result is capped after escaping
+// (a control rune grows to eight) and a cut cannot fall inside an escape.
+func cutEscaped(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if full := safetext.Escape(s); utf8.RuneCountInString(full) <= max {
+		return full
+	}
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		piece := safetext.Escape(string(r))
+		n := utf8.RuneCountInString(piece)
+		if used+n > max-1 {
+			break
+		}
+		b.WriteString(piece)
+		used += n
+	}
+	return strings.TrimSpace(b.String()) + "…"
+}
+
+// A status prefix is a marker, and for done a PR slot after it. Only a name in
+// the shape workspaceName gives is worktender's to relabel: `<repo> #<n>` at
+// the start, so a person's own workspace that merely mentions an issue is not.
 var (
 	statusPrefix  = regexp.MustCompile(`^(?:… |! |✓ (?:PR \d+ )?)`)
-	namedByUs     = regexp.MustCompile(`#\d+`)
+	namedByUs     = regexp.MustCompile(`^\S+ #\d+(?: |$)`)
 	statusMarkers = map[string]string{"planned": "… ", "blocked": "! ", "done": "✓ "}
 )
 

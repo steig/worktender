@@ -609,7 +609,7 @@ func (c *Client) AgentStart(name, kind, paneID string, args []string, timeoutMS 
 	return c.callWithin("agent.start", params, nil, deadlineFor(timeoutMS))
 }
 
-// WorkspaceRename sets a workspace's label. herdr keeps it across restarts.
+// WorkspaceRename sets a workspace's label.
 func (c *Client) WorkspaceRename(workspaceID, label string) error {
 	return c.call("workspace.rename", map[string]any{"workspace_id": workspaceID, "label": label}, nil)
 }
