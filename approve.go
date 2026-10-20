@@ -120,8 +120,12 @@ func approveCommand(args []string, out io.Writer) error {
 // opens a shell in the issue's own herdr space and runs the plain
 // `worktender approve` there, so the person types yes at the same prompt they
 // would have seen. The command it types is built here from the issue number and
-// the repository root alone, never with --yes or --sha256, so the caller cannot
-// make the pane approve; the approval stays the person's keystroke.
+// the repository root alone, never with --yes or --sha256.
+//
+// This is a convenience, not an access control. Anything that can call herdr
+// can send keys to that pane, or run `approve --yes` itself. Keeping a
+// coordinator from approving takes a credential it does not hold, such as a
+// narrowed gh token.
 func approvePane(repo string, number int, out io.Writer) error {
 	s, err := newSessionIn(repo, herdrRequired)
 	if err != nil {
@@ -153,7 +157,7 @@ func approvePane(repo string, number int, out io.Writer) error {
 	if err := s.client.PaneSendKeys(id, []string{briefSubmitKey}); err != nil {
 		return fmt.Errorf("run the approve command in %s: %w", id, err)
 	}
-	fmt.Fprintf(out, "opened pane %s in workspace %s; type yes there to approve #%d\n", id, workspace, number)
+	fmt.Fprintf(out, "opened an approve prompt for #%d in its herdr space; type yes there\n", number)
 	return nil
 }
 

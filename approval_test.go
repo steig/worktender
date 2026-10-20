@@ -649,11 +649,16 @@ func TestApprovePaneTypesThePlainCommandInTheIssuesWorkspace(t *testing.T) {
 // The pane is the only path: nothing that skips the prompt may ride along.
 func TestApprovePaneRefusesFlagsThatSkipThePrompt(t *testing.T) {
 	repo, server := approvePaneServer(t, "feat/42-fix-the-thing", "w9")
+	gh := newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody), nil)
 	for _, extra := range [][]string{{"--yes"}, {"--sha256", strings.Repeat("a", 64)}} {
 		args := append([]string{"42", "--pane", "--repo", repo.Root}, extra...)
-		if err := approveCommand(args, &strings.Builder{}); exitCode(err) != exitUsage {
-			t.Errorf("approve %v: err %v, want a usage error", args, err)
+		err := approveCommand(args, &strings.Builder{})
+		if exitCode(err) != exitUsage || err == nil || !strings.Contains(err.Error(), "--pane opens the prompt") {
+			t.Errorf("approve %v: err %v, want a usage error saying --pane opens the prompt", args, err)
 		}
+	}
+	if calls := gh.read("calls"); calls != "" {
+		t.Errorf("a refused --pane invoked gh:\n%s", calls)
 	}
 	if n := len(server.Calls()); n != 0 {
 		t.Errorf("a refused --pane reached herdr %d time(s)", n)
