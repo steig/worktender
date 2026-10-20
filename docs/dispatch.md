@@ -1006,6 +1006,10 @@ worktender: #316 done pr 7 sha 50b3374
 - **Only into a free coordinator.** Its agent must be idle (or done) with an
   empty input box. A report waits up to 30 seconds for that; past it the line
   stays queued, and the next report types everything queued as one line.
+- **Only the coordinator `start` saw.** `start` records the pane's terminal and
+  agent as well; the wake is typed only if the live pane is still that terminal
+  running `claude`, and only for the issue the branch was started for. Queued
+  lines older than five minutes are dropped.
 - **Best effort.** A worktree `start` recorded no pane for wakes nobody, and a
   wake that fails warns on stderr without failing the report.
 

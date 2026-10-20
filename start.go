@@ -288,7 +288,7 @@ func startCommand(args []string, out io.Writer) error {
 	// The pane this ran in is the coordinator a report wakes. Losing it costs
 	// only the wake.
 	if coordinator := os.Getenv(paneEnv); coordinator != "" {
-		if err := recordCoordinator(s.root, branch, coordinator, number); err != nil {
+		if err := recordCoordinator(s.client, s.root, branch, coordinator, number); err != nil {
 			fmt.Fprintf(notes, "coordinator: not recorded, so its reports will not wake this pane (%v)\n", err)
 		}
 	}
