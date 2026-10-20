@@ -27,3 +27,4 @@
 /internal/execute/       @steig
 /internal/reconcile/     @steig
 /internal/safetext/      @steig
+/verify.go               @steig
