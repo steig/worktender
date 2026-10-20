@@ -72,6 +72,14 @@ type verifyCheck struct {
 	Head    verifyRun `json:"head"`
 }
 
+type verifyInstall struct {
+	Commit   string `json:"commit"`
+	Lockfile string `json:"lockfile"`
+	Outcome  string `json:"outcome"`
+	// Output is the bounded, masked, escaped tail the text notes print.
+	Output string `json:"output"`
+}
+
 type verifyJSON struct {
 	Repository string        `json:"repository"`
 	Issue      int           `json:"issue"`
@@ -79,8 +87,11 @@ type verifyJSON struct {
 	Base       *string       `json:"base"`
 	Head       *string       `json:"head"`
 	Checks     []verifyCheck `json:"checks"`
-	Error      *string       `json:"error"`
-	ExitCode   int           `json:"exit_code"`
+	// Install holds the tail of each failed install, one per commit it failed
+	// on, so a JSON consumer sees why every check on that commit failed.
+	Install  []verifyInstall `json:"install"`
+	Error    *string         `json:"error"`
+	ExitCode int             `json:"exit_code"`
 }
 
 func verifyCommand(args []string, out io.Writer) error {
@@ -115,7 +126,7 @@ func verifyCommand(args []string, out io.Writer) error {
 	}
 
 	notes := out
-	doc := &verifyJSON{Repository: root, Issue: number, Checks: []verifyCheck{}}
+	doc := &verifyJSON{Repository: root, Issue: number, Checks: []verifyCheck{}, Install: []verifyInstall{}}
 	finish := func(err error) error {
 		if *asJSON {
 			doc.ExitCode = exitCode(err)
@@ -172,11 +183,11 @@ func verifyCommand(args []string, out io.Writer) error {
 	doc.Base, doc.Head = jsonout.String(base), jsonout.String(head)
 	fmt.Fprintf(notes, "base: %s (merge-base with %s)\nhead: %s\n", base, baseTip, head)
 
-	baseRuns, err := runChecks(root, base, approved.Checks, *timeout, notes)
+	baseRuns, err := runChecks(root, base, approved.Checks, *timeout, notes, doc)
 	if err != nil {
 		return finish(err)
 	}
-	headRuns, err := runChecks(root, head, approved.Checks, *timeout, notes)
+	headRuns, err := runChecks(root, head, approved.Checks, *timeout, notes, doc)
 	if err != nil {
 		return finish(err)
 	}
@@ -223,9 +234,9 @@ func verifyCommand(args []string, out io.Writer) error {
 // one check writes is not there for the next, and judges each against its
 // expected outcome. Dependencies are installed once for the commit; a failed
 // install fails every check, since none could have run.
-func runChecks(root, commit string, checks []acceptanceCheck, timeout time.Duration, notes io.Writer) ([]verifyRun, error) {
+func runChecks(root, commit string, checks []acceptanceCheck, timeout time.Duration, notes io.Writer, doc *verifyJSON) ([]verifyRun, error) {
 	runs := make([]verifyRun, len(checks))
-	modules, cleanup, install, err := installDependencies(root, commit, notes)
+	modules, cleanup, install, err := installDependencies(root, commit, notes, doc)
 	if err != nil {
 		return nil, fmt.Errorf("install dependencies on %s: %w", shortOid(commit), err)
 	}
@@ -300,7 +311,7 @@ var installers = []struct {
 // when the commit has no lockfile or the install made none. An install that
 // fails or times out comes back as a verifyRun for every check to share, not
 // as an error: the commit's dependencies not installing is a finding about it.
-func installDependencies(root, commit string, notes io.Writer) (modules string, cleanup func(), failed *verifyRun, err error) {
+func installDependencies(root, commit string, notes io.Writer, doc *verifyJSON) (modules string, cleanup func(), failed *verifyRun, err error) {
 	dir, rm, err := exportTracked(root, commit)
 	if err != nil {
 		return "", func() {}, nil, err
@@ -319,7 +330,13 @@ func installDependencies(root, commit string, notes io.Writer) (modules string, 
 		run.Commit = commit
 		if run.TimedOut || run.ExitCode == nil || *run.ExitCode != 0 {
 			rm()
-			fmt.Fprintf(notes, "install on %s failed (%s: %s):\n%s\n", shortOid(commit), in.lockfile, describeInstall(run), tailLines(output, installTailLines))
+			tail := tailLines(output, installTailLines)
+			doc.Install = append(doc.Install, verifyInstall{Commit: commit, Lockfile: in.lockfile, Outcome: describeInstall(run), Output: tail})
+			fmt.Fprintf(notes, "install on %s failed (%s: %s)", shortOid(commit), in.lockfile, describeInstall(run))
+			if tail != "" {
+				fmt.Fprintf(notes, ":\n%s", tail)
+			}
+			fmt.Fprintln(notes)
 			return "", func() {}, &run, nil
 		}
 		break
@@ -357,8 +374,9 @@ const (
 	installTailBytes = 2000
 )
 
-var secretShapes = regexp.MustCompile(`(?i)(_authToken|_auth|_password|[A-Z0-9_]*(?:token|secret|password|api_?key)[A-Z0-9_]*)(\s*[=:]\s*)\S+` +
-	`|\b(?:npm_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abp]-)[A-Za-z0-9_-]{10,}|\bBearer\s+\S+`)
+var secretShapes = regexp.MustCompile(`(?i)(_authToken|_auth|_password|[A-Z0-9_]*(?:token|secret|password|api_?key)[A-Z0-9_]*)(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)` +
+	`|\b(?:npm_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abp]-)[A-Za-z0-9_-]{10,}|\bBearer\s+\S+` +
+	`|\bAuthorization\s*[:=]\s*Basic\s+\S+|(://)[^\s/@]+@`)
 
 // tailLines is the last n lines of output, indented under their note. \r
 // ends a line too, since a progress bar made only of them is one huge line.
@@ -373,6 +391,8 @@ func tailLines(output string, n int) string {
 		line := secretShapes.ReplaceAllStringFunc(lines[i], func(m string) string {
 			if k := secretShapes.FindStringSubmatch(m); k[1] != "" {
 				return k[1] + k[2] + "***"
+			} else if k[3] != "" {
+				return "://***@"
 			}
 			return "***"
 		})

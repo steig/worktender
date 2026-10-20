@@ -835,11 +835,16 @@ $ worktender verify 42 --repo . --json
       "head": { "commit": "8a4f0e2b…", "exit_code": 0, "timed_out": false, "passed": true }
     }
   ],
+  "install": [],
   "error": null,
   "exit_code": 0
 }
 ```
 
+- **`install`** is empty unless a dependency install failed. Each entry names
+  the `commit` and `lockfile`, the `outcome` (`exit 1`, `timed out`, …) and the
+  `output`: the tail the text notes print, bounded, with credentials masked and
+  control characters escaped.
 - **`class`** is `discriminating`, `guard`, `failing` or `unjudged`, as in
   [Verifying that the checks prove the change](dispatch.md#verifying-that-the-checks-prove-the-change).
 - **`passed`** is whether the run met `expect`, which is not the same as exiting
