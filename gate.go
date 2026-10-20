@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,13 +35,13 @@ type gateOptions struct {
 	targets   []string
 	until     []string
 	requirePR bool
-	// scout is a wait on a worker that was told to change nothing: its done
-	// carries no PR, and the checkout --repo names is checked after the release.
+	// scout is a wait on workers `start --scout` began: a done carries no PR,
+	// and the checkout checked afterwards is the one start recorded for that
+	// worker, never one the caller names.
 	scout bool
 	// repo is where --require-pr asks gh about the PR, and root is it resolved
 	// to its repository, by runGate before the wait so a gate run outside one
-	// fails at once rather than at the release. Under --scout it is the
-	// worker's checkout.
+	// fails at once rather than at the release.
 	repo    string
 	root    string
 	timeout time.Duration
@@ -136,8 +137,8 @@ func parseGate(args []string) (gateOptions, error) {
 	flags.Var(targetFlag{targets: &targets}, "target", "an agent or pane to wait on; repeat for more than one")
 	flags.Var(targetFlag{targets: &targets, split: true}, "any", "agents or panes to wait on, comma-separated; the first to satisfy the predicate releases")
 	requirePR := flags.Bool("require-pr", false, "the report must carry a pull request number")
-	scout := flags.Bool("scout", false, "the worker is a scout: no PR is expected, and --repo, its checkout, must be unchanged after done")
-	repo := flags.String("repo", ".", "repository whose PR a --require-pr done is checked against; with --scout, the worker's checkout")
+	scout := flags.Bool("scout", false, "every target was started with `start --scout`: no PR is expected, and its checkout must be unchanged after done")
+	repo := flags.String("repo", ".", "repository whose PR a --require-pr done is checked against")
 	// A duration rather than herdr's bare milliseconds: this is worktender's own
 	// surface, and "15m" cannot be pasted wrong by a factor of a thousand.
 	timeout := flags.Duration("timeout", gateDefaultTimeout, "how long to wait before giving up")
@@ -257,10 +258,9 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 			err = usagef("--repo: %v; --require-pr checks the PR's head in a repository", err)
 		}
 	}
+	var scouts []ledgerEvent
 	if err == nil && opts.scout {
-		if opts.root, err = gitx.Toplevel(opts.repo); err != nil {
-			err = usagef("--repo: %v; --scout checks the worker's checkout", err)
-		}
+		scouts, err = scoutRecords(targets)
 	}
 	if err != nil {
 		if opts.asJSON {
@@ -293,7 +293,11 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 		}
 	}
 	if err == nil && opts.scout && released.status == "done" {
-		if err = gateScout(opts.root, targets[about].name); err != nil {
+		rec := scouts[about]
+		relayed := *released
+		relayed.note = scoutNote(rec, released.note)
+		released = &relayed
+		if err = gateScout(rec.ScoutCheckout, targets[about].name); err != nil {
 			outcome, evidence = gateOutcomeScoutViolation, gateEvidenceVerified
 		}
 	}
@@ -337,13 +341,78 @@ func gateHead(root, name string, r report) error {
 	return nil
 }
 
+// scoutRecords is the start record of every target, in order. A scout's gate is
+// weaker than a PR's, so the worker has to be one `start --scout` began: asked
+// of the ledger start wrote, not of a flag the caller could point anywhere. The
+// latest start on a pane wins, because herdr hands pane ids out again.
+func scoutRecords(targets []gateTarget) ([]ledgerEvent, error) {
+	path, err := ledgerPath()
+	if err != nil {
+		return nil, err
+	}
+	events, _, err := readLedger(path)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]ledgerEvent, len(targets))
+	for i, t := range targets {
+		for _, e := range events {
+			if e.Event == ledgerStart && e.PaneID == t.pane {
+				records[i] = e
+			}
+		}
+		if records[i].ScoutCheckout == "" {
+			return nil, usagef("--scout: %s was not started with `worktender start --scout`; wait on it with --require-pr", t.name)
+		}
+	}
+	return records, nil
+}
+
+// scoutNote is the note a scout's done is relayed with: the report path when
+// the worker wrote exactly the path start named, to a regular file in a
+// directory that is not a link, and nothing otherwise. A note is the worker's
+// text, and a path it chose is one the coordinator would go and read.
+func scoutNote(rec ledgerEvent, note string) string {
+	want, err := scoutReportPath(rec.Repository, rec.Issue)
+	if err == nil && note != want {
+		err = fmt.Errorf("the note is not the report path")
+	}
+	if err == nil {
+		err = scoutRegular(want)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "worktender: warning: not relaying the scout's note: %v\n", err)
+		return ""
+	}
+	return want
+}
+
+func scoutRegular(path string) error {
+	for _, p := range []string{filepath.Dir(path), path} {
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || (p == path && !info.Mode().IsRegular()) {
+			return fmt.Errorf("%s is not a regular file in a real directory", p)
+		}
+	}
+	return nil
+}
+
 // gateScout holds a scout's done to the brief it was given. Nothing stops a
 // worker editing, so this is the only enforcement: a commit past the base or
 // any uncommitted file means the read-only task was not read-only. Read from git
 // after the release, so it reports what the checkout is rather than what the
-// worker said.
+// worker said. A base git cannot resolve is a failure to check, and reported as
+// one: zero commits found because git could not count is not zero commits.
 func gateScout(checkout, name string) error {
-	if n := gitx.OwnCommits(checkout, gitx.BaseRef(checkout)); n > 0 {
+	base := gitx.BaseRef(checkout)
+	n, err := gitx.CommitsAhead(checkout, base)
+	if err != nil {
+		return codef(exitNeedsHuman, "gate %s: scout violation: cannot count the checkout's commits past %s (%v), so it cannot be shown unchanged (evidence: %s)", name, base, err, gateEvidenceVerified)
+	}
+	if n > 0 {
 		return codef(exitNeedsHuman, "gate %s: scout violation: %d commit(s) on the checkout; a scout makes none (evidence: %s)", name, n, gateEvidenceVerified)
 	}
 	if gitx.IsDirty(checkout) {

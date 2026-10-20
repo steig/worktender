@@ -1156,7 +1156,7 @@ func TestScoutBriefSendsTheFindingsToAFileAndNotAPullRequest(t *testing.T) {
 	line = strings.ReplaceAll(line, selfPath(), installedSelfPath)
 
 	for _, want := range []string{"SCOUT", "UNTRUSTED DATA", "no edits to the repository, no commits, no pull request",
-		"scouts/some-repository/999999.md", "done with --note /Users/someone/.local/state/planner/scouts/some-repository/999999.md"} {
+		"scouts/some-repository/999999.md", "done with --note '/Users/someone/.local/state/planner/scouts/some-repository/999999.md'"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the scout brief should say %q:\n%s", want, line)
 		}
@@ -1172,30 +1172,69 @@ func TestScoutBriefSendsTheFindingsToAFileAndNotAPullRequest(t *testing.T) {
 func TestStartScoutBriefsAReportFileAndGatesWithoutAPullRequest(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	repo := herdrtest.NewRepo(t)
-	repo.AddWorktree("42", "42-fix-the-thing")
+	checkout := repo.AddWorktree("42", "42-fix-the-thing")
 	server := fakeStart(t, repo, "w9", "w9:p1", "working")
 	herdrtest.FakeGh(t, `cat <<'JSON'
 {"number":42,"title":"Fix the thing","body":"find out why"}
 JSON`)
+	// A report an earlier scout left behind must not pass for this one's.
+	report, err := scoutReportPath(repo.Root, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(report), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(report, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var out strings.Builder
 	if err := startCommand([]string{"42", "--scout"}, &out); err != nil {
 		t.Fatalf("start --scout: %v", err)
 	}
 
-	wantPath := filepath.Join(home, ".local", "state", "planner", "scouts", filepath.Base(repo.Root), "42.md")
 	var text string
 	for _, call := range server.Calls() {
 		if call.Method == "pane.send_text" {
 			text, _ = call.Params["text"].(string)
 		}
 	}
-	if !strings.Contains(text, wantPath) || !strings.Contains(text, "SCOUT") {
-		t.Errorf("the brief should send a scout to %s:\n%s", wantPath, text)
+	if !strings.Contains(text, shellQuote(report)) || !strings.Contains(text, "SCOUT") {
+		t.Errorf("the brief should send a scout to %s, quoted:\n%s", report, text)
 	}
-	if !strings.Contains(out.String(), "gate --target w9:p1 --until done --scout --repo ") ||
+	if !strings.Contains(out.String(), "gate --target w9:p1 --until done --scout\n") ||
 		strings.Contains(out.String(), "--require-pr") {
-		t.Errorf("a scout's gate expects no pull request and checks its checkout:\n%s", out.String())
+		t.Errorf("a scout's gate expects no pull request and needs no --repo:\n%s", out.String())
+	}
+	if repo.Exists(report) {
+		t.Error("the stale report was still there after start")
+	}
+	events, _, err := readLedger(filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "ledger.jsonl"))
+	if err != nil || len(events) == 0 || events[0].ScoutCheckout != gitx.Resolve(checkout) {
+		t.Errorf("start should record the scout's checkout %s: %v %+v", checkout, err, events)
+	}
+}
+
+func TestScoutReportPathKeepsSameNamedRepositoriesApart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := herdrtest.NewRepo(t)
+	b := herdrtest.NewRepo(t)
+	pa, _ := scoutReportPath(a.Root, 1)
+	pb, _ := scoutReportPath(b.Root, 1)
+	if filepath.Base(a.Root) == filepath.Base(b.Root) && pa == pb {
+		t.Errorf("two checkouts share %s", pa)
+	}
+	if pa == pb {
+		t.Errorf("distinct repositories got the same report path %s", pa)
+	}
+}
+
+func TestStartScoutRefusesACustomBrief(t *testing.T) {
+	err := startCommand([]string{"42", "--scout", "--brief", "do it"}, io.Discard)
+	if exitCode(err) != exitUsage || !strings.Contains(err.Error(), "--scout") {
+		t.Fatalf("start --scout --brief: exit %d (%v), want %d naming --scout", exitCode(err), err, exitUsage)
 	}
 }

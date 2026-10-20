@@ -75,6 +75,9 @@ type ledgerEvent struct {
 	Agent     string `json:"agent,omitempty"`
 	AgentKind string `json:"agent_kind,omitempty"`
 	AgentName string `json:"agent_name,omitempty"`
+	// ScoutCheckout is the worktree of a `start --scout`, empty for any other
+	// start. It is what `gate --scout` trusts in place of the caller's flags.
+	ScoutCheckout string `json:"scout_checkout,omitempty"`
 
 	// report only, except that feedback carries PR too.
 	Status string `json:"status,omitempty"`
@@ -186,10 +189,10 @@ func recordLedger(e ledgerEvent) {
 //
 // The origin is read now rather than when stats runs, so a dispatch can still
 // be looked up after its repository has moved or its checkout been removed.
-func recordStart(root string, issue int, branch string, launch *roles.Launch, agentName, pane string) {
+func recordStart(root string, issue int, branch string, launch *roles.Launch, agentName, pane, scoutCheckout string) {
 	e := ledgerEvent{
 		Event: ledgerStart, Repository: gitx.Resolve(root), Branch: branch, PaneID: pane,
-		Issue: issue, Origin: gitx.RemoteURL(root), AgentKind: execute.AgentKind, AgentName: agentName,
+		Issue: issue, Origin: gitx.RemoteURL(root), AgentKind: execute.AgentKind, AgentName: agentName, ScoutCheckout: scoutCheckout,
 	}
 	if launch != nil {
 		e.Role, e.Agent = launch.Role, launch.Agent
