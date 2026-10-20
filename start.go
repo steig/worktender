@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -199,6 +200,9 @@ func startCommand(args []string, out io.Writer) error {
 	doc.WorkspaceID, doc.PaneID = jsonout.String(workspace), jsonout.String(pane)
 	fmt.Fprintf(notes, "worktree: %s on %s (workspace %s, pane %s)\n", branch, forkFrom, workspace, pane)
 	printForkPoint(notes, forkFrom, forkPoint, baseRef, gitx.Commit(s.root, baseRef))
+	warnName(notes, "the workspace", s.client.WorkspaceRename(workspace, workspaceName(filepath.Base(s.root), number, issue.Title)))
+	warnName(notes, "the worker's tab", s.client.TabRename(created.Tab.TabID, "worker"))
+	warnName(notes, "the worker's pane", s.client.PaneRename(pane, "worker"))
 
 	// The approved snapshot goes into the worktree before any agent exists in
 	// it, so the worker's first read is the content that was verified. Failing

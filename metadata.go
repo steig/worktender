@@ -262,7 +262,12 @@ func deliverReport(r report) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "", writeReport(client, os.Getenv(paneEnv), r)
+	pane := os.Getenv(paneEnv)
+	if err := writeReport(client, pane, r); err != nil {
+		return "", err
+	}
+	warnName(os.Stderr, "the workspace", relabelWorkspace(client, pane, r))
+	return "", nil
 }
 
 const (
