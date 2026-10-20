@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -243,5 +244,78 @@ func TestVerifySkipsTheRevertWithNoGoSourceChange(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "revert: skipped, the change touches no Go source, go.mod or go.sum") {
 		t.Errorf("output does not say the revert was skipped:\n%s", out.String())
+	}
+}
+
+// fakePackageManager puts a pnpm on PATH that logs its arguments and makes a
+// node_modules, exiting with code.
+func fakePackageManager(t *testing.T, code int) (log string) {
+	t.Helper()
+	bin := t.TempDir()
+	log = filepath.Join(bin, "pnpm.log")
+	fake := "#!/bin/sh\necho \"$@\" >> " + log + "\nmkdir node_modules\nexit " + strconv.Itoa(code) + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "pnpm"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+func commitLockfile(repo *herdrtest.Repo) {
+	repo.Write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
+	repo.Git("add", "pnpm-lock.yaml")
+	repo.Git("commit", "-m", "lock")
+}
+
+// An export holds no node_modules, so a check that needs installed packages
+// fails there until the lockfile's dependencies are installed. The install runs
+// once per commit, not once per check, and runs no lifecycle scripts.
+func TestVerifyInstallsDependenciesOncePerCommitWithoutScripts(t *testing.T) {
+	log := fakePackageManager(t, 0)
+	repo := verifyRepo(t, "`test -d node_modules` exits 0", "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {
+		t.Fatalf("verify: %v\n%s", err, out.String())
+	}
+	got, _ := os.ReadFile(log)
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	// Only head tracks the lockfile; per check it would have run twice.
+	if len(lines) != 1 {
+		t.Errorf("pnpm ran %d times for 2 checks; want once:\n%s", len(lines), got)
+	}
+	for _, l := range lines {
+		if l != "install --frozen-lockfile --ignore-scripts" {
+			t.Errorf("pnpm ran with %q; want install --frozen-lockfile --ignore-scripts", l)
+		}
+	}
+}
+
+func TestVerifyRecordsAFailedInstallAsFailingChecks(t *testing.T) {
+	fakePackageManager(t, 1)
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+
+	var out strings.Builder
+	err := verifyCommand([]string{"42", "--repo", repo.Root}, &out)
+	if exitCode(err) != exitNeedsHuman {
+		t.Fatalf("verify with an install that fails: %v (exit %d); want exit 3\n%s", err, exitCode(err), out.String())
+	}
+	if !strings.Contains(out.String(), "1. failing") {
+		t.Errorf("output lacks a failing check:\n%s", out.String())
+	}
+}
+
+func TestVerifyInstallsNothingWithoutALockfile(t *testing.T) {
+	log := fakePackageManager(t, 0)
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {
+		t.Fatalf("verify: %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Errorf("pnpm ran with no lockfile tracked")
 	}
 }

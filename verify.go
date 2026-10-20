@@ -219,11 +219,23 @@ func verifyCommand(args []string, out io.Writer) error {
 
 // runChecks runs every check on commit, each in a fresh export so that what
 // one check writes is not there for the next, and judges each against its
-// expected outcome.
+// expected outcome. Dependencies are installed once for the commit; a failed
+// install fails every check, since none could have run.
 func runChecks(root, commit string, checks []acceptanceCheck, timeout time.Duration) ([]verifyRun, error) {
 	runs := make([]verifyRun, len(checks))
+	modules, cleanup, install, err := installDependencies(root, commit)
+	if err != nil {
+		return nil, fmt.Errorf("install dependencies on %s: %w", shortOid(commit), err)
+	}
+	defer cleanup()
+	if install != nil {
+		for i := range runs {
+			runs[i] = *install
+		}
+		return runs, nil
+	}
 	for i, c := range checks {
-		run, err := runOneCheck(root, commit, c, timeout)
+		run, err := runOneCheck(root, commit, c, modules, timeout)
 		if err != nil {
 			return nil, fmt.Errorf("run check %d on %s: %w", i+1, shortOid(commit), err)
 		}
@@ -233,13 +245,21 @@ func runChecks(root, commit string, checks []acceptanceCheck, timeout time.Durat
 }
 
 // runOneCheck is one check in its own export, which is gone when it returns.
-func runOneCheck(root, commit string, c acceptanceCheck, timeout time.Duration) (verifyRun, error) {
+// modules, when set, is the installed node_modules the export links to.
+func runOneCheck(root, commit string, c acceptanceCheck, modules string, timeout time.Duration) (verifyRun, error) {
 	export, cleanup, err := exportTracked(root, commit)
 	if err != nil {
 		return verifyRun{}, err
 	}
 	defer cleanup()
 
+	// An export holds only tracked files, so node_modules is not in it, and
+	// a check that passes in the worktree fails here for want of it.
+	if modules != "" {
+		if err := os.Symlink(modules, filepath.Join(export, "node_modules")); err != nil {
+			return verifyRun{}, withCode(exitEnvironment, err)
+		}
+	}
 	run, output, err := runIn(export, timeout, "sh", "-c", c.Command)
 	if err != nil {
 		return verifyRun{}, err
@@ -249,6 +269,54 @@ func runOneCheck(root, commit string, c acceptanceCheck, timeout time.Duration) 
 		run.Passed, _ = outcomeMet(c.Expect, *run.ExitCode, output)
 	}
 	return run, nil
+}
+
+// installTimeout bounds one install, apart from the checks' own timeout.
+const installTimeout = 10 * time.Minute
+
+// installers maps a lockfile to the command that installs exactly what it
+// pins. Lifecycle scripts stay off: the head being verified is the change
+// under review, and its scripts would run as the user. yarn is absent because
+// berry, the current yarn, rejects --frozen-lockfile.
+var installers = []struct {
+	lockfile string
+	argv     []string
+}{
+	{"pnpm-lock.yaml", []string{"pnpm", "install", "--frozen-lockfile", "--ignore-scripts"}},
+	{"package-lock.json", []string{"npm", "ci", "--ignore-scripts"}},
+}
+
+// installDependencies installs commit's lockfile dependencies into an export of
+// its own and returns the node_modules to link into each check's export, or ""
+// when the commit has no lockfile or the install made none. An install that
+// fails or times out comes back as a verifyRun for every check to share, not
+// as an error: the commit's dependencies not installing is a finding about it.
+func installDependencies(root, commit string) (modules string, cleanup func(), failed *verifyRun, err error) {
+	dir, rm, err := exportTracked(root, commit)
+	if err != nil {
+		return "", func() {}, nil, err
+	}
+	for _, in := range installers {
+		if _, err := os.Stat(filepath.Join(dir, in.lockfile)); err != nil {
+			continue
+		}
+		run, _, err := runIn(dir, installTimeout, in.argv...)
+		if err != nil {
+			rm()
+			return "", func() {}, nil, err
+		}
+		run.Commit = commit
+		if run.TimedOut || run.ExitCode == nil || *run.ExitCode != 0 {
+			rm()
+			return "", func() {}, &run, nil
+		}
+		break
+	}
+	modules = filepath.Join(dir, "node_modules")
+	if _, err := os.Stat(modules); err != nil {
+		modules = ""
+	}
+	return modules, rm, nil, nil
 }
 
 // runIn runs argv in dir under timeout, with its exit code, or none when it
