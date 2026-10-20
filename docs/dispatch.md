@@ -40,6 +40,13 @@ received a prompt — and an agent herdr calls started is not yet an agent readi
 its keys, so the first Enter is routinely dropped. A brief left sitting in a
 composer is a worker with nothing to do that a listing reports as `idle`.
 
+`worktender start <issue> --brief <text|->` types that text as the first prompt
+instead of the generic one (`-` reads stdin and waits for it to close). It
+replaces the generic brief whole: the worker is not told to treat the issue as
+untrusted data, nor pointed at the pinned issue, the lessons or `report`, so the
+text has to say what it needs. A brief starting with `!` or `/` is refused, and
+newlines are folded to spaces.
+
 **`start` never types on a trust screen.** A new worktree is a folder Claude Code
 has not seen, so it may open on its folder-trust dialog, a hooks-review screen,
 or the dialog asking you to approve managed settings, instead of its composer —

@@ -898,13 +898,14 @@ func TestStartUsageIsAnOrderThatParses(t *testing.T) {
 	fs.String("base", "", "")
 	fs.String("branch-prefix", "", "")
 	fs.String("repo", "", "")
+	fs.String("brief", "", "")
 	fs.Bool("focus", false, "")
 	fs.Bool("json", false, "")
 
 	// The usage line with its placeholders filled in and its brackets dropped.
 	replacer := strings.NewReplacer(
 		"<role>", "ux", "<model>", "sonnet", "<mode>", "bypassPermissions", "<ref>", "origin/main", "<type>", "feat",
-		"<path>", ".", "<issue>", "42", "[", "", "]", "")
+		"<path>", ".", "<text|->", "-", "<issue>", "42", "[", "", "]", "")
 	fields := strings.Fields(replacer.Replace(strings.TrimPrefix(startUsage, "usage: worktender start ")))
 
 	issues, err := parseAround(fs, fields)
@@ -1016,5 +1017,134 @@ func TestStartRefusesAModelFlagThatIsAFlag(t *testing.T) {
 	}
 	if called(t, server, "worktree.create") {
 		t.Error("a worktree was created for a refused --model")
+	}
+}
+
+// sentText is the text typed into the pane, which is the worker's first prompt.
+func sentText(server *herdrtest.Server) string {
+	for _, call := range server.Calls() {
+		if call.Method == "pane.send_text" {
+			text, _ := call.Params["text"].(string)
+			return text
+		}
+	}
+	return ""
+}
+
+func TestStartBriefFlagReplacesTheGenericPrompt(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+
+	if err := startCommand([]string{"42", "--brief", "do exactly this"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if got := sentText(server); got != "do exactly this" {
+		t.Errorf("typed %q, want the --brief text alone", got)
+	}
+}
+
+func TestStartWithoutBriefFlagTypesTheGenericPrompt(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if got := sentText(server); !strings.Contains(got, "#42") {
+		t.Errorf("typed %q, want the generic brief naming the issue", got)
+	}
+}
+
+func TestCustomBrief(t *testing.T) {
+	if got, err := customBrief("", false, strings.NewReader("ignored")); got != "" || err != nil {
+		t.Errorf("flag absent: got %q, %v; want no brief", got, err)
+	}
+	if got, err := customBrief("-", true, strings.NewReader("from stdin\nline two\n")); got != "from stdin\nline two" || err != nil {
+		t.Errorf("stdin: got %q, %v", got, err)
+	}
+	for _, empty := range []string{"", "  \n"} {
+		if _, err := customBrief(empty, true, strings.NewReader("")); err == nil {
+			t.Errorf("--brief %q must be refused", empty)
+		}
+	}
+}
+
+// herdr calls Claude Code idle whenever its prompt box is drawn and no spinner
+// is in view, so a worker mid-turn reads as idle. An empty prompt box is what
+// says the brief was taken.
+func TestStartAcceptsAnIdleAgentWhoseComposerIsEmpty(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+	showScreens(server, "w9", "w9:p1", func(n int) string {
+		if n <= 2 {
+			return composerScreen
+		}
+		return "❯ the brief, as echoed in the transcript\n● Reading the issue\n──────\n❯ \n──────\n"
+	})
+	briefConfirmWithin(t, 300*time.Millisecond)
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+}
+
+// A regression guard, not a proof of the fix: with the composer check reverted
+// this still fails, because the agent stays idle and the press loop times out.
+// It pins that the check does not wave through a box that holds the brief.
+func TestStartFailsWhenTheBriefIsStillInTheComposer(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+	showScreen(server, "w9", "w9:p1", "──────\n❯ [Pasted text #1 +3 lines]\n──────\n")
+	briefConfirmWithin(t, 300*time.Millisecond)
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err == nil {
+		t.Fatal("start must fail while the brief sits in the composer")
+	}
+}
+
+// Claude Code draws placeholder text in an empty prompt box. It is not the
+// brief, and reading it as one is the false input-box warning.
+func TestStartAcceptsAnIdleAgentWhoseEmptyComposerShowsPlaceholder(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+	showScreens(server, "w9", "w9:p1", func(n int) string {
+		if n <= 2 {
+			return composerScreen
+		}
+		return "● Reading the issue\n──────\n❯ Try \"fix lint errors\"\n──────\n"
+	})
+	briefConfirmWithin(t, 300*time.Millisecond)
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+}
+
+func TestCustomBriefRefusesWhatTheComposerWouldActOn(t *testing.T) {
+	for _, text := range []string{"!rm -rf .", "/clear", "  /compact"} {
+		if _, err := customBrief(text, true, strings.NewReader("")); err == nil {
+			t.Errorf("--brief %q must be refused", text)
+		}
+	}
+	if _, err := customBrief("read /etc/hosts !", true, strings.NewReader("")); err != nil {
+		t.Errorf("a ! or / inside the brief is fine: %v", err)
+	}
+}
+
+func TestDeliverBriefTypesOneLine(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+
+	if err := startCommand([]string{"42", "--brief", "first line\n\n  second line\r\nthird"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if got := sentText(server); got != "first line second line third" {
+		t.Errorf("typed %q, want the brief folded onto one line", got)
 	}
 }
