@@ -449,3 +449,57 @@ exit 1`)
 		t.Errorf("notes are %d bytes; a 5000-byte line was meant to be cut", len(got))
 	}
 }
+
+func TestTailLinesMasksURLCredentialsBasicAuthAndQuotedValues(t *testing.T) {
+	for in, leaked := range map[string]string{
+		"fetch https://deploy:s3cr3tpw@registry.example.com/pkg": "s3cr3tpw",
+		"fetch https://ghp_onlytokenvalue@registry.example.com/": "onlytokenvalue",
+		"Authorization: Basic dXNlcjpodW50ZXIy":                  "dXNlcjpodW50ZXIy",
+		`NPM_TOKEN="hunter two three" next`:                      "two three",
+		`_password='hunter two'`:                                 "hunter two",
+	} {
+		got := tailLines(in, 5)
+		if strings.Contains(got, leaked) || !strings.Contains(got, "***") {
+			t.Errorf("tailLines(%q) = %q; want %q masked", in, got, leaked)
+		}
+	}
+	if got := tailLines("fetch https://registry.example.com/pkg", 5); strings.Contains(got, "***") {
+		t.Errorf("a URL with no credentials was masked: %q", got)
+	}
+}
+
+func TestVerifyPutsTheFailedInstallInJSON(t *testing.T) {
+	fakePnpm(t, "echo 'ERR_PNPM_OUTDATED_LOCKFILE stale'\necho 'NPM_TOKEN=hunter2hunter2'\nexit 1")
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root, "--json"}, &out); exitCode(err) != exitNeedsHuman {
+		t.Fatalf("verify: %v (exit %d); want exit 3\n%s", err, exitCode(err), out.String())
+	}
+	var doc verifyJSON
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("verify --json is not a document: %v\n%s", err, out.String())
+	}
+	if len(doc.Install) == 0 || doc.Install[0].Lockfile != "pnpm-lock.yaml" || doc.Install[0].Outcome != "exit 1" ||
+		!strings.Contains(doc.Install[0].Output, "ERR_PNPM_OUTDATED_LOCKFILE") {
+		t.Fatalf("install = %+v; want the failed pnpm install with its output", doc.Install)
+	}
+	if strings.Contains(out.String(), "hunter2") {
+		t.Errorf("the JSON holds an unmasked credential:\n%s", out.String())
+	}
+}
+
+func TestVerifyNotesAFailedInstallWithNoOutputWithoutAColon(t *testing.T) {
+	fakePnpm(t, "printf '\\r\\n\\r\\n'\nexit 1")
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); exitCode(err) != exitNeedsHuman {
+		t.Fatalf("verify: %v (exit %d); want exit 3\n%s", err, exitCode(err), out.String())
+	}
+	if !strings.Contains(out.String(), "(pnpm-lock.yaml: exit 1)\n") || strings.Contains(out.String(), "pnpm-lock.yaml: exit 1):") {
+		t.Errorf("a failed install with no output left a dangling colon:\n%s", out.String())
+	}
+}
