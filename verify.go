@@ -376,7 +376,8 @@ const (
 
 var secretShapes = regexp.MustCompile(`(?i)(_authToken|_auth|_password|[A-Z0-9_]*(?:token|secret|password|api_?key)[A-Z0-9_]*)(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|["'].*|\S+)` +
 	`|\b(?:npm_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abp]-)[A-Za-z0-9_-]{10,}|\bBearer\s+\S+` +
-	`|\bAuthorization\s*[:=]\s*(?:Basic|Digest|Token)\s+.*|(://)[^\s]*@`)
+	`|(\bAuthorization\s*[:=]\s*(?:Basic|Digest|Token)\s+).*` +
+	`|(://)(?:[^\s/?#@:]+:[^\s?#]*|[^\s/?#@]+)@`)
 
 // tailLines is the last n lines of output, indented under their note. \r
 // ends a line too, since a progress bar made only of them is one huge line.
@@ -392,6 +393,8 @@ func tailLines(output string, n int) string {
 			if k := secretShapes.FindStringSubmatch(m); k[1] != "" {
 				return k[1] + k[2] + "***"
 			} else if k[3] != "" {
+				return k[3] + "***"
+			} else if k[4] != "" {
 				return "://***@"
 			}
 			return "***"

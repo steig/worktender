@@ -468,8 +468,30 @@ func TestTailLinesMasksURLCredentialsBasicAuthAndQuotedValues(t *testing.T) {
 			t.Errorf("tailLines(%q) = %q; want %q masked", in, got, leaked)
 		}
 	}
-	if got := tailLines("fetch https://registry.example.com/pkg", 5); strings.Contains(got, "***") {
-		t.Errorf("a URL with no credentials was masked: %q", got)
+	if got := tailLines("Authorization: Digest response=\"abc123\"", 5); got != "  Authorization: Digest ***" {
+		t.Errorf("tailLines kept %q; want the Authorization: Digest prefix kept", got)
+	}
+}
+
+func TestTailLinesLeavesOrdinaryTextAlone(t *testing.T) {
+	for _, in := range []string{
+		"fetch https://registry.example.com/pkg",
+		"GET https://registry.npmjs.org/@types/node 404",
+		"fetch https://github.com/foo/bar@v1.2.3",
+		"GET https://example.com/?email=a@b.com",
+		"mail a@b.com about it",
+		"at file:///src/a@b.js:3:4",
+		"at Object.<anonymous> (/src/a@b.js:3:4)",
+	} {
+		if got := tailLines(in, 5); got != "  "+in {
+			t.Errorf("tailLines(%q) = %q; want it unchanged", in, got)
+		}
+	}
+	if got := tailLines("token: it's broken because of X", 5); got != "  token: *** broken because of X" {
+		t.Errorf("an apostrophe inside a word gave %q; want only that word masked", got)
+	}
+	if got := tailLines("token: 'broken because X", 5); got != "  token: ***" {
+		t.Errorf("an unterminated quote gave %q; want the rest of the line masked", got)
 	}
 }
 
