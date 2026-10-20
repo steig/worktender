@@ -452,19 +452,46 @@ exit 1`)
 
 func TestTailLinesMasksURLCredentialsBasicAuthAndQuotedValues(t *testing.T) {
 	for in, leaked := range map[string]string{
-		"fetch https://deploy:s3cr3tpw@registry.example.com/pkg": "s3cr3tpw",
-		"fetch https://ghp_onlytokenvalue@registry.example.com/": "onlytokenvalue",
-		"Authorization: Basic dXNlcjpodW50ZXIy":                  "dXNlcjpodW50ZXIy",
-		`NPM_TOKEN="hunter two three" next`:                      "two three",
-		`_password='hunter two'`:                                 "hunter two",
+		"fetch https://deploy:s3cr3tpw@registry.example.com/pkg":    "s3cr3tpw",
+		"fetch https://ghp_onlytokenvalue@registry.example.com/":    "onlytokenvalue",
+		"Authorization: Basic dXNlcjpodW50ZXIy":                     "dXNlcjpodW50ZXIy",
+		"fetch https://u:p@ss@registry.example.com/pkg":             "ss@registry",
+		"fetch https://u:pa/ss@registry.example.com/pkg":            "pa/ss",
+		`TOKEN="unterminated two words`:                             "two words",
+		"Authorization: Digest username=\"u\", response=\"abc123\"": "abc123",
+		"Authorization: Token abcdef123456":                         "abcdef123456",
+		`NPM_TOKEN="hunter two three" next`:                         "two three",
+		`_password='hunter two'`:                                    "hunter two",
 	} {
 		got := tailLines(in, 5)
 		if strings.Contains(got, leaked) || !strings.Contains(got, "***") {
 			t.Errorf("tailLines(%q) = %q; want %q masked", in, got, leaked)
 		}
 	}
-	if got := tailLines("fetch https://registry.example.com/pkg", 5); strings.Contains(got, "***") {
-		t.Errorf("a URL with no credentials was masked: %q", got)
+	if got := tailLines("Authorization: Digest response=\"abc123\"", 5); got != "  Authorization: Digest ***" {
+		t.Errorf("tailLines kept %q; want the Authorization: Digest prefix kept", got)
+	}
+}
+
+func TestTailLinesLeavesOrdinaryTextAlone(t *testing.T) {
+	for _, in := range []string{
+		"fetch https://registry.example.com/pkg",
+		"GET https://registry.npmjs.org/@types/node 404",
+		"fetch https://github.com/foo/bar@v1.2.3",
+		"GET https://example.com/?email=a@b.com",
+		"mail a@b.com about it",
+		"at file:///src/a@b.js:3:4",
+		"at Object.<anonymous> (/src/a@b.js:3:4)",
+	} {
+		if got := tailLines(in, 5); got != "  "+in {
+			t.Errorf("tailLines(%q) = %q; want it unchanged", in, got)
+		}
+	}
+	if got := tailLines("token: it's broken because of X", 5); got != "  token: *** broken because of X" {
+		t.Errorf("an apostrophe inside a word gave %q; want only that word masked", got)
+	}
+	if got := tailLines("token: 'broken because X", 5); got != "  token: ***" {
+		t.Errorf("an unterminated quote gave %q; want the rest of the line masked", got)
 	}
 }
 
