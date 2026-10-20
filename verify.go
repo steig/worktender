@@ -240,6 +240,11 @@ func runOneCheck(root, commit string, c acceptanceCheck, timeout time.Duration) 
 	}
 	defer cleanup()
 
+	// An export holds only tracked files, so node_modules is not in it, and
+	// a check that passes in the worktree fails here for want of it.
+	if err := installDependencies(export, timeout); err != nil {
+		return verifyRun{}, fmt.Errorf("install dependencies on %s: %w", shortOid(commit), err)
+	}
 	run, output, err := runIn(export, timeout, "sh", "-c", c.Command)
 	if err != nil {
 		return verifyRun{}, err
@@ -249,6 +254,37 @@ func runOneCheck(root, commit string, c acceptanceCheck, timeout time.Duration) 
 		run.Passed, _ = outcomeMet(c.Expect, *run.ExitCode, output)
 	}
 	return run, nil
+}
+
+// installers maps a lockfile to the command that installs exactly what it pins.
+var installers = []struct {
+	lockfile string
+	argv     []string
+}{
+	{"pnpm-lock.yaml", []string{"pnpm", "install", "--frozen-lockfile"}},
+	{"package-lock.json", []string{"npm", "ci"}},
+	{"yarn.lock", []string{"yarn", "install", "--frozen-lockfile"}},
+}
+
+// installDependencies installs dir's dependencies when it holds a lockfile.
+// A repository with none needs nothing installed.
+func installDependencies(dir string, timeout time.Duration) error {
+	for _, in := range installers {
+		if _, err := os.Stat(filepath.Join(dir, in.lockfile)); err != nil {
+			continue
+		}
+		run, output, err := runIn(dir, timeout, in.argv...)
+		switch {
+		case err != nil:
+			return err
+		case run.TimedOut:
+			return withCode(exitEnvironment, fmt.Errorf("`%s` timed out", strings.Join(in.argv, " ")))
+		case run.ExitCode == nil || *run.ExitCode != 0:
+			return withCode(exitEnvironment, fmt.Errorf("`%s` failed:\n%s", strings.Join(in.argv, " "), strings.TrimSpace(output)))
+		}
+		return nil
+	}
+	return nil
 }
 
 // runIn runs argv in dir under timeout, with its exit code, or none when it

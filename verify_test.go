@@ -245,3 +245,29 @@ func TestVerifySkipsTheRevertWithNoGoSourceChange(t *testing.T) {
 		t.Errorf("output does not say the revert was skipped:\n%s", out.String())
 	}
 }
+
+// An export holds no node_modules, so a check that needs installed packages
+// fails there until the lockfile's dependencies are installed into it.
+func TestVerifyInstallsDependenciesWhenALockfileIsTracked(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(bin, "pnpm.log")
+	fake := "#!/bin/sh\necho \"$@\" >> " + log + "\nmkdir node_modules\n"
+	if err := os.WriteFile(filepath.Join(bin, "pnpm"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	repo := verifyRepo(t, "`test -d node_modules` exits 0")
+	repo.Write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
+	repo.Git("add", "pnpm-lock.yaml")
+	repo.Git("commit", "-m", "lock")
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {
+		t.Fatalf("verify: %v\n%s", err, out.String())
+	}
+	got, _ := os.ReadFile(log)
+	if !strings.Contains(string(got), "install --frozen-lockfile") {
+		t.Errorf("pnpm was run with %q; want install --frozen-lockfile", got)
+	}
+}
