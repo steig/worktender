@@ -350,7 +350,7 @@ func TestVerifyNotesTheTailOfAFailedInstall(t *testing.T) {
 func TestVerifyNotesAnInstallThatTimedOut(t *testing.T) {
 	fakePnpm(t, "echo resolving\nexec sleep 30")
 	old := installTimeout
-	installTimeout = 300 * time.Millisecond
+	installTimeout = 2 * time.Second
 	t.Cleanup(func() { installTimeout = old })
 	repo := verifyRepo(t, "`test -f added.txt` exits 0")
 	commitLockfile(repo)
@@ -373,7 +373,7 @@ func TestVerifyStopsWhenTheInstallerIsMissing(t *testing.T) {
 	repo := verifyRepo(t, "`test -f added.txt` exits 0")
 	commitLockfile(repo)
 	bin := t.TempDir()
-	for _, tool := range []string{"git", "gh"} {
+	for _, tool := range []string{"git", "gh", "cat", "sh"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Fatal(err)
@@ -382,8 +382,7 @@ func TestVerifyStopsWhenTheInstallerIsMissing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// /bin and /usr/bin hold the coreutils the fake gh uses, not a pnpm.
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/bin")
+	t.Setenv("PATH", bin)
 
 	var out strings.Builder
 	err := verifyCommand([]string{"42", "--repo", repo.Root}, &out)
@@ -415,5 +414,38 @@ func TestVerifyNotesAnUnsupportedLockfile(t *testing.T) {
 				t.Errorf("an installer ran for %s", lock)
 			}
 		})
+	}
+}
+
+func TestVerifyEscapesAndBoundsTheInstallOutputItNotes(t *testing.T) {
+	// \r alone separates the progress lines; a line longer than any cap; a
+	// credential an .npmrc dump would print.
+	fakePnpm(t, `printf '\033[31mred\342\200\256gnp\n'
+echo '//registry.npmjs.org/:_authToken=npm_abcdefghijklmnop1234'
+echo 'NPM_TOKEN=hunter2hunter2'
+printf 'progress 1\rprogress 2\r'
+head -c 5000 /dev/zero | tr '\0' 'x'
+echo
+exit 1`)
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+
+	var out strings.Builder
+	if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); exitCode(err) != exitNeedsHuman {
+		t.Fatalf("verify: %v (exit %d); want exit 3\n%s", err, exitCode(err), out.String())
+	}
+	got := out.String()
+	for _, want := range []string{`\u{001B}[31mred\u{202E}gnp`, "progress 2", "_authToken=***", "NPM_TOKEN=***"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"\x1b", "\u202e", "\r", "npm_abcdefghijklmnop1234", "hunter2", strings.Repeat("x", 300)} {
+		if strings.Contains(got, bad) {
+			t.Errorf("output holds %q:\n%s", bad, got)
+		}
+	}
+	if len(got) > 6000 {
+		t.Errorf("notes are %d bytes; a 5000-byte line was meant to be cut", len(got))
 	}
 }

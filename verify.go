@@ -17,9 +17,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/steig/worktender/internal/gitx"
 	"github.com/steig/worktender/internal/jsonout"
+	"github.com/steig/worktender/internal/safetext"
 )
 
 // verify asks whether an issue's approved checks prove anything about a change.
@@ -347,13 +349,48 @@ func describeInstall(run verifyRun) string {
 	return fmt.Sprintf("exit %d", *run.ExitCode)
 }
 
-// tailLines is the last n lines of output, each indented under its note.
+// Install output is text the head's author controls, and it lands in a report
+// someone reads on a terminal and may paste on. So each line is bounded,
+// masked for credentials an .npmrc or env dump can print, and escaped.
+const (
+	installLineBytes = 200
+	installTailBytes = 2000
+)
+
+var secretShapes = regexp.MustCompile(`(?i)(_authToken|_auth|_password|[A-Z0-9_]*(?:token|secret|password|api_?key)[A-Z0-9_]*)(\s*[=:]\s*)\S+` +
+	`|\b(?:npm_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abp]-)[A-Za-z0-9_-]{10,}|\bBearer\s+\S+`)
+
+// tailLines is the last n lines of output, indented under their note. \r
+// ends a line too, since a progress bar made only of them is one huge line.
 func tailLines(output string, n int) string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
+	lines := strings.FieldsFunc(output, func(r rune) bool { return r == '\n' || r == '\r' })
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
-	return "  " + strings.Join(lines, "\n  ")
+	var kept []string
+	total := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := secretShapes.ReplaceAllStringFunc(lines[i], func(m string) string {
+			if k := secretShapes.FindStringSubmatch(m); k[1] != "" {
+				return k[1] + k[2] + "***"
+			}
+			return "***"
+		})
+		if len(line) > installLineBytes {
+			cut := installLineBytes
+			for cut > 0 && !utf8.RuneStart(line[cut]) {
+				cut--
+			}
+			line = line[:cut] + "..."
+		}
+		line = "  " + safetext.Escape(line)
+		if total += len(line) + 1; total > installTailBytes {
+			break
+		}
+		kept = append(kept, line)
+	}
+	slices.Reverse(kept)
+	return strings.Join(kept, "\n")
 }
 
 // runIn runs argv in dir under timeout, with its exit code, or none when it
