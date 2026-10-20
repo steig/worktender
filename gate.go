@@ -24,7 +24,7 @@ const gateDefaultTimeout = 15 * time.Minute
 // Unwrapped, because a wrapped envelope line is two lines to a parser.
 const gateReadSource = herdrapi.ReadSourceRecentUnwrapped
 
-const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr] [--repo <path>] [--timeout 15m] [--dagr] [--json]"
+const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr | --scout] [--repo <path>] [--timeout 15m] [--dagr] [--json]"
 
 // gateOptions is one gate invocation.
 type gateOptions struct {
@@ -34,9 +34,13 @@ type gateOptions struct {
 	targets   []string
 	until     []string
 	requirePR bool
+	// scout is a wait on a worker that was told to change nothing: its done
+	// carries no PR, and the checkout --repo names is checked after the release.
+	scout bool
 	// repo is where --require-pr asks gh about the PR, and root is it resolved
 	// to its repository, by runGate before the wait so a gate run outside one
-	// fails at once rather than at the release.
+	// fails at once rather than at the release. Under --scout it is the
+	// worker's checkout.
 	repo    string
 	root    string
 	timeout time.Duration
@@ -132,7 +136,8 @@ func parseGate(args []string) (gateOptions, error) {
 	flags.Var(targetFlag{targets: &targets}, "target", "an agent or pane to wait on; repeat for more than one")
 	flags.Var(targetFlag{targets: &targets, split: true}, "any", "agents or panes to wait on, comma-separated; the first to satisfy the predicate releases")
 	requirePR := flags.Bool("require-pr", false, "the report must carry a pull request number")
-	repo := flags.String("repo", ".", "repository whose PR a --require-pr done is checked against")
+	scout := flags.Bool("scout", false, "the worker is a scout: no PR is expected, and --repo, its checkout, must be unchanged after done")
+	repo := flags.String("repo", ".", "repository whose PR a --require-pr done is checked against; with --scout, the worker's checkout")
 	// A duration rather than herdr's bare milliseconds: this is worktender's own
 	// surface, and "15m" cannot be pasted wrong by a factor of a thousand.
 	timeout := flags.Duration("timeout", gateDefaultTimeout, "how long to wait before giving up")
@@ -155,6 +160,9 @@ func parseGate(args []string) (gateOptions, error) {
 	if len(targets) == 0 {
 		return gateOptions{}, usagef("--target or --any is required; %s", gateUsage)
 	}
+	if *scout && *requirePR {
+		return gateOptions{}, usagef("--scout and --require-pr are opposites: a scout opens no pull request; %s", gateUsage)
+	}
 	if *timeout <= 0 {
 		return gateOptions{}, usagef("--timeout must be positive; a gate that cannot expire is the wedge this command exists to avoid")
 	}
@@ -162,7 +170,7 @@ func parseGate(args []string) (gateOptions, error) {
 		// The gate's reason for existing is completion, so that is the default.
 		until = statusFlag{"done"}
 	}
-	return gateOptions{targets: targets, until: until, requirePR: *requirePR, repo: *repo, timeout: *timeout, asJSON: *asJSON, dagr: *dagr}, nil
+	return gateOptions{targets: targets, until: until, requirePR: *requirePR, scout: *scout, repo: *repo, timeout: *timeout, asJSON: *asJSON, dagr: *dagr}, nil
 }
 
 // satisfies is the whole predicate surface: a status from the closed set, and
@@ -249,6 +257,11 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 			err = usagef("--repo: %v; --require-pr checks the PR's head in a repository", err)
 		}
 	}
+	if err == nil && opts.scout {
+		if opts.root, err = gitx.Toplevel(opts.repo); err != nil {
+			err = usagef("--repo: %v; --scout checks the worker's checkout", err)
+		}
+	}
 	if err != nil {
 		if opts.asJSON {
 			// No targets resolved, so there is nothing to list as waiting — but
@@ -279,6 +292,11 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 			}
 		}
 	}
+	if err == nil && opts.scout && released.status == "done" {
+		if err = gateScout(opts.root, targets[about].name); err != nil {
+			outcome, evidence = gateOutcomeScoutViolation, gateEvidenceVerified
+		}
+	}
 	waited := time.Since(started)
 
 	if opts.asJSON {
@@ -293,7 +311,7 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 		fmt.Fprintf(out, "gate: %s released after %s (evidence: %s)\n", targets[about].name, waited.Round(time.Second), evidence)
 		fmt.Fprint(out, renderReport(*released))
 	}
-	if err != nil && (outcome == gateOutcomeBlocked || outcome == gateOutcomeHeadMoved) && released != nil {
+	if err != nil && (outcome == gateOutcomeBlocked || outcome == gateOutcomeHeadMoved || outcome == gateOutcomeScoutViolation) && released != nil {
 		fmt.Fprint(out, renderReport(*released))
 	}
 	return err
@@ -315,6 +333,21 @@ func gateHead(root, name string, r report) error {
 	if pr.HeadRefOid != r.sha {
 		return codef(exitNeedsHuman, "gate %s: PR #%d's head is %s, but the done was reported at %s; what would merge is not what was reported done (evidence: %s)",
 			name, r.pr, shortOid(pr.HeadRefOid), shortOid(r.sha), gateEvidenceVerified)
+	}
+	return nil
+}
+
+// gateScout holds a scout's done to the brief it was given. Nothing stops a
+// worker editing, so this is the only enforcement: a commit past the base or
+// any uncommitted file means the read-only task was not read-only. Read from git
+// after the release, so it reports what the checkout is rather than what the
+// worker said.
+func gateScout(checkout, name string) error {
+	if n := gitx.OwnCommits(checkout, gitx.BaseRef(checkout)); n > 0 {
+		return codef(exitNeedsHuman, "gate %s: scout violation: %d commit(s) on the checkout; a scout makes none (evidence: %s)", name, n, gateEvidenceVerified)
+	}
+	if gitx.IsDirty(checkout) {
+		return codef(exitNeedsHuman, "gate %s: scout violation: the checkout has uncommitted changes; a scout edits nothing (evidence: %s)", name, gateEvidenceVerified)
 	}
 	return nil
 }

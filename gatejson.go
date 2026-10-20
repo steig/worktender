@@ -21,6 +21,9 @@ const (
 	// gateOutcomeHeadMoved is a done whose PR's head is not the commit it was
 	// reported at, under --require-pr.
 	gateOutcomeHeadMoved = "head_moved"
+	// gateOutcomeScoutViolation is a scout's done with commits or uncommitted
+	// changes in its checkout, under --scout.
+	gateOutcomeScoutViolation = "scout_violation"
 	// gateOutcomeError is the wait ending for a reason that is not about any
 	// worker: herdr's socket dropping, a target that would not resolve. Its
 	// exit code carries the distinction; `outcome` only says the gate never

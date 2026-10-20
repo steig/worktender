@@ -899,6 +899,7 @@ func TestStartUsageIsAnOrderThatParses(t *testing.T) {
 	fs.String("branch-prefix", "", "")
 	fs.String("repo", "", "")
 	fs.String("brief", "", "")
+	fs.Bool("scout", false, "")
 	fs.Bool("focus", false, "")
 	fs.Bool("json", false, "")
 
@@ -1146,5 +1147,55 @@ func TestDeliverBriefTypesOneLine(t *testing.T) {
 	}
 	if got := sentText(server); got != "first line second line third" {
 		t.Errorf("typed %q, want the brief folded onto one line", got)
+	}
+}
+
+func TestScoutBriefSendsTheFindingsToAFileAndNotAPullRequest(t *testing.T) {
+	line := scoutBrief(999999, issueBranch(issue{Number: 999999, Title: strings.Repeat("word ", 40)}),
+		"/Users/someone/.local/state/planner/scouts/some-repository/999999.md", false)
+	line = strings.ReplaceAll(line, selfPath(), installedSelfPath)
+
+	for _, want := range []string{"SCOUT", "UNTRUSTED DATA", "no edits to the repository, no commits, no pull request",
+		"scouts/some-repository/999999.md", "done with --note /Users/someone/.local/state/planner/scouts/some-repository/999999.md"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the scout brief should say %q:\n%s", want, line)
+		}
+	}
+	if strings.Contains(line, "--pr") {
+		t.Errorf("a scout opens no pull request, so its brief must not ask for one:\n%s", line)
+	}
+	if len(line) > paneReadChunk {
+		t.Errorf("the scout brief is %d bytes and a pane read carries %d", len(line), paneReadChunk)
+	}
+}
+
+func TestStartScoutBriefsAReportFileAndGatesWithoutAPullRequest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := herdrtest.NewRepo(t)
+	repo.AddWorktree("42", "42-fix-the-thing")
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, `cat <<'JSON'
+{"number":42,"title":"Fix the thing","body":"find out why"}
+JSON`)
+
+	var out strings.Builder
+	if err := startCommand([]string{"42", "--scout"}, &out); err != nil {
+		t.Fatalf("start --scout: %v", err)
+	}
+
+	wantPath := filepath.Join(home, ".local", "state", "planner", "scouts", filepath.Base(repo.Root), "42.md")
+	var text string
+	for _, call := range server.Calls() {
+		if call.Method == "pane.send_text" {
+			text, _ = call.Params["text"].(string)
+		}
+	}
+	if !strings.Contains(text, wantPath) || !strings.Contains(text, "SCOUT") {
+		t.Errorf("the brief should send a scout to %s:\n%s", wantPath, text)
+	}
+	if !strings.Contains(out.String(), "gate --target w9:p1 --until done --scout --repo ") ||
+		strings.Contains(out.String(), "--require-pr") {
+		t.Errorf("a scout's gate expects no pull request and checks its checkout:\n%s", out.String())
 	}
 }

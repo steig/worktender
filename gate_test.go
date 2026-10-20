@@ -1636,3 +1636,61 @@ func TestGateJSONCarriesNoEvidenceWithoutAVerdict(t *testing.T) {
 		t.Errorf("evidence should be written as null, not omitted:\n%s", out)
 	}
 }
+
+// A scout's done carries no PR, so --scout stands in for --require-pr; what it
+// checks instead is the checkout the brief said to leave alone.
+func TestGateScoutReleasesACleanDoneWithNoPullRequest(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	checkout := repo.AddWorktree("7", "7-look")
+	w := newGateWorker(t, "working", "")
+	go w.attaches(report{status: "done", sha: gateHeadA, note: "/home/x/.local/state/planner/scouts/r/7.md"})
+
+	out, err, _ := w.gate(t, "--target", "worker", "--scout", "--repo", checkout, "--timeout", "10s")
+	if err != nil {
+		t.Fatalf("gate refused a clean scout: %v\n%s", err, out)
+	}
+}
+
+func TestGateScoutReportsAViolation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(repo *herdrtest.Repo, checkout string)
+		want string
+	}{
+		{"uncommitted file", func(repo *herdrtest.Repo, checkout string) {
+			if err := os.WriteFile(filepath.Join(checkout, "notes.txt"), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, "uncommitted changes"},
+		{"commit", func(repo *herdrtest.Repo, checkout string) {
+			repo.CommitIn(checkout, "notes.txt", "x")
+		}, "1 commit(s)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := herdrtest.NewRepo(t)
+			checkout := repo.AddWorktree("7", "7-look")
+			tc.edit(repo, checkout)
+			w := newGateWorker(t, "working", "")
+			go w.attaches(report{status: "done", sha: gateHeadA, note: "path"})
+
+			out, err, _ := w.gate(t, "--target", "worker", "--scout", "--repo", checkout, "--json", "--timeout", "10s")
+			if exitCode(err) != exitNeedsHuman || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("gate exited %d (%v), want %d naming %q\n%s", exitCode(err), err, exitNeedsHuman, tc.want, out)
+			}
+			var doc gateJSON
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatalf("gate --json: %v\n%s", err, out)
+			}
+			if doc.Outcome != gateOutcomeScoutViolation {
+				t.Errorf("outcome %q, want %q", doc.Outcome, gateOutcomeScoutViolation)
+			}
+		})
+	}
+}
+
+func TestGateRefusesScoutWithRequirePR(t *testing.T) {
+	_, err := parseGate([]string{"--target", "w1:p1", "--scout", "--require-pr"})
+	if exitCode(err) != exitUsage {
+		t.Fatalf("parse exited %d (%v), want %d", exitCode(err), err, exitUsage)
+	}
+}

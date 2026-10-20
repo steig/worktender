@@ -644,8 +644,10 @@ $ worktender gate --any wt-42-a,wt-43-b --until done --json
 ```
 
 - **`outcome`** is `released`, `blocked`, `timeout`, `worker_gone`,
-  `head_moved` or `error`. `head_moved` is a `--require-pr` done whose PR's
-  head is not the `sha` it was reported at, exit 3 and `verified`.
+  `head_moved`, `scout_violation` or `error`. `head_moved` is a `--require-pr`
+  done whose PR's head is not the `sha` it was reported at, exit 3 and
+  `verified`. `scout_violation` is a `--scout` done whose checkout has commits
+  or uncommitted changes, exit 3 and `verified`.
   Finer than the exit code on purpose: `timeout` and `worker_gone` are both
   exit 4, and a coordinator deciding whether to redispatch may reasonably want
   to know a pane *died* rather than that nobody answered in time.
