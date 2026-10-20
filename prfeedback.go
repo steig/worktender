@@ -363,7 +363,7 @@ func runPRFeedback(client *herdrapi.Client, root string, rows []wt.Row,
 		seen.Rounds++
 		state.Branches[key] = seen
 		recordLedger(ledgerEvent{Event: ledgerFeedback, Repository: root, Branch: row.Branch, PaneID: row.PaneID, PR: pr.Number})
-		if err := submitBrief(client, row.PaneID); err != nil {
+		if err := submitBrief(client, row.PaneID, notice); err != nil {
 			fmt.Fprintf(out, "%s: PR #%d: %v\n", row.Branch, pr.Number, err)
 			continue
 		}

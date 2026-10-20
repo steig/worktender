@@ -1091,6 +1091,9 @@ func TestStartAcceptsAnIdleAgentWhoseComposerIsEmpty(t *testing.T) {
 	}
 }
 
+// A regression guard, not a proof of the fix: with the composer check reverted
+// this still fails, because the agent stays idle and the press loop times out.
+// It pins that the check does not wave through a box that holds the brief.
 func TestStartFailsWhenTheBriefIsStillInTheComposer(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
@@ -1100,5 +1103,48 @@ func TestStartFailsWhenTheBriefIsStillInTheComposer(t *testing.T) {
 
 	if err := startCommand([]string{"42"}, &strings.Builder{}); err == nil {
 		t.Fatal("start must fail while the brief sits in the composer")
+	}
+}
+
+// Claude Code draws placeholder text in an empty prompt box. It is not the
+// brief, and reading it as one is the false input-box warning.
+func TestStartAcceptsAnIdleAgentWhoseEmptyComposerShowsPlaceholder(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+	showScreens(server, "w9", "w9:p1", func(n int) string {
+		if n <= 2 {
+			return composerScreen
+		}
+		return "● Reading the issue\n──────\n❯ Try \"fix lint errors\"\n──────\n"
+	})
+	briefConfirmWithin(t, 300*time.Millisecond)
+
+	if err := startCommand([]string{"42"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+}
+
+func TestCustomBriefRefusesWhatTheComposerWouldActOn(t *testing.T) {
+	for _, text := range []string{"!rm -rf .", "/clear", "  /compact"} {
+		if _, err := customBrief(text, true, strings.NewReader("")); err == nil {
+			t.Errorf("--brief %q must be refused", text)
+		}
+	}
+	if _, err := customBrief("read /etc/hosts !", true, strings.NewReader("")); err != nil {
+		t.Errorf("a ! or / inside the brief is fine: %v", err)
+	}
+}
+
+func TestDeliverBriefTypesOneLine(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing"}`))
+
+	if err := startCommand([]string{"42", "--brief", "first line\n\n  second line\r\nthird"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if got := sentText(server); got != "first line second line third" {
+		t.Errorf("typed %q, want the brief folded onto one line", got)
 	}
 }

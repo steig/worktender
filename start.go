@@ -41,7 +41,7 @@ func startCommand(args []string, out io.Writer) error {
 	base := fs.String("base", "", "ref to fork from; defaults to the repository's origin/HEAD")
 	repo := fs.String("repo", "", "repository to act on, instead of the one herdr is currently in")
 	focus := fs.Bool("focus", false, "switch to the new workspace")
-	briefFlag := fs.String("brief", "", "text to send as the worker's first prompt, instead of the generic one; - reads stdin")
+	briefFlag := fs.String("brief", "", "text to send as the worker's first prompt, instead of the generic one; - reads stdin and waits until it closes")
 	branchPrefix := fs.String("branch-prefix", "", "type/ prefix for the branch, instead of the one the repository's hooks require; empty for none")
 	asJSON := jsonFlag(fs)
 
@@ -67,6 +67,9 @@ func startCommand(args []string, out io.Writer) error {
 	custom, err := customBrief(*briefFlag, briefGiven(fs), os.Stdin)
 	if err != nil {
 		return err
+	}
+	if custom != "" {
+		fmt.Fprintln(os.Stderr, "worktender: --brief replaces the generic brief whole; the worker is not told to treat the issue as untrusted data, nor pointed at the pinned issue, lessons or `report`")
 	}
 
 	// Read before anything else happens, so a configuration that does not parse
@@ -353,6 +356,11 @@ func customBrief(value string, given bool, stdin io.Reader) (string, error) {
 	if value == "" {
 		return "", usagef("--brief is empty; %s", startUsage)
 	}
+	// Typed into Claude Code's composer, a leading ! switches it to bash mode and
+	// a leading / runs a slash command: the brief would execute instead of being read.
+	if value[0] == '!' || value[0] == '/' {
+		return "", usagef("--brief starts with %q, which Claude Code's composer acts on instead of reading; start it with words", value[:1])
+	}
 	return value, nil
 }
 
@@ -438,10 +446,13 @@ func deliverBrief(client *herdrapi.Client, pane, text string) error {
 	if err := refuseGatekeeper(client, pane); err != nil {
 		return err
 	}
+	// One line, as PaneSendText requires: a newline inside the paste is a line
+	// break in the composer, not a submit.
+	text = strings.Join(strings.Fields(text), " ")
 	if err := client.PaneSendText(pane, text); err != nil {
 		return fmt.Errorf("type the brief into %s: %w", pane, err)
 	}
-	return submitBrief(client, pane)
+	return submitBrief(client, pane, text)
 }
 
 // agentReadyWait bounds the wait for the launched agent to take input. It is
@@ -520,7 +531,7 @@ func awaitInteractive(client *herdrapi.Client, pane string) error {
 //
 // Anything that is not idle counts, `blocked` included: an agent that came back
 // asking permission for its first tool call has plainly read its brief.
-func submitBrief(client *herdrapi.Client, pane string) error {
+func submitBrief(client *herdrapi.Client, pane, text string) error {
 	deadline := time.Now().Add(briefConfirmWait)
 	presses := 0
 	nextPress := time.Now()
@@ -564,7 +575,7 @@ func submitBrief(client *herdrapi.Client, pane string) error {
 		// tool output on screen is therefore reported idle while it works. So idle
 		// alone does not say the brief is unread; the composer does.
 		if status == herdrapi.AgentStatusIdle {
-			held, err := composerHoldsText(client, pane)
+			held, err := composerHoldsText(client, pane, text)
 			if err != nil {
 				return err
 			}
@@ -585,15 +596,16 @@ func submitBrief(client *herdrapi.Client, pane string) error {
 	}
 }
 
-// composerHoldsText reports whether Claude Code's input box in pane has anything
-// typed in it. A submitted brief leaves the box empty; an unsubmitted one sits
-// there, as the text or collapsed to `[Pasted text #1 +N lines]`.
+// composerHoldsText reports whether Claude Code's input box in pane still holds
+// the brief: its start, or the `[Pasted text #1 +N lines]` a long paste collapses
+// to. An empty box is not enough to look for text in, because Claude Code draws
+// placeholder text in it, so the box is compared with what was typed.
 //
 // The box is the last `❯` line on screen: earlier ones are the transcript echoing
 // prompts already sent. A screen with no such line says nothing, and is read as
 // the box holding the brief — the answer that keeps pressing and, failing that,
 // warns.
-func composerHoldsText(client *herdrapi.Client, pane string) (bool, error) {
+func composerHoldsText(client *herdrapi.Client, pane, typed string) (bool, error) {
 	read, err := client.PaneRead(pane, herdrapi.ReadSourceVisible)
 	if err != nil {
 		return false, fmt.Errorf("read %s to see whether the brief was taken: %w", pane, err)
@@ -601,7 +613,12 @@ func composerHoldsText(client *herdrapi.Client, pane string) (bool, error) {
 	lines := strings.Split(read.Read.Text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); strings.HasPrefix(line, "❯") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "❯")) != "", nil
+			box := strings.TrimSpace(strings.TrimPrefix(line, "❯"))
+			start := []rune(typed)
+			if len(start) > 20 {
+				start = start[:20]
+			}
+			return strings.Contains(box, "[Pasted text") || strings.HasPrefix(box, string(start)), nil
 		}
 	}
 	return true, nil
