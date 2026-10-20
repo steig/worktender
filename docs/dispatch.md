@@ -249,6 +249,15 @@ the payload hashes to `<hex>` it approves without asking. If the issue changed
 since, it approves nothing and exits 3. `--sha256` takes 64 lowercase hex
 characters and cannot be combined with `--yes`.
 
+From a tab with no TTY, such as a coordinator's, `worktender approve 42 --pane`
+opens a pane in the issue's herdr workspace and runs the plain
+`worktender approve 42` there, so you type `yes` at the prompt. It cannot be
+combined with `--yes` or `--sha256`, and the command it types never carries
+them. This is a convenience, not an access control: anything that can call
+herdr can send keys to that pane, or run `approve --yes` itself. To keep a
+coordinator from approving, give it a `gh` token that cannot comment on issues
+or apply labels.
+
 **Read the output.** The approver approves whatever they were shown. That is
 the residual risk, and nothing downstream can catch what they missed.
 

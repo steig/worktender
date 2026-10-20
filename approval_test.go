@@ -600,3 +600,77 @@ func TestBriefWithChecksFitsInOnePaneRead(t *testing.T) {
 		}
 	}
 }
+
+func approvePaneServer(t *testing.T, branch, workspace string) (*herdrtest.Repo, *herdrtest.Server) {
+	t.Helper()
+	repo := herdrtest.NewRepo(t)
+	checkout := repo.AddWorktree(strings.ReplaceAll(branch, "/", "-"), branch)
+	server := fakeSession(t, repo)
+	server.HandleResult("worktree.list", worktreeListReply(repo, checkout, branch, workspace))
+	server.HandleResult("pane.split", map[string]any{"type": "pane_info", "pane": map[string]any{
+		"pane_id": workspace + ":p2", "workspace_id": workspace, "tab_id": workspace + ":t1",
+		"terminal_id": "term_2", "agent_status": "unknown", "focused": false, "revision": 0,
+	}})
+	server.HandleResult("pane.send_text", map[string]any{"type": "ok"})
+	server.HandleResult("pane.send_keys", map[string]any{"type": "ok"})
+	return repo, server
+}
+
+// --pane types the plain approve command into a new pane in the issue's
+// workspace, and approves nothing itself.
+func TestApprovePaneTypesThePlainCommandInTheIssuesWorkspace(t *testing.T) {
+	repo, server := approvePaneServer(t, "feat/42-fix-the-thing", "w9")
+	gh := newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody), nil)
+
+	if err := approveCommand([]string{"42", "--pane", "--repo", repo.Root}, &strings.Builder{}); err != nil {
+		t.Fatalf("approve --pane: %v", err)
+	}
+
+	splits := calledWith(server, "pane.split")
+	if len(splits) != 1 || splits[0].Params["workspace_id"] != "w9" {
+		t.Fatalf("want one split in workspace w9; got %+v", splits)
+	}
+	typed := calledWith(server, "pane.send_text")
+	if len(typed) != 1 || typed[0].Params["pane_id"] != "w9:p2" {
+		t.Fatalf("want the command typed into the new pane; got %+v", typed)
+	}
+	text := typed[0].Params["text"].(string)
+	if !strings.Contains(text, " approve 42 --repo ") || strings.Contains(text, "--yes") || strings.Contains(text, "--sha256") {
+		t.Errorf("typed %q; want a plain approve of #42 that cannot skip the prompt", text)
+	}
+	if keys := calledWith(server, "pane.send_keys"); len(keys) != 1 {
+		t.Errorf("want the command submitted once; got %+v", keys)
+	}
+	if gh.read("posted") != "" || strings.Contains(gh.read("calls"), "issue edit") {
+		t.Error("--pane approved on the caller's behalf")
+	}
+}
+
+// The pane is the only path: nothing that skips the prompt may ride along.
+func TestApprovePaneRefusesFlagsThatSkipThePrompt(t *testing.T) {
+	repo, server := approvePaneServer(t, "feat/42-fix-the-thing", "w9")
+	gh := newFakeGitHub(t, readyMeta, snapshotJSON(t, readyTitle, readyBody), nil)
+	for _, extra := range [][]string{{"--yes"}, {"--sha256", strings.Repeat("a", 64)}} {
+		args := append([]string{"42", "--pane", "--repo", repo.Root}, extra...)
+		err := approveCommand(args, &strings.Builder{})
+		if exitCode(err) != exitUsage || err == nil || !strings.Contains(err.Error(), "--pane opens the prompt") {
+			t.Errorf("approve %v: err %v, want a usage error saying --pane opens the prompt", args, err)
+		}
+	}
+	if calls := gh.read("calls"); calls != "" {
+		t.Errorf("a refused --pane invoked gh:\n%s", calls)
+	}
+	if n := len(server.Calls()); n != 0 {
+		t.Errorf("a refused --pane reached herdr %d time(s)", n)
+	}
+}
+
+func TestApprovePaneNeedsAnOpenWorkspaceForTheIssue(t *testing.T) {
+	repo, server := approvePaneServer(t, "feat/7-something-else", "w9")
+	if err := approveCommand([]string{"42", "--pane", "--repo", repo.Root}, &strings.Builder{}); exitCode(err) != exitEnvironment {
+		t.Errorf("err %v, want an environment error", err)
+	}
+	if n := len(calledWith(server, "pane.split")); n != 0 {
+		t.Errorf("split %d pane(s) with no workspace for the issue", n)
+	}
+}
