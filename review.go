@@ -274,6 +274,7 @@ func reviewCommand(args []string, out io.Writer) error {
 		return finish(reviewOutcomeError, fmt.Errorf("open a pane for the reviewer beside %s: %w", pr.HeadRefName, err))
 	}
 	pane := split.Pane.PaneID
+	warnName(notes, "the reviewer's pane", s.client.PaneRename(pane, "reviewer"))
 	doc.PaneID, doc.WorkspaceID = jsonout.String(pane), jsonout.String(workspace)
 	fmt.Fprintf(notes, "reviewer pane: %s in workspace %s\n", pane, workspace)
 

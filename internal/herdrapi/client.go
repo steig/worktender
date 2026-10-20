@@ -608,3 +608,18 @@ func (c *Client) AgentStart(name, kind, paneID string, args []string, timeoutMS 
 	// pane, so the client has to outlast the wait it just asked for.
 	return c.callWithin("agent.start", params, nil, deadlineFor(timeoutMS))
 }
+
+// WorkspaceRename sets a workspace's label. herdr keeps it across restarts.
+func (c *Client) WorkspaceRename(workspaceID, label string) error {
+	return c.call("workspace.rename", map[string]any{"workspace_id": workspaceID, "label": label}, nil)
+}
+
+// TabRename sets a tab's label.
+func (c *Client) TabRename(tabID, label string) error {
+	return c.call("tab.rename", map[string]any{"tab_id": tabID, "label": label}, nil)
+}
+
+// PaneRename sets a pane's label.
+func (c *Client) PaneRename(paneID, label string) error {
+	return c.call("pane.rename", map[string]any{"pane_id": paneID, "label": label}, nil)
+}

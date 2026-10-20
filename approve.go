@@ -150,6 +150,7 @@ func approvePane(repo string, number int, out io.Writer) error {
 		return fmt.Errorf("open a pane in workspace %s: %w", workspace, err)
 	}
 	id := created.Pane.PaneID
+	warnName(os.Stderr, "the approve pane", s.client.PaneRename(id, "approve"))
 	command := fmt.Sprintf("%s approve %d --repo %s", shellQuote(selfPath()), number, shellQuote(s.root))
 	if err := s.client.PaneSendText(id, command); err != nil {
 		return fmt.Errorf("type the approve command into %s: %w", id, err)
