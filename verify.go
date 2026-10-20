@@ -170,11 +170,11 @@ func verifyCommand(args []string, out io.Writer) error {
 	doc.Base, doc.Head = jsonout.String(base), jsonout.String(head)
 	fmt.Fprintf(notes, "base: %s (merge-base with %s)\nhead: %s\n", base, baseTip, head)
 
-	baseRuns, err := runChecks(root, base, approved.Checks, *timeout)
+	baseRuns, err := runChecks(root, base, approved.Checks, *timeout, notes)
 	if err != nil {
 		return finish(err)
 	}
-	headRuns, err := runChecks(root, head, approved.Checks, *timeout)
+	headRuns, err := runChecks(root, head, approved.Checks, *timeout, notes)
 	if err != nil {
 		return finish(err)
 	}
@@ -221,9 +221,9 @@ func verifyCommand(args []string, out io.Writer) error {
 // one check writes is not there for the next, and judges each against its
 // expected outcome. Dependencies are installed once for the commit; a failed
 // install fails every check, since none could have run.
-func runChecks(root, commit string, checks []acceptanceCheck, timeout time.Duration) ([]verifyRun, error) {
+func runChecks(root, commit string, checks []acceptanceCheck, timeout time.Duration, notes io.Writer) ([]verifyRun, error) {
 	runs := make([]verifyRun, len(checks))
-	modules, cleanup, install, err := installDependencies(root, commit)
+	modules, cleanup, install, err := installDependencies(root, commit, notes)
 	if err != nil {
 		return nil, fmt.Errorf("install dependencies on %s: %w", shortOid(commit), err)
 	}
@@ -272,7 +272,14 @@ func runOneCheck(root, commit string, c acceptanceCheck, modules string, timeout
 }
 
 // installTimeout bounds one install, apart from the checks' own timeout.
-const installTimeout = 10 * time.Minute
+var installTimeout = 10 * time.Minute
+
+// installTailLines is how much of a failed install's output the notes keep.
+const installTailLines = 15
+
+// unsupportedLockfiles are lockfiles verify recognises but has no safe
+// install for. yarn is here for the reason it is not in installers.
+var unsupportedLockfiles = []string{"yarn.lock", "bun.lockb"}
 
 // installers maps a lockfile to the command that installs exactly what it
 // pins. Lifecycle scripts stay off: the head being verified is the change
@@ -291,16 +298,18 @@ var installers = []struct {
 // when the commit has no lockfile or the install made none. An install that
 // fails or times out comes back as a verifyRun for every check to share, not
 // as an error: the commit's dependencies not installing is a finding about it.
-func installDependencies(root, commit string) (modules string, cleanup func(), failed *verifyRun, err error) {
+func installDependencies(root, commit string, notes io.Writer) (modules string, cleanup func(), failed *verifyRun, err error) {
 	dir, rm, err := exportTracked(root, commit)
 	if err != nil {
 		return "", func() {}, nil, err
 	}
+	installed := false
 	for _, in := range installers {
 		if _, err := os.Stat(filepath.Join(dir, in.lockfile)); err != nil {
 			continue
 		}
-		run, _, err := runIn(dir, installTimeout, in.argv...)
+		installed = true
+		run, output, err := runIn(dir, installTimeout, in.argv...)
 		if err != nil {
 			rm()
 			return "", func() {}, nil, err
@@ -308,15 +317,43 @@ func installDependencies(root, commit string) (modules string, cleanup func(), f
 		run.Commit = commit
 		if run.TimedOut || run.ExitCode == nil || *run.ExitCode != 0 {
 			rm()
+			fmt.Fprintf(notes, "install on %s failed (%s: %s):\n%s\n", shortOid(commit), in.lockfile, describeInstall(run), tailLines(output, installTailLines))
 			return "", func() {}, &run, nil
 		}
 		break
+	}
+	if !installed {
+		for _, lock := range unsupportedLockfiles {
+			if _, err := os.Stat(filepath.Join(dir, lock)); err == nil {
+				fmt.Fprintf(notes, "install on %s skipped: %s is not supported, so no dependencies were installed\n", shortOid(commit), lock)
+				break
+			}
+		}
 	}
 	modules = filepath.Join(dir, "node_modules")
 	if _, err := os.Stat(modules); err != nil {
 		modules = ""
 	}
 	return modules, rm, nil, nil
+}
+
+func describeInstall(run verifyRun) string {
+	switch {
+	case run.TimedOut:
+		return "timed out"
+	case run.ExitCode == nil:
+		return "killed by a signal"
+	}
+	return fmt.Sprintf("exit %d", *run.ExitCode)
+}
+
+// tailLines is the last n lines of output, each indented under its note.
+func tailLines(output string, n int) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return "  " + strings.Join(lines, "\n  ")
 }
 
 // runIn runs argv in dir under timeout, with its exit code, or none when it

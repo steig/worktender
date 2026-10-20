@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -317,5 +318,102 @@ func TestVerifyInstallsNothingWithoutALockfile(t *testing.T) {
 	}
 	if _, err := os.Stat(log); err == nil {
 		t.Errorf("pnpm ran with no lockfile tracked")
+	}
+}
+
+func fakePnpm(t *testing.T, script string) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "pnpm"), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestVerifyNotesTheTailOfAFailedInstall(t *testing.T) {
+	fakePnpm(t, "echo 'ERR_PNPM_OUTDATED_LOCKFILE the lockfile is stale'\nexit 1")
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+
+	var out strings.Builder
+	err := verifyCommand([]string{"42", "--repo", repo.Root}, &out)
+	if exitCode(err) != exitNeedsHuman {
+		t.Fatalf("verify: %v (exit %d); want exit 3\n%s", err, exitCode(err), out.String())
+	}
+	for _, want := range []string{"failed (pnpm-lock.yaml: exit 1)", "ERR_PNPM_OUTDATED_LOCKFILE the lockfile is stale"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestVerifyNotesAnInstallThatTimedOut(t *testing.T) {
+	fakePnpm(t, "echo resolving\nexec sleep 30")
+	old := installTimeout
+	installTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { installTimeout = old })
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+
+	var out strings.Builder
+	err := verifyCommand([]string{"42", "--repo", repo.Root}, &out)
+	if exitCode(err) != exitNeedsHuman {
+		t.Fatalf("verify: %v (exit %d); want exit 3\n%s", err, exitCode(err), out.String())
+	}
+	for _, want := range []string{"failed (pnpm-lock.yaml: timed out)", "resolving"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// A lockfile whose installer is not installed is the machine's problem, not a
+// finding about the commit, so verify stops with the environment code.
+func TestVerifyStopsWhenTheInstallerIsMissing(t *testing.T) {
+	repo := verifyRepo(t, "`test -f added.txt` exits 0")
+	commitLockfile(repo)
+	bin := t.TempDir()
+	for _, tool := range []string{"git", "gh"} {
+		path, err := exec.LookPath(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(bin, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// /bin and /usr/bin hold the coreutils the fake gh uses, not a pnpm.
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/bin")
+
+	var out strings.Builder
+	err := verifyCommand([]string{"42", "--repo", repo.Root}, &out)
+	if exitCode(err) != exitEnvironment {
+		t.Fatalf("verify: %v (exit %d); want exit 2\n%s", err, exitCode(err), out.String())
+	}
+	if !strings.Contains(err.Error(), "install dependencies on") {
+		t.Errorf("error = %v; want it to name the install step", err)
+	}
+}
+
+func TestVerifyNotesAnUnsupportedLockfile(t *testing.T) {
+	for _, lock := range []string{"yarn.lock", "bun.lockb"} {
+		t.Run(lock, func(t *testing.T) {
+			log := fakePackageManager(t, 0)
+			repo := verifyRepo(t, "`test -f added.txt` exits 0")
+			repo.Write(lock, "# lock\n")
+			repo.Git("add", lock)
+			repo.Git("commit", "-m", "lock")
+
+			var out strings.Builder
+			if err := verifyCommand([]string{"42", "--repo", repo.Root}, &out); err != nil {
+				t.Fatalf("verify: %v\n%s", err, out.String())
+			}
+			if want := lock + " is not supported"; !strings.Contains(out.String(), want) {
+				t.Errorf("output lacks %q:\n%s", want, out.String())
+			}
+			if _, err := os.Stat(log); err == nil {
+				t.Errorf("an installer ran for %s", lock)
+			}
+		})
 	}
 }
