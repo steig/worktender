@@ -101,6 +101,22 @@ is not seen, and the branch comes out unprefixed. `--branch-prefix fix` (or
 `fix/`) sets the prefix yourself and skips detection; `--branch-prefix ""` forces
 none.
 
+### `.worktender.toml`
+
+A repository can declare its own defaults in `.worktender.toml` at its root:
+
+```toml
+branch_prefix = "chore/"  # same values as --branch-prefix; "" means none
+base = "release"          # what start forks from when --base is not given
+```
+
+A flag wins over the file, and the file wins over hook detection. `start` reads
+the file from the repository's main checkout, never from the worker's worktree,
+so a worker's pull request cannot change the settings it was started under.
+Only `key = "string"` lines and `#` comments are read. An unknown key is
+warned about and ignored; a line that does not parse fails `start` with a usage
+error naming it.
+
 herdr names the checkout directory after the branch with each `/` as `-`, so
 `feat/42-x` lives in `feat-42-x`.
 
