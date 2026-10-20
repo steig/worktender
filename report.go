@@ -71,8 +71,9 @@ type report struct {
 // the worker's own pane as herdr metadata, which is the channel a gate reads —
 // stdout does not survive a Claude Code tool call. See metadata.go.
 //
-// A report is attached to the reporting worker's pane and to nothing else. It
-// is never pushed into the coordinator's pane.
+// A report is attached to the reporting worker's pane and to nothing else. The
+// coordinator's pane is only ever typed a one-line wake built from the closed
+// slots; see wake.go.
 func reportCommand(args []string, out io.Writer) error {
 	r, asJSON, err := parseReport(args)
 	if err != nil {
@@ -91,6 +92,7 @@ func reportCommand(args []string, out io.Writer) error {
 	// Recorded whether or not delivery worked: the worker did report, and the
 	// ledger is counting what workers claimed, not what a gate happened to hear.
 	recordReport(r)
+	wakeCoordinator(r)
 	pane := os.Getenv(paneEnv)
 	if asJSON {
 		doc := newReportEnvelopeJSON(r, pane, delivered == nil && missingEnv == "", noteLimit)
