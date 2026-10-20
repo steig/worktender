@@ -121,6 +121,16 @@ func startCommand(args []string, out io.Writer) error {
 
 	fmt.Fprintf(notes, "repository: %s\n", s.root)
 
+	// s.root is the main checkout, so this is the repository's own file and not
+	// one a worker's branch could have edited.
+	conf, err := loadRepoConf(s.root, os.Stderr)
+	if err != nil {
+		if wErr := emit(doc.finish(err)); wErr != nil {
+			return wErr
+		}
+		return err
+	}
+
 	issue, err := issueFor(s.root, number)
 	if err != nil {
 		if wErr := emit(doc.finish(err)); wErr != nil {
@@ -173,15 +183,24 @@ func startCommand(args []string, out io.Writer) error {
 		fmt.Fprintf(notes, "model: %s (%s)\n", agentModel, modelReason)
 	}
 
+	// The flag wins over the repository's file, which wins over what the hooks
+	// are guessed to want.
 	prefix := *branchPrefix
-	if !prefixGiven {
+	switch {
+	case !prefixGiven && conf.BranchPrefix != nil:
+		prefix = *conf.BranchPrefix
+	case !prefixGiven:
 		prefix = hookBranchPrefix(s.root)
-	} else if prefix != "" && !strings.HasSuffix(prefix, "/") {
+	}
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
 	branch := prefix + issueBranch(issue)
 	baseRef := gitx.BaseRef(s.root)
 	forkFrom := *base
+	if forkFrom == "" && conf.Base != nil {
+		forkFrom = *conf.Base
+	}
 	if forkFrom == "" {
 		forkFrom = baseRef
 	}
