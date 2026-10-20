@@ -340,3 +340,17 @@ func TestWakeKeepsTheQueueThroughATransientHerdrError(t *testing.T) {
 		t.Fatalf("queue files = %v, want the entry kept", got)
 	}
 }
+
+// A scout's note is the path of its report, and the wake line is built from the
+// closed slots alone: neither the note nor the path can reach the coordinator's
+// prompt by way of it.
+func TestWakeFragmentForAScoutCarriesNoNoteOrPath(t *testing.T) {
+	path := "/Users/someone/.local/state/planner/scouts/repo-1a2b3c4d/7.md"
+	line := wakeFragment(7, report{status: "done", sha: gateHeadA, note: path})
+	if strings.Contains(line, path) || strings.Contains(line, "scouts") {
+		t.Errorf("the wake line carries the scout's note: %q", line)
+	}
+	if !wakeEntry.MatchString("1 " + line) {
+		t.Errorf("the wake line %q is not the closed shape", line)
+	}
+}

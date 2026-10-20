@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ const gateDefaultTimeout = 15 * time.Minute
 // Unwrapped, because a wrapped envelope line is two lines to a parser.
 const gateReadSource = herdrapi.ReadSourceRecentUnwrapped
 
-const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr] [--repo <path>] [--timeout 15m] [--dagr] [--json]"
+const gateUsage = "usage: worktender gate --target <agent|pane> | --any <agent|pane>,... [--until planned|blocked|done] [--require-pr | --scout] [--repo <path>] [--timeout 15m] [--dagr] [--json]"
 
 // gateOptions is one gate invocation.
 type gateOptions struct {
@@ -34,6 +35,10 @@ type gateOptions struct {
 	targets   []string
 	until     []string
 	requirePR bool
+	// scout is a wait on workers `start --scout` began: a done carries no PR,
+	// and the checkout checked afterwards is the one start recorded for that
+	// worker, never one the caller names.
+	scout bool
 	// repo is where --require-pr asks gh about the PR, and root is it resolved
 	// to its repository, by runGate before the wait so a gate run outside one
 	// fails at once rather than at the release.
@@ -132,6 +137,7 @@ func parseGate(args []string) (gateOptions, error) {
 	flags.Var(targetFlag{targets: &targets}, "target", "an agent or pane to wait on; repeat for more than one")
 	flags.Var(targetFlag{targets: &targets, split: true}, "any", "agents or panes to wait on, comma-separated; the first to satisfy the predicate releases")
 	requirePR := flags.Bool("require-pr", false, "the report must carry a pull request number")
+	scout := flags.Bool("scout", false, "every target was started with `start --scout`: no PR is expected, and its checkout must be unchanged after done")
 	repo := flags.String("repo", ".", "repository whose PR a --require-pr done is checked against")
 	// A duration rather than herdr's bare milliseconds: this is worktender's own
 	// surface, and "15m" cannot be pasted wrong by a factor of a thousand.
@@ -155,6 +161,9 @@ func parseGate(args []string) (gateOptions, error) {
 	if len(targets) == 0 {
 		return gateOptions{}, usagef("--target or --any is required; %s", gateUsage)
 	}
+	if *scout && *requirePR {
+		return gateOptions{}, usagef("--scout and --require-pr are opposites: a scout opens no pull request; %s", gateUsage)
+	}
 	if *timeout <= 0 {
 		return gateOptions{}, usagef("--timeout must be positive; a gate that cannot expire is the wedge this command exists to avoid")
 	}
@@ -162,7 +171,7 @@ func parseGate(args []string) (gateOptions, error) {
 		// The gate's reason for existing is completion, so that is the default.
 		until = statusFlag{"done"}
 	}
-	return gateOptions{targets: targets, until: until, requirePR: *requirePR, repo: *repo, timeout: *timeout, asJSON: *asJSON, dagr: *dagr}, nil
+	return gateOptions{targets: targets, until: until, requirePR: *requirePR, scout: *scout, repo: *repo, timeout: *timeout, asJSON: *asJSON, dagr: *dagr}, nil
 }
 
 // satisfies is the whole predicate surface: a status from the closed set, and
@@ -249,6 +258,10 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 			err = usagef("--repo: %v; --require-pr checks the PR's head in a repository", err)
 		}
 	}
+	var scouts []ledgerEvent
+	if err == nil && opts.scout {
+		scouts, err = scoutRecords(targets)
+	}
 	if err != nil {
 		if opts.asJSON {
 			// No targets resolved, so there is nothing to list as waiting — but
@@ -279,6 +292,15 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 			}
 		}
 	}
+	if err == nil && opts.scout && released.status == "done" {
+		rec := scouts[about]
+		relayed := *released
+		relayed.note = scoutNote(rec, released.note)
+		released = &relayed
+		if err = gateScout(rec.ScoutCheckout, targets[about].name); err != nil {
+			outcome, evidence = gateOutcomeScoutViolation, gateEvidenceVerified
+		}
+	}
 	waited := time.Since(started)
 
 	if opts.asJSON {
@@ -293,7 +315,7 @@ func runGate(client *herdrapi.Client, opts gateOptions, out io.Writer) error {
 		fmt.Fprintf(out, "gate: %s released after %s (evidence: %s)\n", targets[about].name, waited.Round(time.Second), evidence)
 		fmt.Fprint(out, renderReport(*released))
 	}
-	if err != nil && (outcome == gateOutcomeBlocked || outcome == gateOutcomeHeadMoved) && released != nil {
+	if err != nil && (outcome == gateOutcomeBlocked || outcome == gateOutcomeHeadMoved || outcome == gateOutcomeScoutViolation) && released != nil {
 		fmt.Fprint(out, renderReport(*released))
 	}
 	return err
@@ -315,6 +337,86 @@ func gateHead(root, name string, r report) error {
 	if pr.HeadRefOid != r.sha {
 		return codef(exitNeedsHuman, "gate %s: PR #%d's head is %s, but the done was reported at %s; what would merge is not what was reported done (evidence: %s)",
 			name, r.pr, shortOid(pr.HeadRefOid), shortOid(r.sha), gateEvidenceVerified)
+	}
+	return nil
+}
+
+// scoutRecords is the start record of every target, in order. A scout's gate is
+// weaker than a PR's, so the worker has to be one `start --scout` began: asked
+// of the ledger start wrote, not of a flag the caller could point anywhere. The
+// latest start on a pane wins, because herdr hands pane ids out again.
+func scoutRecords(targets []gateTarget) ([]ledgerEvent, error) {
+	path, err := ledgerPath()
+	if err != nil {
+		return nil, err
+	}
+	events, _, err := readLedger(path)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]ledgerEvent, len(targets))
+	for i, t := range targets {
+		for _, e := range events {
+			if e.Event == ledgerStart && e.PaneID == t.pane {
+				records[i] = e
+			}
+		}
+		if records[i].ScoutCheckout == "" {
+			return nil, usagef("--scout: %s was not started with `worktender start --scout`; wait on it with --require-pr", t.name)
+		}
+	}
+	return records, nil
+}
+
+// scoutNote is the note a scout's done is relayed with: the report path when
+// the worker wrote exactly the path start named, to a regular file in a
+// directory that is not a link, and nothing otherwise. A note is the worker's
+// text, and a path it chose is one the coordinator would go and read.
+func scoutNote(rec ledgerEvent, note string) string {
+	want, err := scoutReportPath(rec.Repository, rec.Issue)
+	if err == nil && note != want {
+		err = fmt.Errorf("the note is not the report path")
+	}
+	if err == nil {
+		err = scoutRegular(want)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "worktender: warning: not relaying the scout's note: %v\n", err)
+		return ""
+	}
+	return want
+}
+
+func scoutRegular(path string) error {
+	for _, p := range []string{filepath.Dir(path), path} {
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || (p == path && !info.Mode().IsRegular()) {
+			return fmt.Errorf("%s is not a regular file in a real directory", p)
+		}
+	}
+	return nil
+}
+
+// gateScout holds a scout's done to the brief it was given. Nothing stops a
+// worker editing, so this is the only enforcement: a commit past the base or
+// any uncommitted file means the read-only task was not read-only. Read from git
+// after the release, so it reports what the checkout is rather than what the
+// worker said. A base git cannot resolve is a failure to check, and reported as
+// one: zero commits found because git could not count is not zero commits.
+func gateScout(checkout, name string) error {
+	base := gitx.BaseRef(checkout)
+	n, err := gitx.CommitsAhead(checkout, base)
+	if err != nil {
+		return codef(exitNeedsHuman, "gate %s: scout violation: cannot count the checkout's commits past %s (%v), so it cannot be shown unchanged (evidence: %s)", name, base, err, gateEvidenceVerified)
+	}
+	if n > 0 {
+		return codef(exitNeedsHuman, "gate %s: scout violation: %d commit(s) on the checkout; a scout makes none (evidence: %s)", name, n, gateEvidenceVerified)
+	}
+	if gitx.IsDirty(checkout) {
+		return codef(exitNeedsHuman, "gate %s: scout violation: the checkout has uncommitted changes; a scout edits nothing (evidence: %s)", name, gateEvidenceVerified)
 	}
 	return nil
 }

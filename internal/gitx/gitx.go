@@ -168,15 +168,18 @@ func IsDirty(checkout string) bool {
 // use this to tell "not started" apart from "finished". An unresolvable base
 // counts as zero, which keeps the worktree.
 func OwnCommits(checkout, base string) int {
+	n, _ := CommitsAhead(checkout, base)
+	return n
+}
+
+// CommitsAhead is OwnCommits for a caller that must not read a failure as zero:
+// a scout's check passes on zero.
+func CommitsAhead(checkout, base string) (int, error) {
 	out, err := run(checkout, "rev-list", "--count", base+"..HEAD")
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	n, err := strconv.Atoi(out)
-	if err != nil {
-		return 0
-	}
-	return n
+	return strconv.Atoi(out)
 }
 
 // UpstreamGone reports that a branch was published and its remote counterpart
