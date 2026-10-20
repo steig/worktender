@@ -8,12 +8,19 @@ import (
 	"strings"
 )
 
+// branchPrefixPattern is what --branch-prefix accepts: nothing, or a lowercase
+// type with an optional trailing slash. It is the shape issueBranchPattern can
+// read back, so a branch start names is one refocus, review and verify parse.
+var branchPrefixPattern = regexp.MustCompile(`^(?:[a-z]+/?)?$`)
+
 // hookTypes matches the `(feat|fix|chore)/` alternation a branch-naming hook
 // carries, the one shape these hooks share whether they are shell or node.
 var hookTypes = regexp.MustCompile(`\(((?:[a-z]+\|)+[a-z]+)\)/`)
 
 // hookBranchPrefix is the `type/` the repo's own hooks require of a branch
-// name, or "" when no hook names one. Absent means start behaves as it always
+// name, or "" when no hook names one. Detection is best-effort: it reads only
+// hook lines that mention "branch" next to a `(a|b)/` alternation, so a hook
+// written any other way is missed, and --branch-prefix is the override. Absent means start behaves as it always
 // did, so a repo without a naming hook sees no change.
 func hookBranchPrefix(root string) string {
 	dirs := []string{filepath.Join(root, ".husky")}

@@ -41,11 +41,17 @@ func startCommand(args []string, out io.Writer) error {
 	base := fs.String("base", "", "ref to fork from; defaults to the repository's origin/HEAD")
 	repo := fs.String("repo", "", "repository to act on, instead of the one herdr is currently in")
 	focus := fs.Bool("focus", false, "switch to the new workspace")
+	branchPrefix := fs.String("branch-prefix", "", "type/ prefix for the branch, instead of the one the repository's hooks require; empty for none")
 	asJSON := jsonFlag(fs)
 
 	issues, err := parseAround(fs, args)
 	if err != nil {
 		return usagef("%v; %s", err, startUsage)
+	}
+	prefixGiven := false
+	fs.Visit(func(f *flag.Flag) { prefixGiven = prefixGiven || f.Name == "branch-prefix" })
+	if prefixGiven && !branchPrefixPattern.MatchString(*branchPrefix) {
+		return usagef("--branch-prefix %q is not a type like feat or feat/; %s", *branchPrefix, startUsage)
 	}
 	if len(issues) != 1 {
 		return usagef("want exactly one issue number; %s", startUsage)
@@ -149,7 +155,13 @@ func startCommand(args []string, out io.Writer) error {
 		fmt.Fprintf(notes, "model: %s (%s)\n", agentModel, modelReason)
 	}
 
-	branch := hookBranchPrefix(s.root) + issueBranch(issue)
+	prefix := *branchPrefix
+	if !prefixGiven {
+		prefix = hookBranchPrefix(s.root)
+	} else if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	branch := prefix + issueBranch(issue)
 	baseRef := gitx.BaseRef(s.root)
 	forkFrom := *base
 	if forkFrom == "" {
@@ -303,7 +315,7 @@ func printForkPoint(out io.Writer, forkFrom, forkPoint, baseRef, basePoint strin
 }
 
 const startUsage = "usage: worktender start <issue> [--role <role>] [--model <model>] " +
-	"[--permission-mode <mode>] [--base <ref>] [--repo <path>] [--focus] [--json]"
+	"[--permission-mode <mode>] [--base <ref>] [--branch-prefix <type>] [--repo <path>] [--focus] [--json]"
 
 // parseAround parses flags written on either side of the positional arguments,
 // returning the positionals.

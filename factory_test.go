@@ -721,7 +721,8 @@ func TestAlreadyStartedMatchesTheIssueNumberOnly(t *testing.T) {
 		{[]string{"2-old-title"}, true},
 		{[]string{"2"}, true},
 		{[]string{"20-other"}, false},
-		{[]string{"feat/2-thing"}, false},
+		{[]string{"feat/2-thing"}, true},
+		{[]string{"feat/20-thing"}, false},
 		{[]string{"12-thing"}, false},
 		{nil, false},
 	} {

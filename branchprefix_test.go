@@ -56,3 +56,36 @@ func TestIssueBranchPatternReadsATypePrefix(t *testing.T) {
 		t.Errorf("match = %v, want issue 42", m)
 	}
 }
+
+func TestStartBranchPrefixFlagOverridesTheHook(t *testing.T) {
+	for _, tc := range []struct{ flag, want string }{
+		{"fix", "fix/42-fix-the-thing"},
+		{"docs/", "docs/42-fix-the-thing"},
+		{"", "42-fix-the-thing"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			repo := herdrtest.NewRepo(t)
+			repo.Write(".husky/pre-commit", "[[ $(git branch --show-current) =~ ^(feat|fix)/ ]] || exit 1\n")
+			server := fakeStart(t, repo, "w9", "w9:p1", "working")
+			herdrtest.FakeGh(t, `cat <<'JSON'
+{"number":42,"title":"Fix the thing","body":"it is broken"}
+JSON`)
+
+			if err := startCommand([]string{"42", "--branch-prefix", tc.flag}, &strings.Builder{}); err != nil {
+				t.Fatalf("start: %v", err)
+			}
+			for _, call := range server.Calls() {
+				if call.Method == "worktree.create" && call.Params["branch"] != tc.want {
+					t.Errorf("branch = %v, want %s", call.Params["branch"], tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestStartRejectsAMalformedBranchPrefix(t *testing.T) {
+	err := startCommand([]string{"42", "--branch-prefix", "Feat//x"}, &strings.Builder{})
+	if exitCode(err) != exitUsage {
+		t.Errorf("err = %v, want a usage error", err)
+	}
+}

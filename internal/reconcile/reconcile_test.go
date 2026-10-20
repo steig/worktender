@@ -914,6 +914,22 @@ func TestGhostWhoseWorkerIsDoneAndWhosePRMergedIsClosed(t *testing.T) {
 	}
 }
 
+// herdr names the checkout of feat/42-x "feat-42-x", so the merged PR's head
+// has to be matched against the directory with its slash turned into a dash.
+func TestGhostOfASlashedBranchIsClosedAndNamesTheRealBranch(t *testing.T) {
+	s := finishedGhost()
+	s.Workspaces[0].CheckoutPath = "/repo/wt/feat-42-x"
+	s.PaneReports["w35:p1"] = reconcile.PaneReport{Found: true, Status: "done", PR: 240, PRState: reconcile.PRMerged, PRHead: "feat/42-x"}
+
+	closing := find(reconcile.Reconcile(s), reconcile.KindCloseGhost, "/repo/wt/feat-42-x")
+	if closing == nil {
+		t.Fatal("a finished ghost on a type/ branch should be planned for closing")
+	}
+	if closing.Branch != "feat/42-x" {
+		t.Errorf("Branch = %q, want the PR's head feat/42-x, not the directory", closing.Branch)
+	}
+}
+
 // Every condition that stops the close leaves a named ghost, as before.
 func TestGhostStaysAGhostUnlessEveryConditionHolds(t *testing.T) {
 	cases := map[string]func(*reconcile.State){

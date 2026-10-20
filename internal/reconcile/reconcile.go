@@ -13,6 +13,7 @@ package reconcile
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/steig/worktender/internal/gitx"
 )
@@ -407,7 +408,7 @@ func ghosts(state State) []Action {
 			actions = append(actions, Action{
 				Kind:           KindCloseGhost,
 				Path:           ws.CheckoutPath,
-				Branch:         filepath.Base(ws.CheckoutPath),
+				Branch:         closing.branch,
 				WorkspaceID:    ws.ID,
 				PaneID:         closing.pane,
 				PR:             closing.pr,
@@ -435,7 +436,10 @@ func ghosts(state State) []Action {
 
 // ghostClose is what a closable ghost's close rests on.
 type ghostClose struct {
-	pane   string
+	pane string
+	// branch is the PR's head, which is the real branch name: the checkout's
+	// directory has lost any slash in it.
+	branch string
 	pr     int
 	reason string
 }
@@ -443,6 +447,13 @@ type ghostClose struct {
 // whyNeedsRelease is the one refusal worth a different ghost reason, because
 // it names a flag that would change it.
 const whyNeedsRelease = "needs --release-agents"
+
+// checkoutDir is the directory name herdr gives a branch's checkout: the branch
+// with "/" as "-". Read off existing herdr worktrees (feat/b2c-preview-
+// environment lives in feat-b2c-preview-environment), not from herdr's docs.
+func checkoutDir(branch string) string {
+	return strings.ReplaceAll(branch, "/", "-")
+}
 
 // closable decides whether a ghost's workspace may be closed, and when it may
 // not, says why in a word for the caller to branch on. It takes all of these:
@@ -459,10 +470,11 @@ const whyNeedsRelease = "needs --release-agents"
 //     workspace.close ends them all, so a second worker or an unreadable pane
 //     is something it would destroy without having looked.
 //
-// The branch is the checkout's directory name because herdr reports none for a
-// workspace, and a ghost has no checkout left for git to ask. `start` names
-// every checkout after its branch; where herdr spelled a path otherwise, the
-// heads do not match and the ghost stays a ghost.
+// The branch is matched against the checkout's directory name because herdr
+// reports none for a workspace, and a ghost has no checkout left for git to
+// ask. herdr names the directory after the branch with each "/" as "-" (see
+// checkoutDir); where it spelled a path otherwise, the heads do not match and
+// the ghost stays a ghost.
 func closable(state State, ws Workspace) (ghostClose, string) {
 	occupant, occupied := agentIn(state, ws)
 	if occupied && !occupant.Finished() {
@@ -484,10 +496,10 @@ func closable(state State, ws Workspace) (ghostClose, string) {
 			return ghostClose{}, "more than one report"
 		}
 		if r.Status != reportDone || r.PR == 0 || r.PRState != PRMerged ||
-			r.PRHead == "" || r.PRHead != filepath.Base(ws.CheckoutPath) {
+			r.PRHead == "" || checkoutDir(r.PRHead) != filepath.Base(ws.CheckoutPath) {
 			return ghostClose{}, "not a merged finish"
 		}
-		worker = &ghostClose{pane: pane, pr: r.PR, reason: fmt.Sprintf(
+		worker = &ghostClose{pane: pane, branch: r.PRHead, pr: r.PR, reason: fmt.Sprintf(
 			"herdr holds this workspace open on a checkout git no longer has, "+
 				"and its worker reported done with PR #%d, which merged", r.PR)}
 	}

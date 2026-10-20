@@ -896,13 +896,14 @@ func TestStartUsageIsAnOrderThatParses(t *testing.T) {
 	fs.String("model", "", "")
 	fs.String("permission-mode", "", "")
 	fs.String("base", "", "")
+	fs.String("branch-prefix", "", "")
 	fs.String("repo", "", "")
 	fs.Bool("focus", false, "")
 	fs.Bool("json", false, "")
 
 	// The usage line with its placeholders filled in and its brackets dropped.
 	replacer := strings.NewReplacer(
-		"<role>", "ux", "<model>", "sonnet", "<mode>", "bypassPermissions", "<ref>", "origin/main",
+		"<role>", "ux", "<model>", "sonnet", "<mode>", "bypassPermissions", "<ref>", "origin/main", "<type>", "feat",
 		"<path>", ".", "<issue>", "42", "[", "", "]", "")
 	fields := strings.Fields(replacer.Replace(strings.TrimPrefix(startUsage, "usage: worktender start ")))
 
