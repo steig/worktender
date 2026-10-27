@@ -439,13 +439,17 @@ func (c *Client) WorktreeOpen(cwd, path, label string, focus bool) error {
 // answering with the workspace and its root pane — so a caller that is about to
 // staff the pane does not have to go and look it up.
 //
-// An empty base lets herdr pick; callers that care pass gitx.BaseRef. focus is a
+// An empty base lets herdr pick, and an empty path lets it choose where the
+// checkout goes; callers that care pass gitx.BaseRef. focus is a
 // parameter for the reason it is on WorktreeOpen: starting work in the
 // background must not yank the user out of what they are doing.
-func (c *Client) WorktreeCreate(cwd, branch, base, label string, focus bool) (*WorkspaceCreatedResponse, error) {
+func (c *Client) WorktreeCreate(cwd, branch, base, label, path string, focus bool) (*WorkspaceCreatedResponse, error) {
 	params := map[string]any{"cwd": cwd, "branch": branch, "label": label, "focus": focus}
 	if base != "" {
 		params["base"] = base
+	}
+	if path != "" {
+		params["path"] = path
 	}
 	var out WorkspaceCreatedResponse
 	if err := c.call("worktree.create", params, &out); err != nil {

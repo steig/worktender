@@ -1238,3 +1238,50 @@ func TestStartScoutRefusesACustomBrief(t *testing.T) {
 		t.Fatalf("start --scout --brief: exit %d (%v), want %d naming --scout", exitCode(err), err, exitUsage)
 	}
 }
+
+func TestStartPlacesWorktreeUnderDotWorktrees(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, `cat <<'JSON'
+{"number":42,"title":"Fix the thing","body":"it is broken"}
+JSON`)
+
+	var out strings.Builder
+	if err := startCommand([]string{"42", "--branch-prefix", "fix"}, &out); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	want := filepath.Join(repo.RealRoot, ".worktrees", "fix-42-fix-the-thing")
+	for _, call := range server.Calls() {
+		if call.Method == "worktree.create" {
+			if call.Params["path"] != want {
+				t.Errorf("worktree.create path = %v, want %s", call.Params["path"], want)
+			}
+			return
+		}
+	}
+	t.Fatal("start never called worktree.create")
+}
+
+func TestStartExcludesDotWorktrees(t *testing.T) {
+	repo := herdrtest.NewRepo(t)
+	fakeStart(t, repo, "w9", "w9:p1", "working")
+	herdrtest.FakeGh(t, `cat <<'JSON'
+{"number":42,"title":"Fix the thing","body":"it is broken"}
+JSON`)
+
+	for i := 0; i < 2; i++ {
+		var out strings.Builder
+		if err := startCommand([]string{"42"}, &out); err != nil {
+			t.Fatalf("start #%d: %v", i+1, err)
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(repo.Root, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), ".worktrees/\n"); n != 1 {
+		t.Errorf(".worktrees/ appears %d times in info/exclude, want once:\n%s", n, data)
+	}
+}

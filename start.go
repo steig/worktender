@@ -194,7 +194,14 @@ func startCommand(args []string, out io.Writer) error {
 	doc.ForkPoint = jsonout.String(forkPoint)
 	doc.Stacked = forkPoint != "" && forkPoint != gitx.Commit(s.root, baseRef)
 
-	created, err := s.client.WorktreeCreate(s.root, branch, forkFrom, branch, *focus)
+	// Under the repository, so a worker's checkout sits beside its code;
+	// info/exclude keeps the main checkout from listing the directory.
+	err = gitx.Exclude(s.root, ".worktrees/")
+	var created *herdrapi.WorkspaceCreatedResponse
+	if err == nil {
+		checkoutDir := filepath.Join(s.root, ".worktrees", strings.ReplaceAll(branch, "/", "-"))
+		created, err = s.client.WorktreeCreate(s.root, branch, forkFrom, branch, checkoutDir, *focus)
+	}
 	if err != nil {
 		err = fmt.Errorf("create worktree for #%d on %s: %w", number, branch, err)
 		if wErr := emit(doc.finish(err)); wErr != nil {
