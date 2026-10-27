@@ -6,6 +6,42 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.22.0] — 2026-10-27
+
+### Added
+
+- **`start` creates worktrees under `<repo>/.worktrees`.** (#335) The folder is
+  added to the common git dir's `info/exclude` first, so it never shows up as
+  untracked. The branch name is the folder name, with `/` written as `-`.
+- **`worktender start <issue> --scout` briefs a read-only investigation.**
+  (#329) The worker makes no edits, commits or PR, and writes its findings to a
+  report file under `~/.local/state/planner/scouts/`, then reports `done` with
+  that path. `gate --scout` checks the checkout against what `start` recorded
+  and refuses a scout with commits past the base or uncommitted changes
+  (exit 3). `--brief` is refused with `--scout`.
+- **A worker's report wakes the coordinator.** (#328) `report` types one line
+  (`worktender: #316 done pr 7 sha 50b3374`) into the pane `start` ran in, but
+  only when that pane is still the same `claude` agent and its input box is
+  empty. Otherwise the line is queued and the next report carries it. The line
+  is a hint: confirm with `worktender ls` or `gate` before acting on it.
+- **`start` names herdr workspaces, tabs and panes after the work.** (#326)
+  The workspace is `<repo> #<issue> <short title>`, the worker's tab and pane
+  are `worker`, `review` names its pane `reviewer` and `approve --pane` names
+  its pane `approve`. `report` prefixes the workspace with its status. Renames
+  are best-effort.
+
+### Fixed
+
+- **`verify` and `draft` exports keep the executable bit.** (#337) A file with
+  any execute bit in the archive is written 0o700, any other 0o600, so a check
+  that runs a script no longer fails on permissions. Symlinks are still
+  skipped. This changes `verify` behaviour.
+- **`verify` masks more credential forms and puts a failed install in
+  `--json`.** (#327, #323) `--json` gains `install`, one entry per failed
+  install. Masking now covers `scheme://user:pw@host` (including passwords with
+  `@` or `/`), `Authorization:` Basic, Digest and Token values, quoted
+  multi-word values, and an unterminated quote to end of line.
+
 ## [0.21.0] — 2026-10-20
 
 ### Added
