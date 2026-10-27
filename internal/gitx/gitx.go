@@ -7,6 +7,7 @@ package gitx
 import (
 	"bufio"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -366,4 +367,39 @@ func Worktrees(root string) ([]Worktree, error) {
 		return nil, fmt.Errorf("read git worktree list in %s: %w", root, err)
 	}
 	return list, nil
+}
+
+// Exclude makes sure entry is a line of the repository's info/exclude, adding
+// it if missing. The file lives in the common git dir, so one entry covers the
+// main checkout and every linked worktree, and no tracked file changes.
+func Exclude(root, entry string) error {
+	common, err := run(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(common, "info", "exclude")
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, line := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(line) == entry {
+			return nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
+		entry = "\n" + entry
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(entry + "\n"); err != nil {
+		return err
+	}
+	return f.Close()
 }

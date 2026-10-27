@@ -101,8 +101,10 @@ is not seen, and the branch comes out unprefixed. `--branch-prefix fix` (or
 `fix/`) sets the prefix yourself and skips detection; `--branch-prefix ""` forces
 none.
 
-herdr names the checkout directory after the branch with each `/` as `-`, so
-`feat/42-x` lives in `feat-42-x`.
+`start` puts the checkout at `<repo>/.worktrees/<branch>`, with each `/` in the
+branch written as `-`, so `feat/42-x` lives in `.worktrees/feat-42-x`. Before the
+first one it adds `.worktrees/` to the repository's `.git/info/exclude`, so the
+main checkout never lists it as untracked and no tracked file changes.
 
 ## Starting a worker as a role
 
