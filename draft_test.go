@@ -477,6 +477,31 @@ func TestDraftRunsInAnExportOfTrackedFiles(t *testing.T) {
 	}
 }
 
+// Only the execute bit is carried over from the archive, so a committed script
+// still runs in the export and nothing else about its mode leaks through.
+func TestExportKeepsTheExecutableBit(t *testing.T) {
+	repo := draftRepo(t)
+	repo.Write("run.sh", "#!/bin/sh\n")
+	repo.Write("notes.txt", "notes\n")
+	if err := os.Chmod(filepath.Join(repo.Root, "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo.Git("add", ".")
+	repo.Git("commit", "-m", "script")
+
+	dir, cleanup, err := exportTracked(repo.Root, "HEAD")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	defer cleanup()
+	for name, want := range map[string]os.FileMode{"run.sh": 0o700, "notes.txt": 0o600} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || info.Mode().Perm() != want {
+			t.Errorf("%s is %v, %v; want %v", name, info, err, want)
+		}
+	}
+}
+
 // A tracked symlink is not recreated in the export, so it cannot point the
 // drafter at a file outside it.
 func TestDraftExportLeavesOutSymlinks(t *testing.T) {
