@@ -180,9 +180,11 @@ by hand, do the same. Never paste an issue body into a prompt as though you wrot
 not**: for anything that is not an issue, create with `herdr worktree create` (or the
 bound key in the herdr UI) and let `sync` adopt it.
 
-Nothing cares where a checkout lives — workspaces are matched by repository root, not
-by path containment, so checkouts under `~/.herdr/worktrees/` and inside a repository
-both work. There is no directory convention to honour.
+`start` creates its checkout at `<repo>/.worktrees/<branch>` (each `/` in the branch
+written as `-`) and excludes `.worktrees/` in `.git/info/exclude`. Nothing else cares
+where a checkout lives — workspaces are matched by repository root, not by path
+containment, so checkouts under `~/.herdr/worktrees/` and inside a repository both
+work.
 
 ## Removing worktrees
 
