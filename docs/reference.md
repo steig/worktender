@@ -257,6 +257,10 @@ Errors you are most likely to meet:
   describes a plan the apply will not carry out. It never reaches an agent that
   is working, and there is no action for it: see
   [How it decides what to remove](pruning.md).
+- **`worktender version` prints the installed version**, the one in
+  `herdr-plugin.toml`, and `worktender --version` does the same. The manifest
+  is compiled into the binary, so a plain `go build` and `scripts/build.sh`
+  report the same thing.
 - **`base` is `origin/HEAD`, not `main`.** It falls back to `main` only when
   origin cannot be asked, so a repository defaulting to `master` or `develop` is
   handled without configuration.

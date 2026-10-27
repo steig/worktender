@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "approve", "draft", "start", "factory", "verify", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "review", "refocus", "inbox", "stats", "lessons", "on-event", "startup"}
+var commands = []string{"ls", "doctor", "update", "approve", "draft", "start", "factory", "verify", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "review", "refocus", "inbox", "stats", "lessons", "on-event", "startup", "version"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -106,6 +106,10 @@ var handlers = map[string]func(args []string, out io.Writer) error{
 	"on-event": onEventCommand,
 	// Invoked once by herdr after the server is ready. Off unless opted in.
 	"startup": startupCommand,
+	// Prints the version embedded from herdr-plugin.toml. `--version` is an
+	// alias, absent from commands like `list`.
+	"version":   versionCommand,
+	"--version": versionCommand,
 }
 
 func main() {

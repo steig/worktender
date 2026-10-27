@@ -117,3 +117,23 @@ func TestEveryReleasedVersionCarriesADate(t *testing.T) {
 		t.Fatal("no released version headings found; this test is watching nothing")
 	}
 }
+
+func TestVersionPrintsTheManifestVersion(t *testing.T) {
+	manifest, err := os.ReadFile("herdr-plugin.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^version\s*=\s*"([^"]+)"`).FindSubmatch(manifest)
+	if m == nil {
+		t.Fatal("herdr-plugin.toml has no version")
+	}
+	for _, cmd := range []string{"version", "--version"} {
+		var out strings.Builder
+		if err := run([]string{cmd}, &out); err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+		if want := string(m[1]) + "\n"; out.String() != want {
+			t.Errorf("%s printed %q, want %q", cmd, out.String(), want)
+		}
+	}
+}
