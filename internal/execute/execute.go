@@ -139,10 +139,12 @@ func OwnerSettingsFile(owner string) string {
 	return "worker-settings-" + strings.ToLower(owner) + ".json"
 }
 
-// OwnerTokensSet reports whether any per-owner token variable is set.
+// OwnerTokensSet reports whether any per-owner token variable exists, empty or
+// not. From then on a checkout that picks no token is an error and not an
+// agent on a looser one.
 func OwnerTokensSet() bool {
 	for _, kv := range os.Environ() {
-		if name, value, _ := strings.Cut(kv, "="); strings.HasPrefix(name, WorkerTokenEnv+"_") && value != "" {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, WorkerTokenEnv+"_") {
 			return true
 		}
 	}
@@ -183,14 +185,22 @@ func remoteOwner(path string) string {
 func workerTokenArgs(dir, path string) ([]string, error) {
 	envName, file := WorkerTokenEnv, WorkerSettingsFile
 	if OwnerTokensSet() {
+		if path == "" {
+			// Git would read whichever directory the caller stands in.
+			return nil, errors.New("per-owner worker tokens are set but the agent has no checkout to pick one by")
+		}
 		owner := remoteOwner(path)
 		if owner == "" {
-			// The fallback is not safe to take here: the owner's own token
-			// might be the one set, and your login is the step after that.
 			return nil, fmt.Errorf("per-owner worker tokens are set but %s has no readable github.com origin to pick one by", path)
 		}
-		if os.Getenv(OwnerTokenEnv(owner)) != "" {
-			envName, file = OwnerTokenEnv(owner), OwnerSettingsFile(owner)
+		name := OwnerTokenEnv(owner)
+		if value, set := os.LookupEnv(name); set {
+			if value == "" {
+				return nil, fmt.Errorf("%s is set but empty; unset it to use %s", name, WorkerTokenEnv)
+			}
+			envName, file = name, OwnerSettingsFile(owner)
+		} else if os.Getenv(WorkerTokenEnv) == "" {
+			return nil, fmt.Errorf("per-owner worker tokens are set but neither %s nor %s is", name, WorkerTokenEnv)
 		}
 	}
 	token := os.Getenv(envName)

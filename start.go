@@ -257,9 +257,23 @@ func startCommand(args []string, out io.Writer) error {
 	// The same KindStaff action `sync` and `dispatch` build, so the pane
 	// re-check in execute.staff() covers this path by construction too.
 	agent := reconcile.AgentName(s.root, branch)
+	// The token is picked by the owner of this checkout's origin, so the
+	// action has to name it; git would otherwise read the caller's directory.
+	// Without per-owner tokens nothing reads the path, so git is not asked.
+	staffPath := ""
+	if execute.OwnerTokensSet() {
+		if staffPath, err = worktreeFor(s.root, branch); err != nil {
+			err = fmt.Errorf("%w; the worktree at %s is yours to keep or remove", err, branch)
+			if wErr := emit(doc.finish(err)); wErr != nil {
+				return wErr
+			}
+			return err
+		}
+	}
 	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
 	results := executor.Run([]reconcile.Action{{
 		Kind:        reconcile.KindStaff,
+		Path:        staffPath,
 		Branch:      branch,
 		WorkspaceID: workspace,
 		PaneID:      pane,

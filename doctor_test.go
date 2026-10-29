@@ -291,8 +291,8 @@ func TestDoctorCountsPerOwnerWorkerTokens(t *testing.T) {
 	t.Setenv(execute.WorkerTokenEnv, "")
 	dir := t.TempDir()
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
-	t.Setenv(execute.OwnerTokenEnv("lampscom"), "github_pat_lamps")
-	t.Setenv(execute.OwnerTokenEnv("steig"), "")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_LAMPSCOM", "github_pat_lamps")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_STEIG", "")
 
 	left := filepath.Join(dir, execute.OwnerSettingsFile("steig"))
 	if err := os.WriteFile(left, []byte(`{"env":{"GH_TOKEN":"github_pat_withdrawn"}}`), 0o600); err != nil {

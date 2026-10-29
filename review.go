@@ -214,7 +214,7 @@ func reviewCommand(args []string, out io.Writer) error {
 	}
 	doc.Issue = number
 
-	_, workspace, err := reviewWorktree(s.client, s.root, pr.HeadRefName)
+	checkout, workspace, err := reviewWorktree(s.client, s.root, pr.HeadRefName)
 	if err != nil {
 		return finish(reviewOutcomeError, err)
 	}
@@ -289,6 +289,7 @@ func reviewCommand(args []string, out io.Writer) error {
 	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
 	results := executor.Run([]reconcile.Action{{
 		Kind:      reconcile.KindStaff,
+		Path:      checkout,
 		Branch:    pr.HeadRefName,
 		PaneID:    pane,
 		AgentName: agent,

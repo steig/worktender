@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -126,5 +127,39 @@ func TestDispatchJSONReportsAWorkerTokenItCannotStore(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "github_pat_worker_only") {
 		t.Errorf("the token was shown:\n%s", out.String())
+	}
+}
+
+// The owner is read from the workspace's own checkout, not from where dispatch
+// was run.
+func TestDispatchPicksTheTokenByTheWorkspaceCheckout(t *testing.T) {
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN", "")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_STEIG", "github_pat_steig")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_LAMPSCOM", "github_pat_lamps")
+	repo := herdrtest.NewRepo(t)
+	checkout := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "git@github.com:steig/tools.git"}} {
+		if out, err := exec.Command("git", append([]string{"-C", checkout}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	server := fakeStart(t, repo, "w9", "w9:p1", "working")
+	server.HandleResult("pane.get", map[string]any{"type": "pane_info", "pane": map[string]any{
+		"pane_id": "w9:p1", "workspace_id": "w9", "tab_id": "t1",
+		"terminal_id": "term_1", "agent_status": "idle", "focused": false, "revision": 1,
+	}})
+	server.HandleResult("workspace.list", map[string]any{"type": "workspace_list", "workspaces": []map[string]any{{
+		"workspace_id": "w9", "label": "w", "number": 1, "focused": false, "pane_count": 1, "tab_count": 1,
+		"agent_status": "idle", "active_tab_id": "t1",
+		"worktree": map[string]any{"checkout_path": checkout, "is_linked_worktree": true,
+			"repo_key": "k", "repo_name": "tools", "repo_root": repo.Root},
+	}}})
+
+	if err := dispatchCommand([]string{"--pane", "w9:p1", "--name", "w1"}, io.Discard); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	args := agentStartArgs(t, server)
+	if i := slices.Index(args, "--settings"); i < 0 || !strings.HasSuffix(args[i+1], "worker-settings-steig.json") {
+		t.Errorf("agent args = %v; want steig's settings file", args)
 	}
 }
