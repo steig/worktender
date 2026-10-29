@@ -284,3 +284,32 @@ func TestDoctorWarnsWhenWorkersInheritYourModel(t *testing.T) {
 		t.Errorf("default_model sonnet: %+v; want ok naming sonnet", got)
 	}
 }
+
+// A per-owner variable counts as set, and an owner's file left behind after its
+// variable is unset is named like the fallback's.
+func TestDoctorCountsPerOwnerWorkerTokens(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "")
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv(execute.OwnerTokenEnv("lampscom"), "github_pat_lamps")
+	t.Setenv(execute.OwnerTokenEnv("steig"), "")
+
+	left := filepath.Join(dir, execute.OwnerSettingsFile("steig"))
+	if err := os.WriteFile(left, []byte(`{"env":{"GH_TOKEN":"github_pat_withdrawn"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(dir, execute.OwnerSettingsFile("lampscom"))
+	if err := os.WriteFile(live, []byte(`{"env":{"GH_TOKEN":"github_pat_lamps"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := workerTokenCheck()
+	if got.state != stateOK || got.value != "narrowed" {
+		t.Errorf("%+v; want narrowed", got)
+	}
+	if !strings.Contains(got.note, "rm "+left) || strings.Contains(got.note, live) {
+		t.Errorf("%+v; want only %s named", got, left)
+	}
+	if strings.Contains(got.note, "github_pat") {
+		t.Errorf("doctor printed a token: %+v", got)
+	}
+}

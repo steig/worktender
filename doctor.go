@@ -350,20 +350,44 @@ func ghCheck() check {
 // safe, and the note says so. A worker runs as you, so your own login is still
 // within its reach; what stops it merging is branch protection.
 func workerTokenCheck() check {
-	if os.Getenv(execute.WorkerTokenEnv) == "" {
+	if os.Getenv(execute.WorkerTokenEnv) == "" && !execute.OwnerTokensSet() {
 		note := "workers' gh uses your token, so one can approve and merge; set " + execute.WorkerTokenEnv + " to narrow it"
-		// Staffing leaves the file when the variable is unset, so a token
-		// withdrawn or rotated stays on disk until someone removes it.
-		if dir := pluginStateDir(); dir != "" {
-			left := filepath.Join(dir, execute.WorkerSettingsFile)
-			if _, err := os.Stat(left); err == nil {
-				note += "; a previous worker token is still on disk: rm " + left
-			}
-		}
-		return check{name: "worker-gh", value: "your token", state: stateWarn, note: note}
+		return check{name: "worker-gh", value: "your token", state: stateWarn, note: note + leftTokenFiles()}
 	}
-	return check{name: "worker-gh", value: "narrowed", state: stateOK,
-		note: "workers' gh defaults to " + execute.WorkerTokenEnv + "; your login is still within reach, so branch protection is the control"}
+	note := "workers' gh defaults to " + execute.WorkerTokenEnv + "; your login is still within reach, so branch protection is the control"
+	if execute.OwnerTokensSet() {
+		note = "workers' gh takes " + execute.WorkerTokenEnv + "_<OWNER> by origin owner, else " + execute.WorkerTokenEnv +
+			"; your login is still within reach, so branch protection is the control"
+	}
+	return check{name: "worker-gh", value: "narrowed", state: stateOK, note: note + leftTokenFiles()}
+}
+
+// leftTokenFiles names settings files whose variable is unset. Staffing leaves
+// a file when its variable is unset, so a token withdrawn or rotated stays on
+// disk until someone removes it.
+func leftTokenFiles() string {
+	dir := pluginStateDir()
+	if dir == "" {
+		return ""
+	}
+	var left []string
+	if os.Getenv(execute.WorkerTokenEnv) == "" {
+		left = append(left, filepath.Join(dir, execute.WorkerSettingsFile))
+	}
+	owned, _ := filepath.Glob(filepath.Join(dir, "worker-settings-*.json"))
+	for _, path := range owned {
+		owner := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "worker-settings-"), ".json")
+		if os.Getenv(execute.OwnerTokenEnv(owner)) == "" {
+			left = append(left, path)
+		}
+	}
+	var note string
+	for _, path := range left {
+		if _, err := os.Stat(path); err == nil {
+			note += "; a previous worker token is still on disk: rm " + path
+		}
+	}
+	return note
 }
 
 // approversCheck warns while any write-access account's approval counts, a

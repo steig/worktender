@@ -72,6 +72,20 @@ the event hooks and `review` alike, so a worker a reconcile restarts after herdr
 does is not back on your token. Like `WORKTENDER_EVENTS`, the hooks read it from
 herdr's own environment, so export it before starting herdr.
 
+A fine-grained token covers one GitHub owner. To give each owner its own, set
+`WORKTENDER_WORKER_GH_TOKEN_<OWNER>`, with the owner upper-cased and `-` turned
+into `_`:
+
+```sh
+export WORKTENDER_WORKER_GH_TOKEN_LAMPSCOM=github_pat_...
+```
+
+The owner comes from the worktree's `origin` remote, over `https://github.com/`
+or `git@github.com:`. The per-owner variable wins when set; an owner without one
+gets `WORKTENDER_WORKER_GH_TOKEN`. While any per-owner variable is set, a worktree
+whose owner cannot be read fails to staff, naming its path, rather than falling
+back. Each owner's token is kept in its own `worker-settings-<owner>.json`.
+
 **This narrows what a worker does by default; it does not isolate one.** The
 worker runs as your OS user, so `env -u GH_TOKEN gh …`, `gh auth token` and
 `git credential fill` all still reach your own credentials. It stops a worker

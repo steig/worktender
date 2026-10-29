@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -119,12 +120,57 @@ type Executor struct {
 // agent runs as you, so your stored gh login is one `env -u GH_TOKEN` away.
 const WorkerTokenEnv = "WORKTENDER_WORKER_GH_TOKEN"
 
-// WorkerSettingsFile is the settings file in StateDir. Exported for doctor,
-// which names one left behind after the variable is unset.
+// WorkerSettingsFile is the settings file in StateDir for the WorkerTokenEnv
+// fallback. Exported for doctor, which names one left behind after the
+// variable is unset.
 const WorkerSettingsFile = "worker-settings.json"
 
-// workerTokenArgs are the agent arguments that give the agent WorkerTokenEnv
-// as GH_TOKEN, or none when it is unset.
+// OwnerTokenEnv names the token for repositories under one GitHub owner. A
+// fine-grained token covers one owner, so a dispatcher working in two needs
+// two. Set, it wins over WorkerTokenEnv for that owner.
+func OwnerTokenEnv(owner string) string {
+	return WorkerTokenEnv + "_" + strings.ToUpper(strings.ReplaceAll(owner, "-", "_"))
+}
+
+// OwnerSettingsFile is the settings file in StateDir for one owner's token.
+// One file per owner, so agents for different owners starting together never
+// read each other's token.
+func OwnerSettingsFile(owner string) string {
+	return "worker-settings-" + strings.ToLower(owner) + ".json"
+}
+
+// OwnerTokensSet reports whether any per-owner token variable is set.
+func OwnerTokensSet() bool {
+	for _, kv := range os.Environ() {
+		if name, value, _ := strings.Cut(kv, "="); strings.HasPrefix(name, WorkerTokenEnv+"_") && value != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// ownerPattern is what a GitHub owner looks like. It is also what keeps a
+// hostile remote URL from choosing the settings file's name.
+var ownerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
+
+// remoteOwner is the GitHub owner in the origin remote of the checkout at
+// path, from either an https or an ssh URL. Empty when it cannot be read.
+func remoteOwner(path string) string {
+	url := gitx.RemoteURL(path)
+	for _, prefix := range []string{"https://github.com/", "http://github.com/", "ssh://git@github.com/", "git@github.com:"} {
+		if rest, ok := strings.CutPrefix(url, prefix); ok {
+			owner, _, _ := strings.Cut(rest, "/")
+			if ownerPattern.MatchString(owner) {
+				return owner
+			}
+		}
+	}
+	return ""
+}
+
+// workerTokenArgs are the agent arguments that give the agent its worker token
+// as GH_TOKEN, or none when there is none for the checkout at path: the owner's
+// variable if set, else WorkerTokenEnv.
 //
 // The token goes through a settings file because there is nowhere else it is
 // not shown: agent.start takes no environment, an argument is visible to `ps`
@@ -134,22 +180,35 @@ const WorkerSettingsFile = "worker-settings.json"
 // Unset does not remove the file. A hook running without the variable would
 // delete it from under a launch that was handed it a moment earlier, and that
 // agent would start on your login; doctor names a file left behind instead.
-func workerTokenArgs(dir string) ([]string, error) {
-	token := os.Getenv(WorkerTokenEnv)
+func workerTokenArgs(dir, path string) ([]string, error) {
+	envName, file := WorkerTokenEnv, WorkerSettingsFile
+	if OwnerTokensSet() {
+		owner := remoteOwner(path)
+		if owner == "" {
+			// The fallback is not safe to take here: the owner's own token
+			// might be the one set, and your login is the step after that.
+			return nil, fmt.Errorf("per-owner worker tokens are set but %s has no readable github.com origin to pick one by", path)
+		}
+		if os.Getenv(OwnerTokenEnv(owner)) != "" {
+			envName, file = OwnerTokenEnv(owner), OwnerSettingsFile(owner)
+		}
+	}
+	token := os.Getenv(envName)
 	if token == "" {
 		return nil, nil
 	}
 	if dir == "" {
-		return nil, fmt.Errorf("%s is set but there is no plugin state directory to keep it in", WorkerTokenEnv)
+		return nil, fmt.Errorf("%s is set but there is no plugin state directory to keep it in", envName)
 	}
-	path := filepath.Join(dir, WorkerSettingsFile)
+	settings := filepath.Join(dir, file)
 	raw, _ := json.Marshal(map[string]any{"env": map[string]string{"GH_TOKEN": token}})
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("store the worker token: %w", err)
 	}
 	// Through a rename, so an agent starting beside this one never reads half
-	// a file. CreateTemp makes it 0600.
-	tmp, err := os.CreateTemp(dir, "worker-settings-*.json")
+	// a file. CreateTemp makes it 0600. The name stays clear of the
+	// worker-settings-<owner>.json shape doctor reads as an owner's file.
+	tmp, err := os.CreateTemp(dir, ".worker-settings-*.tmp")
 	if err != nil {
 		return nil, fmt.Errorf("store the worker token: %w", err)
 	}
@@ -158,13 +217,13 @@ func workerTokenArgs(dir string) ([]string, error) {
 		err = cErr
 	}
 	if err == nil {
-		err = os.Rename(tmp.Name(), path)
+		err = os.Rename(tmp.Name(), settings)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
 		return nil, fmt.Errorf("store the worker token: %w", err)
 	}
-	return []string{"--settings", path}, nil
+	return []string{"--settings", settings}, nil
 }
 
 // Run performs every action in order and returns one Result each.
@@ -243,7 +302,7 @@ func (e *Executor) staff(action reconcile.Action, busyUntil time.Time) Result {
 	// Caller arguments go last so they cannot displace --continue: whether to
 	// resume is this executor's decision, not the caller's.
 	args = append(args, action.AgentArgs...)
-	tokenArgs, err := workerTokenArgs(e.StateDir)
+	tokenArgs, err := workerTokenArgs(e.StateDir, action.Path)
 	if err != nil {
 		return Result{action, StatusFailed, err.Error()}
 	}
@@ -252,8 +311,8 @@ func (e *Executor) staff(action reconcile.Action, busyUntil time.Time) Result {
 	if len(tokenArgs) > 0 && slices.ContainsFunc(action.AgentArgs, func(a string) bool {
 		return a == "--settings" || strings.HasPrefix(a, "--settings=")
 	}) {
-		return Result{action, StatusFailed, fmt.Sprintf(
-			"%s is set and the agent already has --settings; refusing to start it with two", WorkerTokenEnv)}
+		return Result{action, StatusFailed,
+			"a worker token is set and the agent already has --settings; refusing to start it with two"}
 	}
 	args = append(args, tokenArgs...)
 

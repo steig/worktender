@@ -2,6 +2,7 @@ package execute_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -499,6 +500,72 @@ func TestStaffGivesTheAgentTheWorkerToken(t *testing.T) {
 	want := []any{"--model", "sonnet", "--settings", filepath.Join(exec.StateDir, "worker-settings.json")}
 	if got := callTo(t, server, "agent.start").Params["args"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("args = %v, want %v", got, want)
+	}
+}
+
+// A fine-grained token covers one owner, so the token an agent holds follows
+// the owner in its worktree's origin remote.
+func TestStaffPicksTheWorkerTokenByOwner(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "github_pat_fallback")
+	t.Setenv(execute.OwnerTokenEnv("lamps-com"), "github_pat_lamps")
+	t.Setenv(execute.OwnerTokenEnv("steig"), "")
+	repo := herdrtest.NewRepo(t)
+
+	checkout := func(url string) string {
+		dir := t.TempDir()
+		for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", url}} {
+			if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		return dir
+	}
+	staff := func(path string) (execute.Result, string, *herdrtest.Server) {
+		e, server := fixture(t, repo)
+		e.StateDir = t.TempDir()
+		action := reconcile.Action{Kind: reconcile.KindStaff, Path: path, PaneID: "w2:p1", AgentName: "a"}
+		return only(t, e.Run([]reconcile.Action{action})), e.StateDir, server
+	}
+	settingsFor := func(t *testing.T, dir string, server *herdrtest.Server, file string) string {
+		t.Helper()
+		want := []any{"--settings", filepath.Join(dir, file)}
+		if got := callTo(t, server, "agent.start").Params["args"]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("args = %v, want %v", got, want)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	for _, url := range []string{"https://github.com/lamps-com/site.git", "git@github.com:lamps-com/site.git"} {
+		result, dir, server := staff(checkout(url))
+		if result.Status != execute.StatusDone {
+			t.Fatalf("%s: status = %q: %s", url, result.Status, result.Detail)
+		}
+		if got := settingsFor(t, dir, server, "worker-settings-lamps-com.json"); !strings.Contains(got, "github_pat_lamps") {
+			t.Errorf("%s: settings = %s, want the owner's token", url, got)
+		}
+	}
+
+	result, dir, server := staff(checkout("https://github.com/steig/tools"))
+	if result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	if got := settingsFor(t, dir, server, execute.WorkerSettingsFile); !strings.Contains(got, "github_pat_fallback") {
+		t.Errorf("settings = %s, want the fallback token for an owner with no variable", got)
+	}
+
+	// No readable owner must not read as "the fallback applies".
+	result, _, server = staff(t.TempDir())
+	if result.Status != execute.StatusFailed || !strings.Contains(result.Detail, "origin") {
+		t.Errorf("status = %q (%s), want failed naming the origin", result.Status, result.Detail)
+	}
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			t.Error("an agent was started with no owner to pick its token by")
+		}
 	}
 }
 
