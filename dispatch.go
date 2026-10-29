@@ -77,9 +77,15 @@ func dispatchCommand(args []string, out io.Writer) error {
 		return err
 	}
 
+	checkout, err := workspaceCheckout(s, workspace)
+	if err != nil {
+		return err
+	}
+
 	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
 	results := executor.Run([]reconcile.Action{{
 		Kind:        reconcile.KindStaff,
+		Path:        checkout,
 		WorkspaceID: workspace,
 		PaneID:      *pane,
 		AgentName:   *name,
@@ -179,4 +185,24 @@ func workspaceForPane(s *session, pane string) (string, error) {
 		return "", usagef("herdr reports no workspace for pane %s; refusing to start an agent there", pane)
 	}
 	return info.Pane.WorkspaceID, nil
+}
+
+// workspaceCheckout is the worktree a workspace holds, which picks the agent's
+// worker token by its origin. It is only asked for when per-owner tokens are
+// set; the executor refuses an empty path in that case, so a workspace herdr
+// gives no checkout for fails there rather than here.
+func workspaceCheckout(s *session, workspace string) (string, error) {
+	if !execute.OwnerTokensSet() {
+		return "", nil
+	}
+	list, err := s.client.WorkspaceList()
+	if err != nil {
+		return "", fmt.Errorf("ask herdr about workspace %s: %w", workspace, err)
+	}
+	for _, w := range list.Workspaces {
+		if w.WorkspaceID == workspace && w.Worktree != nil {
+			return w.Worktree.CheckoutPath, nil
+		}
+	}
+	return "", nil
 }

@@ -2,6 +2,7 @@ package execute_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -500,6 +501,142 @@ func TestStaffGivesTheAgentTheWorkerToken(t *testing.T) {
 	if got := callTo(t, server, "agent.start").Params["args"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("args = %v, want %v", got, want)
 	}
+}
+
+// ownerCheckout is a git checkout whose origin is url.
+func ownerCheckout(t *testing.T, url string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", url}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return dir
+}
+
+// staffAt staffs one agent at path and returns the result, the state dir and
+// the fake herdr.
+func staffAt(t *testing.T, path string) (execute.Result, string, *herdrtest.Server) {
+	t.Helper()
+	e, server := fixture(t, herdrtest.NewRepo(t))
+	e.StateDir = t.TempDir()
+	action := reconcile.Action{Kind: reconcile.KindStaff, Path: path, PaneID: "w2:p1", AgentName: "a"}
+	return only(t, e.Run([]reconcile.Action{action})), e.StateDir, server
+}
+
+func noAgentStarted(t *testing.T, server *herdrtest.Server) {
+	t.Helper()
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			t.Error("an agent was started with no token picked for it")
+		}
+	}
+}
+
+// settingsHeld checks the agent was handed file in dir and returns what is in it.
+func settingsHeld(t *testing.T, dir string, server *herdrtest.Server, file string) string {
+	t.Helper()
+	path := filepath.Join(dir, file)
+	if got, want := callTo(t, server, "agent.start").Params["args"], []any{"--settings", path}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("%s is mode %o, want 600", file, info.Mode().Perm())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// A fine-grained token covers one owner, so the token an agent holds follows
+// the owner in its worktree's origin remote.
+func TestStaffPicksTheWorkerTokenByOwner(t *testing.T) {
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN", "github_pat_fallback")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_LAMPSCOM", "github_pat_lamps")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_STEIG_LABS", "github_pat_labs")
+
+	for _, url := range []string{"https://github.com/lampscom/site.git", "git@github.com:lampscom/site.git"} {
+		result, dir, server := staffAt(t, ownerCheckout(t, url))
+		if result.Status != execute.StatusDone {
+			t.Fatalf("%s: status = %q: %s", url, result.Status, result.Detail)
+		}
+		if got := settingsHeld(t, dir, server, "worker-settings-lampscom.json"); !strings.Contains(got, "github_pat_lamps") {
+			t.Errorf("%s: settings = %s, want the owner's token", url, got)
+		}
+	}
+
+	result, dir, server := staffAt(t, ownerCheckout(t, "https://github.com/steig-labs/x"))
+	if result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	if got := settingsHeld(t, dir, server, "worker-settings-steig-labs.json"); !strings.Contains(got, "github_pat_labs") {
+		t.Errorf("settings = %s, want the token for STEIG_LABS", got)
+	}
+
+	result, dir, server = staffAt(t, ownerCheckout(t, "https://github.com/steig/tools"))
+	if result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	if got := settingsHeld(t, dir, server, "worker-settings.json"); !strings.Contains(got, "github_pat_fallback") {
+		t.Errorf("settings = %s, want the fallback for an owner with no variable", got)
+	}
+
+	// No readable owner must not read as "the fallback applies".
+	result, _, server = staffAt(t, t.TempDir())
+	if result.Status != execute.StatusFailed || !strings.Contains(result.Detail, "origin") {
+		t.Errorf("status = %q (%s), want failed naming the origin", result.Status, result.Detail)
+	}
+	noAgentStarted(t, server)
+}
+
+// The owner is the worktree's, not the directory the caller stands in. A
+// caller in a lampscom checkout staffing a steig worktree gets steig's token.
+func TestStaffReadsTheOwnerFromTheWorktreeNotTheCaller(t *testing.T) {
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN", "")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_LAMPSCOM", "github_pat_lamps")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_STEIG", "github_pat_steig")
+	t.Chdir(ownerCheckout(t, "https://github.com/lampscom/site"))
+
+	result, dir, server := staffAt(t, ownerCheckout(t, "https://github.com/steig/tools"))
+	if result.Status != execute.StatusDone {
+		t.Fatalf("status = %q: %s", result.Status, result.Detail)
+	}
+	if got := settingsHeld(t, dir, server, "worker-settings-steig.json"); !strings.Contains(got, "github_pat_steig") {
+		t.Errorf("settings = %s, want steig's token", got)
+	}
+
+	// An action naming no checkout would have git read the caller's directory.
+	result, _, server = staffAt(t, "")
+	if result.Status != execute.StatusFailed {
+		t.Errorf("status = %q, want failed for an empty path", result.Status)
+	}
+	noAgentStarted(t, server)
+}
+
+// Once any per-owner variable exists, an agent never starts on a token nobody
+// chose for it.
+func TestStaffFailsClosedInOwnerTokenMode(t *testing.T) {
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN", "github_pat_fallback")
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN_LAMPSCOM", "")
+	result, _, server := staffAt(t, ownerCheckout(t, "https://github.com/lampscom/site"))
+	if result.Status != execute.StatusFailed || !strings.Contains(result.Detail, "WORKTENDER_WORKER_GH_TOKEN_LAMPSCOM") {
+		t.Errorf("empty owner variable: status = %q (%s), want failed naming it", result.Status, result.Detail)
+	}
+	noAgentStarted(t, server)
+
+	t.Setenv("WORKTENDER_WORKER_GH_TOKEN", "")
+	result, _, server = staffAt(t, ownerCheckout(t, "https://github.com/steig/tools"))
+	if result.Status != execute.StatusFailed {
+		t.Errorf("no variable for the owner and no fallback: status = %q, want failed", result.Status)
+	}
+	noAgentStarted(t, server)
 }
 
 // Unset does not delete the file. A hook staffing without the variable would
