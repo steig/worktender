@@ -6,7 +6,7 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
-## [Unreleased]
+## [0.25.0] — 2026-10-30
 
 ### Added
 
