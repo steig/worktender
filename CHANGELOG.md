@@ -6,6 +6,21 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.23.0] — 2026-10-29
+
+### Added
+
+- **Workers get a GitHub token picked by the repository's owner.** (#341)
+  `WORKTENDER_WORKER_GH_TOKEN_<OWNER>` (owner upper-cased, `-` written as `_`)
+  wins over `WORKTENDER_WORKER_GH_TOKEN`. The owner is read from the worktree's
+  `origin`, https or ssh. Once any per-owner variable exists, staffing fails
+  closed: an unreadable owner, an empty owner variable, or no owner variable
+  and no fallback refuses to staff the worker (needs a human). `doctor` counts
+  the per-owner tokens.
+- **`worktender version` reports the binary's version.** (#334) `--version`
+  does the same. The version is the one in `herdr-plugin.toml`, embedded in the
+  binary.
+
 ## [0.22.0] — 2026-10-27
 
 ### Added
