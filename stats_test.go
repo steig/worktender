@@ -414,3 +414,62 @@ func TestStatsWithoutSessionsHasNoTokens(t *testing.T) {
 		}
 	}
 }
+
+// A reviewer's session is part of what its dispatch cost: its tokens are added
+// to the dispatch of the repository and branch it reviewed, per model.
+func TestStatsCountsTheReviewerSession(t *testing.T) {
+	writeLedger(t,
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"42-a","issue":42}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:20:00Z","repository":"/r","branch":"42-a","status":"done","pr":7,"session":"worker"}`,
+		`{"v":1,"event":"reviewer","at":"2026-10-01T10:30:00Z","repository":"/r","branch":"42-a","pane_id":"w1:p2","role":"reviewer","pr":7,"session":"rev"}`,
+	)
+	reviewerCounted := statsTokensFor(t, "worker", "rev")
+	want := []modelTokens{
+		{"opus", tokenCounts{30, 300, 3000, 500}},
+		{"sonnet", tokenCounts{5, 50, 500, 50}},
+	}
+	if !reflect.DeepEqual(reviewerCounted, want) {
+		t.Errorf("tokens = %+v, want the worker's and the reviewer's summed: %+v", reviewerCounted, want)
+	}
+}
+
+func TestStatsIgnoresAReviewerOfAnotherBranch(t *testing.T) {
+	writeLedger(t,
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"42-a","issue":42}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:20:00Z","repository":"/r","branch":"42-a","status":"done","pr":7,"session":"worker"}`,
+		`{"v":1,"event":"reviewer","at":"2026-10-01T10:30:00Z","repository":"/r","branch":"43-b","pane_id":"w1:p2","role":"reviewer","pr":8,"session":"rev"}`,
+	)
+	got := statsTokensFor(t, "worker", "rev")
+	want := []modelTokens{{"opus", tokenCounts{20, 200, 2000, 0}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tokens = %+v, want only the worker's: %+v", got, want)
+	}
+}
+
+// statsTokensFor files a transcript for the worker and the reviewer under a
+// temporary HOME and returns the first dispatch's tokens from stats --json.
+func statsTokensFor(t *testing.T, worker, reviewer string) []modelTokens {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	projects := filepath.Join(home, ".claude", "projects", "-wt")
+	herdrtest.WriteFile(t, filepath.Join(projects, worker+".jsonl"), transcriptLine("w1", "opus", 20, 200, 2000, 0)+"\n")
+	herdrtest.WriteFile(t, filepath.Join(projects, reviewer+".jsonl"), strings.Join([]string{
+		transcriptLine("r1", "opus", 10, 100, 1000, 500),
+		transcriptLine("r2", "sonnet", 5, 50, 500, 50),
+	}, "\n")+"\n")
+	herdrtest.FakeGh(t, `echo '{"state":"OPEN","additions":1,"deletions":0}'`)
+
+	var out strings.Builder
+	if err := statsCommand([]string{"--json"}, &out); err != nil {
+		t.Fatalf("stats --json: %v", err)
+	}
+	var doc statsJSON
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("not a document: %v\n%s", err, out.String())
+	}
+	if len(doc.Dispatches) == 0 {
+		t.Fatal("no dispatches")
+	}
+	return doc.Dispatches[0].Tokens
+}

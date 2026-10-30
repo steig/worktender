@@ -6,6 +6,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [Unreleased]
+
+### Added
+
+- **`stats` counts the reviewer's session.** (#344) `review` records the
+  reviewer pane's session in the ledger, and its tokens are added to the
+  dispatch whose PR it reviewed.
+
 ## [0.23.0] — 2026-10-29
 
 ### Added

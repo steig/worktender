@@ -79,7 +79,7 @@ type ledgerEvent struct {
 	// start. It is what `gate --scout` trusts in place of the caller's flags.
 	ScoutCheckout string `json:"scout_checkout,omitempty"`
 
-	// report only, except that feedback carries PR too.
+	// report only, except that feedback and reviewer carry PR too.
 	Status string `json:"status,omitempty"`
 	PR     int    `json:"pr,omitempty"`
 	// Session is the worker's agent session id as herdr names it, which is
@@ -118,6 +118,10 @@ const (
 	// written to the issue. Like feedback, a kind added within version 1. It
 	// is what lets stats tell drafted checks from hand-written ones later.
 	ledgerDraft = "draft"
+	// ledgerReviewer is the session of the reviewer pane `review` started, kept
+	// so stats can add its tokens to the dispatch whose PR it read. A kind
+	// added within version 1, like feedback and draft.
+	ledgerReviewer = "reviewer"
 )
 
 // ledgerPath is where the ledger lives, or an error when no state directory can
@@ -220,14 +224,43 @@ func recordReport(r report) {
 	// pane is long gone. Best effort like the rest of the ledger.
 	if e.PaneID != "" && os.Getenv(socketEnv) != "" {
 		if client, err := herdrapi.New(); err == nil {
-			if info, err := client.AgentGet(e.PaneID); err == nil {
-				if s := info.Agent.AgentSession; s != nil && s.Kind == herdrapi.AgentSessionRefKindID && wt.PlainSessionID(s.Value) {
-					e.Session = s.Value
-				}
-			}
+			e.Session = paneSession(client, e.PaneID)
 		}
 	}
 	recordLedger(e)
+}
+
+// paneSession is the agent session id herdr holds for a pane, or "" when it
+// cannot say.
+func paneSession(client *herdrapi.Client, pane string) string {
+	info, err := client.AgentGet(pane)
+	if err != nil {
+		return ""
+	}
+	if s := info.Agent.AgentSession; s != nil && s.Kind == herdrapi.AgentSessionRefKindID && wt.PlainSessionID(s.Value) {
+		return s.Value
+	}
+	return ""
+}
+
+// recordReviewer appends the session of the reviewer in pane, against the
+// repository and branch of the worker's checkout, so stats finds the dispatch
+// the way it finds one for a report. Asked while the pane still exists.
+func recordReviewer(client *herdrapi.Client, checkout, pane string, pr int) {
+	root, err := gitx.RepoRoot(checkout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "worktender: warning: the reviewer's session was not recorded: %v; `worktender stats` will not count it\n", err)
+		return
+	}
+	session := paneSession(client, pane)
+	if session == "" {
+		fmt.Fprintf(os.Stderr, "worktender: warning: herdr named no session for the reviewer in %s; `worktender stats` will not count it\n", pane)
+		return
+	}
+	recordLedger(ledgerEvent{
+		Event: ledgerReviewer, Repository: root, Branch: gitx.Branch(checkout),
+		PaneID: pane, Role: "reviewer", PR: pr, Session: session,
+	})
 }
 
 // recordGate appends that a coordinator opened a wait. Recorded when the wait
