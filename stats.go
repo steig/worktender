@@ -59,7 +59,7 @@ type statsDispatch struct {
 	escape      *escapeFinding
 	escapeKnown bool
 
-	// sessions is every agent session its reports named, in the order first
+	// sessions is every agent session its reports and reviewers named, in the order first
 	// seen: a worker restarted mid-dispatch spent tokens in both. tokens is
 	// nil when none of their transcripts could be found.
 	sessions []string
@@ -338,6 +338,14 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 				if at, err := time.Parse(time.RFC3339Nano, e.At); err == nil {
 					d.doneAt = at
 				}
+			}
+
+		case ledgerReviewer:
+			// The reviewer's tokens are the dispatch's: it is what reviewing
+			// its PR cost.
+			d := byBranch[branchKey(e.Repository, e.Branch)]
+			if d != nil && e.Branch != "" && e.Session != "" && !slices.Contains(d.sessions, e.Session) {
+				d.sessions = append(d.sessions, e.Session)
 			}
 
 		case ledgerFeedback:

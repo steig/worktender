@@ -312,6 +312,7 @@ func reviewCommand(args []string, out io.Writer) error {
 	// something herdr resolves, and the pane is the thing review made.
 	outcome, r, err := reviewAwait(s.client, pane, *timeout, notes)
 	if r != nil {
+		recordReviewer(s.client, checkout, pane, pr.Number)
 		// The reviewer reports from the main checkout, so its sha is that
 		// checkout's HEAD and never the commit reviewed, which is head. Shown,
 		// it is a value someone would hand to --match-head-commit.

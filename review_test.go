@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -936,5 +937,41 @@ func TestReviewPostsNothingForAStaleVerdict(t *testing.T) {
 	_ = reviewCommand([]string{"17"}, io.Discard)
 	if strings.Contains(gh.read("calls"), "pr review") {
 		t.Errorf("a stale verdict must not be posted; calls:\n%s", gh.read("calls"))
+	}
+}
+
+// The reviewer's session is recorded against the worker's repository and
+// branch while its pane exists, so stats can count what the review cost.
+func TestReviewRecordsTheReviewersSession(t *testing.T) {
+	server, checkout, _ := fakeReview(t, greenPR)
+	path := withLedger(t)
+	server.HandleResult("agent.get", map[string]any{"type": "agent_info", "agent": map[string]any{
+		"pane_id": "w9:p2", "agent_status": "working",
+		"agent_session": map[string]any{"agent": "claude", "kind": "id", "source": "herdr", "value": "rev-sess"},
+	}})
+	stubReviewAwait(t, gateOutcomeReleased, &report{status: "done", pr: 17, note: "pass: all three checks met"}, nil)
+
+	if err := reviewCommand([]string{"17", "--json"}, new(strings.Builder)); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+
+	var got []ledgerEvent
+	for _, e := range ledgerEvents(t, path) {
+		if e.Event == ledgerReviewer {
+			got = append(got, e)
+		}
+	}
+	root, err := gitx.RepoRoot(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ledgerEvent{V: ledgerVersion, Event: ledgerReviewer, Repository: root, Branch: "42-fix-the-thing",
+		PaneID: "w9:p2", Role: "reviewer", PR: 17, Session: "rev-sess"}
+	if len(got) != 1 {
+		t.Fatalf("recorded %+v, want one reviewer event", got)
+	}
+	got[0].At = ""
+	if !reflect.DeepEqual(got[0], want) {
+		t.Errorf("recorded %+v, want %+v", got[0], want)
 	}
 }
