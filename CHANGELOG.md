@@ -6,6 +6,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [Unreleased]
+
+### Added
+
+- **`start --sha256` and `WORKTENDER_REQUIRE_APPROVAL`.** (#348) `start --sha256
+  <hex>` proceeds only if the issue hashes to the payload the caller approved,
+  reading no label or comment. With `WORKTENDER_REQUIRE_APPROVAL` set, a `start`
+  without it checks the approval comment on every issue, not only
+  `factory:ready` ones.
+
 ## [0.24.0] — 2026-10-29
 
 ### Added
