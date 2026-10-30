@@ -110,6 +110,23 @@ written fails the launch rather than starting an agent on your token, and so
 does a role whose agent arguments already carry a `--settings` of their own. `doctor`
 never prints the value.
 
+### Approving without a comment
+
+A worker on a host whose tokens act as you can post a
+`worktender-approved: sha256=` comment as you, so `start` has two ways to ask
+for an approval that does not read one:
+
+- **`worktender start <issue> --sha256 <hex>`** takes the payload hash you
+  approved (64 lowercase hex characters, as `approve --sha256` does). `start`
+  fetches the issue once, builds the payload `approve` prints, and refuses with
+  exit 3 unless it hashes to `<hex>`. The label is not consulted, no comment is
+  read, and `WORKTENDER_APPROVERS` does not apply. The pinned copy says the
+  payload was approved by the hash `start` was given.
+- **`WORKTENDER_REQUIRE_APPROVAL`**, set to anything but empty or `0`, makes a
+  `start` without `--sha256` check the approval comment on every issue, labelled
+  `factory:ready` or not, and refuse if there is none. Unset, empty or `0`,
+  `start` checks only labelled issues.
+
 ## Staying current
 
 ```sh

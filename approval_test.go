@@ -128,7 +128,9 @@ func newReadyStart(t *testing.T) readyStart {
 	return readyStart{server: server, checkout: repo.AddWorktree("42", "42-fix-the-thing"), root: repo.Root}
 }
 
-func (r readyStart) run() error { return startCommand([]string{"42"}, &strings.Builder{}) }
+func (r readyStart) run(extra ...string) error {
+	return startCommand(append([]string{"42"}, extra...), &strings.Builder{})
+}
 
 func briefSent(server *herdrtest.Server) string {
 	var text string

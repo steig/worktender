@@ -47,11 +47,17 @@ func startCommand(args []string, out io.Writer) error {
 	briefFlag := fs.String("brief", "", "text to send as the worker's first prompt, instead of the generic one; - reads stdin and waits until it closes")
 	branchPrefix := fs.String("branch-prefix", "", "type/ prefix for the branch, instead of the one the repository's hooks require; empty for none")
 	scout := fs.Bool("scout", false, "brief a read-only investigation that writes a report file and opens no pull request")
+	approvedHash := fs.String("sha256", "", "payload hash you approved; start refuses unless the issue hashes to it, and reads no label or comment")
 	asJSON := jsonFlag(fs)
 
 	issues, err := parseAround(fs, args)
 	if err != nil {
 		return usagef("%v; %s", err, startUsage)
+	}
+	hashGiven := false
+	fs.Visit(func(f *flag.Flag) { hashGiven = hashGiven || f.Name == "sha256" })
+	if hashGiven && !sha256Hex.MatchString(*approvedHash) {
+		return usagef("--sha256 wants 64 lowercase hex characters; %s", startUsage)
 	}
 	prefixGiven := false
 	fs.Visit(func(f *flag.Flag) { prefixGiven = prefixGiven || f.Name == "branch-prefix" })
@@ -131,13 +137,21 @@ func startCommand(args []string, out io.Writer) error {
 
 	// An issue cleared for an agent must still hash to a payload someone with
 	// write access approved with `worktender approve`; one that does not is
-	// refused here, before anything is created. Every other issue is read and
-	// briefed exactly as it always was. The branch is still named from the
-	// metadata read above: a slug reduced to [a-z0-9-] is not content anyone
-	// has to approve.
+	// refused here, before anything is created. With --sha256 the caller's hash
+	// is the approval and labels and comments play no part. With
+	// requireApprovalEnv set, every issue needs one or the other. Otherwise an
+	// unlabelled issue is read and briefed exactly as it always was. The branch
+	// is still named from the metadata read above: a slug reduced to [a-z0-9-]
+	// is not content anyone has to approve.
 	var approved *approvedIssue
-	if issue.hasLabel(labelFactoryReady) {
-		a, err := factoryApproval(s.root, number)
+	if hashGiven || issue.hasLabel(labelFactoryReady) || approvalRequired() {
+		var a approvedIssue
+		var err error
+		if hashGiven {
+			a, err = hashApproval(s.root, number, *approvedHash)
+		} else {
+			a, err = factoryApproval(s.root, number)
+		}
 		if err != nil {
 			if wErr := emit(doc.finish(err)); wErr != nil {
 				return wErr
@@ -228,7 +242,11 @@ func startCommand(args []string, out io.Writer) error {
 			path, err = pinIssue(checkout, *approved)
 		}
 		if err == nil {
-			fmt.Fprintf(notes, "approved: %s by @%s; pinned to %s\n", labelFactoryReady, approved.Approver, path)
+			if hashGiven {
+				fmt.Fprintf(notes, "approved: --sha256 %s; pinned to %s\n", approved.Hash, path)
+			} else {
+				fmt.Fprintf(notes, "approved: %s by @%s; pinned to %s\n", labelFactoryReady, approved.Approver, path)
+			}
 		} else {
 			err = fmt.Errorf("%w; the worktree at %s is yours to keep or remove", err, branch)
 			if wErr := emit(doc.finish(err)); wErr != nil {
@@ -434,8 +452,17 @@ func customBrief(value string, given bool, stdin io.Reader) (string, error) {
 	return value, nil
 }
 
+// requireApprovalEnv makes start refuse any issue without an approval, labelled
+// or not, for a host that cannot trust the label.
+const requireApprovalEnv = "WORKTENDER_REQUIRE_APPROVAL"
+
+func approvalRequired() bool {
+	v := os.Getenv(requireApprovalEnv)
+	return v != "" && v != "0"
+}
+
 const startUsage = "usage: worktender start <issue> [--role <role>] [--model <model>] " +
-	"[--permission-mode <mode>] [--base <ref>] [--branch-prefix <type>] [--repo <path>] [--brief <text|->] [--scout] [--focus] [--json]"
+	"[--permission-mode <mode>] [--base <ref>] [--branch-prefix <type>] [--repo <path>] [--sha256 <hex>] [--brief <text|->] [--scout] [--focus] [--json]"
 
 // parseAround parses flags written on either side of the positional arguments,
 // returning the positionals.
