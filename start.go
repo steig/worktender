@@ -711,7 +711,7 @@ func submitBrief(client *herdrapi.Client, pane, text string) error {
 		// tool output on screen is therefore reported idle while it works. So idle
 		// alone does not say the brief is unread; the transcript echoing it does.
 		if status == herdrapi.AgentStatusIdle {
-			read, err := client.PaneRead(pane, herdrapi.ReadSourceVisible)
+			read, err := client.PaneReadLines(pane, herdrapi.ReadSourceRecent, briefTakenLines)
 			if err != nil {
 				return fmt.Errorf("read %s to see whether the brief was taken: %w", pane, err)
 			}
@@ -731,6 +731,11 @@ func submitBrief(client *herdrapi.Client, pane, text string) error {
 		time.Sleep(briefConfirmPoll)
 	}
 }
+
+// briefTakenLines is how far back submitBrief reads for the echo: a worker that
+// prints a lot in its first seconds scrolls the brief off the visible screen
+// while herdr still calls it idle.
+const briefTakenLines = 200
 
 // briefTaken reports whether screen shows the agent having taken the brief:
 // the input box no longer holds it, and the transcript above echoes it as a

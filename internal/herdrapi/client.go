@@ -558,6 +558,15 @@ func (c *Client) PaneRead(paneID string, source ReadSource) (*PaneReadResponse, 
 	return &out, nil
 }
 
+// PaneReadLines is PaneRead limited to the last lines lines of the source.
+func (c *Client) PaneReadLines(paneID string, source ReadSource, lines uint32) (*PaneReadResponse, error) {
+	var out PaneReadResponse
+	if err := c.call("pane.read", map[string]any{"pane_id": paneID, "source": source, "lines": lines}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // PaneGet returns one pane, including the metadata tokens attached to it.
 //
 // Unlike AgentGet it does not require the pane to have an agent, which is why

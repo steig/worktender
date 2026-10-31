@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const brief77 = "Read issue #77 and do what it asks"
 
@@ -22,5 +25,12 @@ func TestBriefTakenNotWhileHeld(t *testing.T) {
 	screen := "❯ Read issue #77 and do what it asks\n"
 	if briefTaken(screen, brief77) {
 		t.Error("a brief still in the box should not count as taken")
+	}
+}
+
+func TestScrolledUpEchoCountsAsTaken(t *testing.T) {
+	screen := "❯ Read issue #77 and do what it asks\n" + strings.Repeat("⏺ tool output\n", 60) + "❯ \n"
+	if !briefTaken(screen, brief77) {
+		t.Error("an echo scrolled far above an empty box should count as taken")
 	}
 }
