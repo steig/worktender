@@ -6,6 +6,17 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.27.1] — 2026-10-31
+
+### Fixed
+
+- **`start` fetches a remote-tracking base first.** (#361) With a base such as
+  `origin/main`, `start` fetches it before picking the fork point, so a clone
+  that hasn't fetched no longer branches from a stale commit.
+- **`start` counts the brief as taken only when the transcript echoes it.**
+  (#363) It reads recent scrollback for the echo, so a brief typed into a
+  screen that swallowed it is no longer reported as delivered.
+
 ## [0.27.0] — 2026-10-30
 
 ### Changed
