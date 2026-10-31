@@ -6,6 +6,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.27.0] — 2026-10-30
+
+### Changed
+
+- **Workers get no MCP servers or tools.** (#357) `start` and `dispatch` launch
+  the worker with `--strict-mcp-config`, `--disallowedTools "mcp__*"`, and
+  `ENABLE_CLAUDEAI_MCP_SERVERS=false` in its `--settings`. `start` now refuses
+  an agent that already has `--settings`, with or without a worker token,
+  because worktender always passes its own.
+
 ## [0.26.0] — 2026-10-30
 
 ### Added
