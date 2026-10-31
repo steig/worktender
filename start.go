@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -197,6 +199,12 @@ func startCommand(args []string, out io.Writer) error {
 	forkFrom := *base
 	if forkFrom == "" {
 		forkFrom = baseRef
+	}
+	if err := fetchBase(s.root, forkFrom); err != nil {
+		if wErr := emit(doc.finish(err)); wErr != nil {
+			return wErr
+		}
+		return err
 	}
 	// Read before the create, so what is printed is the commit the fork was
 	// asked for rather than whatever the ref names by the time anyone looks.
@@ -402,6 +410,38 @@ func startCommand(args []string, out io.Writer) error {
 //
 // Nothing is refused and nothing is warned about: stacking is not a mistake, and
 // this is the one thing to know before doing it.
+// fetchBase brings a remote-tracking base up to date before start reads its
+// fork point; nothing else fetches on the factory VM, so a worker would fork
+// from a stale origin/main. A local branch, sha or tag is left alone.
+func fetchBase(root, ref string) error {
+	full, err := gitWithin(0, root, "rev-parse", "--symbolic-full-name", ref)
+	if err != nil {
+		return nil
+	}
+	rest, ok := strings.CutPrefix(full, "refs/remotes/")
+	if !ok {
+		return nil
+	}
+	remote, branch, ok := strings.Cut(rest, "/")
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "fetch", remote, branch)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if execute.OwnerTokensSet() {
+		if owner := execute.RemoteOwner(root); owner != "" {
+			cmd.Env = append(cmd.Env, "GH_TOKEN="+os.Getenv(execute.OwnerTokenEnv(owner)))
+		}
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("fetching %s before forking from it: %w: %s", ref, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func printForkPoint(out io.Writer, forkFrom, forkPoint, baseRef, basePoint string) {
 	if forkPoint == "" {
 		return

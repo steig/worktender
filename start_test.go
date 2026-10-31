@@ -334,6 +334,10 @@ JSON`)
 func TestStartPrintsTheCommitItForkedFrom(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	repo.SetOriginHead("main")
+	// start fetches origin/main, so origin has to be a repository that has it.
+	bare := filepath.Join(t.TempDir(), "origin.git")
+	repo.Git("clone", "--bare", ".", bare)
+	repo.Git("remote", "add", "origin", bare)
 	fakeStart(t, repo, "w9", "w9:p1", "working")
 	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":42,"title":"Fix the thing","body":"it is broken"}`))
 
