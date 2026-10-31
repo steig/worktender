@@ -6,6 +6,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.26.0] — 2026-10-30
+
+### Added
+
+- **`WORKTENDER_READ_GH_TOKEN_<OWNER>`.** (#353) worktender's own GitHub reads
+  use the per-owner read token when one is set. Writes never do. Once any
+  such token is set there is no fallback to the ambient credentials.
+
 ## [0.25.0] — 2026-10-30
 
 ### Added
