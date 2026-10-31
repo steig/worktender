@@ -101,8 +101,8 @@ func TestStartStartsTheAgentALabelChose(t *testing.T) {
 	}
 
 	want := []string{"--agent", "ux-designer", "--add-dir", filepath.Join(home, "kb"), "--model", "opus"}
-	if got := agentStartArgs(t, server); !slices.Equal(got[len(got)-len(want):], want) {
-		t.Errorf("agent args = %v; want them to end %v", got, want)
+	if got := agentStartArgs(t, server); len(got) < len(want) || !slices.Equal(got[:len(want)], want) {
+		t.Errorf("agent args = %v; want them to start %v", got, want)
 	}
 	if !strings.Contains(out.String(), "role: ux (label role:ux) · agent: ux-designer") {
 		t.Errorf("start did not say which role it chose:\n%s", out.String())

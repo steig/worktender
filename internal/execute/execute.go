@@ -199,6 +199,21 @@ func URLOwner(url string) string {
 	return ""
 }
 
+// noMCPEnv keeps claude.ai connectors out of a worker. agent.start takes no
+// environment, so it travels in the same --settings the token does.
+const noMCPEnv = "ENABLE_CLAUDEAI_MCP_SERVERS"
+
+// workerSettings is the settings JSON for a worker: connectors off, and GH_TOKEN
+// when token is not empty.
+func workerSettings(token string) []byte {
+	env := map[string]string{noMCPEnv: "false"}
+	if token != "" {
+		env["GH_TOKEN"] = token
+	}
+	raw, _ := json.Marshal(map[string]any{"env": env})
+	return raw
+}
+
 // workerTokenArgs are the agent arguments that give the agent its worker token
 // as GH_TOKEN, or none when there is none for the checkout at path: the owner's
 // variable if set, else WorkerTokenEnv.
@@ -234,13 +249,13 @@ func workerTokenArgs(dir, path string) ([]string, error) {
 	}
 	token := os.Getenv(envName)
 	if token == "" {
-		return nil, nil
+		return []string{"--settings", string(workerSettings(""))}, nil
 	}
 	if dir == "" {
 		return nil, fmt.Errorf("%s is set but there is no plugin state directory to keep it in", envName)
 	}
 	settings := filepath.Join(dir, file)
-	raw, _ := json.Marshal(map[string]any{"env": map[string]string{"GH_TOKEN": token}})
+	raw := workerSettings(token)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("store the worker token: %w", err)
 	}
@@ -347,11 +362,11 @@ func (e *Executor) staff(action reconcile.Action, busyUntil time.Time) Result {
 	}
 	// Which of two --settings claude honours for GH_TOKEN is not something to
 	// find out from a worker that got the wrong one.
-	if len(tokenArgs) > 0 && slices.ContainsFunc(action.AgentArgs, func(a string) bool {
+	if slices.ContainsFunc(action.AgentArgs, func(a string) bool {
 		return a == "--settings" || strings.HasPrefix(a, "--settings=")
 	}) {
 		return Result{action, StatusFailed,
-			"a worker token is set and the agent already has --settings; refusing to start it with two"}
+			"the agent already has --settings, and worktender passes its own; refusing to start it with two"}
 	}
 	args = append(args, tokenArgs...)
 
