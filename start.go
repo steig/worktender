@@ -410,6 +410,20 @@ func startCommand(args []string, out io.Writer) error {
 //
 // Nothing is refused and nothing is warned about: stacking is not a mistake, and
 // this is the one thing to know before doing it.
+func printForkPoint(out io.Writer, forkFrom, forkPoint, baseRef, basePoint string) {
+	if forkPoint == "" {
+		return
+	}
+	fmt.Fprintf(out, "fork point: %s is %s\n", forkFrom, forkPoint)
+	if forkPoint == basePoint {
+		return
+	}
+	fmt.Fprintf(out, "  stacked: %s holds commits %s does not. A squash merge lands\n", forkFrom, baseRef)
+	fmt.Fprintf(out, "           none of them there, and this branch's PR would then show its diff too.\n")
+	fmt.Fprintf(out, "  repair:  git rebase --onto %s %s\n", baseRef, forkPoint)
+	fmt.Fprintf(out, "           once it merges. Before that, --onto %s, having rebased that first.\n", forkFrom)
+}
+
 // fetchBase brings a remote-tracking base up to date before start reads its
 // fork point; nothing else fetches on the factory VM, so a worker would fork
 // from a stale origin/main. A local branch, sha or tag is left alone.
@@ -440,20 +454,6 @@ func fetchBase(root, ref string) error {
 		return fmt.Errorf("fetching %s before forking from it: %w: %s", ref, err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func printForkPoint(out io.Writer, forkFrom, forkPoint, baseRef, basePoint string) {
-	if forkPoint == "" {
-		return
-	}
-	fmt.Fprintf(out, "fork point: %s is %s\n", forkFrom, forkPoint)
-	if forkPoint == basePoint {
-		return
-	}
-	fmt.Fprintf(out, "  stacked: %s holds commits %s does not. A squash merge lands\n", forkFrom, baseRef)
-	fmt.Fprintf(out, "           none of them there, and this branch's PR would then show its diff too.\n")
-	fmt.Fprintf(out, "  repair:  git rebase --onto %s %s\n", baseRef, forkPoint)
-	fmt.Fprintf(out, "           once it merges. Before that, --onto %s, having rebased that first.\n", forkFrom)
 }
 
 // briefGiven reports whether --brief was passed, so that an empty value is
