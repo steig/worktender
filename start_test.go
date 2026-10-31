@@ -590,10 +590,13 @@ func TestStartFailsWhenTheAgentNeverTakesTheBriefUp(t *testing.T) {
 	if err == nil {
 		t.Fatal("start must fail when the agent never takes the brief up")
 	}
-	// Nothing here is unrecoverable — the worktree and the agent both exist and
-	// the brief is one keypress from landing — so the error has to say which one.
-	if !strings.Contains(err.Error(), "send-keys w9:p1 enter") {
-		t.Errorf("the error should say how to submit the brief by hand, got %v", err)
+	// The brief may be in the box or lost, so the error sends the reader to look
+	// at the pane before pressing anything.
+	if !strings.Contains(err.Error(), "herdr pane read w9:p1 --source visible") {
+		t.Errorf("the error should say how to look at the pane, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "lost before it was submitted") {
+		t.Errorf("the error should say the brief may have been lost, got %v", err)
 	}
 	// And it has to say the press was already tried, or the advice reads as the
 	// obvious thing nobody thought of rather than the thing that did not work.
@@ -1111,8 +1114,8 @@ func TestCustomBrief(t *testing.T) {
 }
 
 // herdr calls Claude Code idle whenever its prompt box is drawn and no spinner
-// is in view, so a worker mid-turn reads as idle. An empty prompt box is what
-// says the brief was taken.
+// is in view, so a worker mid-turn reads as idle. An empty prompt box with the
+// brief echoed in the transcript above it is what says the brief was taken.
 func TestStartAcceptsAnIdleAgentWhoseComposerIsEmpty(t *testing.T) {
 	repo := herdrtest.NewRepo(t)
 	server := fakeStart(t, repo, "w9", "w9:p1", "idle")
@@ -1121,7 +1124,7 @@ func TestStartAcceptsAnIdleAgentWhoseComposerIsEmpty(t *testing.T) {
 		if n <= 2 {
 			return composerScreen
 		}
-		return "❯ the brief, as echoed in the transcript\n● Reading the issue\n──────\n❯ \n──────\n"
+		return "❯ [Pasted text #1 +3 lines]\n● Reading the issue\n──────\n❯ \n──────\n"
 	})
 	briefConfirmWithin(t, 300*time.Millisecond)
 
@@ -1155,7 +1158,7 @@ func TestStartAcceptsAnIdleAgentWhoseEmptyComposerShowsPlaceholder(t *testing.T)
 		if n <= 2 {
 			return composerScreen
 		}
-		return "● Reading the issue\n──────\n❯ Try \"fix lint errors\"\n──────\n"
+		return "❯ [Pasted text #1 +3 lines]\n● Reading the issue\n──────\n❯ Try \"fix lint errors\"\n──────\n"
 	})
 	briefConfirmWithin(t, 300*time.Millisecond)
 

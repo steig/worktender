@@ -709,55 +709,68 @@ func submitBrief(client *herdrapi.Client, pane, text string) error {
 		// the prompt box is drawn and no spinner line is among the bottom twelve
 		// lines (`herdr agent explain` names the rule). A worker mid-turn with long
 		// tool output on screen is therefore reported idle while it works. So idle
-		// alone does not say the brief is unread; the composer does.
+		// alone does not say the brief is unread; the transcript echoing it does.
 		if status == herdrapi.AgentStatusIdle {
-			held, err := composerHoldsText(client, pane, text)
+			read, err := client.PaneRead(pane, herdrapi.ReadSourceVisible)
 			if err != nil {
-				return err
+				return fmt.Errorf("read %s to see whether the brief was taken: %w", pane, err)
 			}
-			if !held {
+			if briefTaken(read.Read.Text, text) {
 				return nil
 			}
 		}
 		if time.Now().After(deadline) {
 			return codef(exitNeedsHuman,
-				"the brief was typed into %s and %s was pressed %s over %s, but herdr still reports that "+
-					"agent as %s — the brief is most likely still sitting in its input box; press %s "+
-					"yourself with `herdr pane send-keys %s %s`, and if the pane is showing something "+
-					"else read it with `herdr pane read %s --source visible`",
+				"the brief was typed into %s and %s was pressed %s over %s, but its transcript never "+
+					"showed the brief and herdr reports the agent as %s — the brief is either still "+
+					"in the input box or was lost before it was submitted; look with "+
+					"`herdr pane read %s --source visible` before pressing %s yourself",
 				pane, briefSubmitKey, times(presses), briefConfirmWait, status,
-				briefSubmitKey, pane, briefSubmitKey, pane)
+				pane, briefSubmitKey)
 		}
 		time.Sleep(briefConfirmPoll)
 	}
 }
 
-// composerHoldsText reports whether Claude Code's input box in pane still holds
-// the brief: its start, or the `[Pasted text #1 +N lines]` a long paste collapses
-// to. An empty box is not enough to look for text in, because Claude Code draws
-// placeholder text in it, so the box is compared with what was typed.
+// briefTaken reports whether screen shows the agent having taken the brief:
+// the input box no longer holds it, and the transcript above echoes it as a
+// prompt of its own. An empty box alone is not evidence, because a brief lost
+// before it was submitted, for example while Claude Code redrew for an update
+// notice, leaves the box empty too.
 //
-// The box is the last `❯` line on screen: earlier ones are the transcript echoing
-// prompts already sent. A screen with no such line says nothing, and is read as
-// the box holding the brief — the answer that keeps pressing and, failing that,
-// warns.
-func composerHoldsText(client *herdrapi.Client, pane, typed string) (bool, error) {
-	read, err := client.PaneRead(pane, herdrapi.ReadSourceVisible)
-	if err != nil {
-		return false, fmt.Errorf("read %s to see whether the brief was taken: %w", pane, err)
-	}
-	lines := strings.Split(read.Read.Text, "\n")
+// The box is the last `❯` line on screen; earlier ones are the transcript
+// echoing prompts already sent. A long paste collapses to `[Pasted text #1
+// +N lines]` in both places, so that is matched as well as the brief's start.
+// A screen with no `❯` line says nothing, and reads as not taken.
+func briefTaken(screen, typed string) bool {
+	lines := strings.Split(screen, "\n")
+	box := -1
 	for i := len(lines) - 1; i >= 0; i-- {
-		if line := strings.TrimSpace(lines[i]); strings.HasPrefix(line, "❯") {
-			box := strings.TrimSpace(strings.TrimPrefix(line, "❯"))
-			start := []rune(typed)
-			if len(start) > 20 {
-				start = start[:20]
-			}
-			return strings.Contains(box, "[Pasted text") || strings.HasPrefix(box, string(start)), nil
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "❯") {
+			box = i
+			break
 		}
 	}
-	return true, nil
+	if box < 0 {
+		return false
+	}
+	start := []rune(typed)
+	if len(start) > 20 {
+		start = start[:20]
+	}
+	echoes := func(line string) bool {
+		text := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "❯"))
+		return strings.Contains(text, "[Pasted text") || strings.HasPrefix(text, string(start))
+	}
+	if echoes(lines[box]) {
+		return false
+	}
+	for _, line := range lines[:box] {
+		if strings.HasPrefix(strings.TrimSpace(line), "❯") && echoes(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // times counts keypresses for the failure message, which is read by someone
