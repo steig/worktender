@@ -155,10 +155,39 @@ func OwnerTokensSet() bool {
 // hostile remote URL from choosing the settings file's name.
 var ownerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 
+// ReadTokenPrefix starts the variables that give worktender's own gh reads a
+// token per owner. It does not start with WorkerTokenEnv+"_", so
+// OwnerTokensSet never sees them.
+const ReadTokenPrefix = "WORKTENDER_READ_GH_TOKEN_"
+
+// ReadTokenEnv names the read token for repositories under one GitHub owner,
+// spelled the way OwnerTokenEnv spells its owner.
+func ReadTokenEnv(owner string) string {
+	return ReadTokenPrefix + strings.ToUpper(strings.ReplaceAll(owner, "-", "_"))
+}
+
+// ReadTokensSet reports whether any read token variable exists, empty or not.
+func ReadTokensSet() bool {
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, ReadTokenPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // remoteOwner is the GitHub owner in the origin remote of the checkout at
-// path, from either an https or an ssh URL. Empty when it cannot be read.
+// path. Empty when it cannot be read.
 func remoteOwner(path string) string {
-	url := gitx.RemoteURL(path)
+	return URLOwner(gitx.RemoteURL(path))
+}
+
+// RemoteOwner is remoteOwner for callers outside this package.
+func RemoteOwner(path string) string { return remoteOwner(path) }
+
+// URLOwner is the GitHub owner in a remote URL, from either an https or an ssh
+// URL. Empty when it cannot be read.
+func URLOwner(url string) string {
 	for _, prefix := range []string{"https://github.com/", "http://github.com/", "ssh://git@github.com/", "git@github.com:"} {
 		if rest, ok := strings.CutPrefix(url, prefix); ok {
 			owner, _, _ := strings.Cut(rest, "/")

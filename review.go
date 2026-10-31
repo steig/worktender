@@ -776,7 +776,7 @@ func nonTestLines(diff []byte) int {
 // request's — three dots, from their merge base — by commit id, so it is the
 // diff of exactly what was reviewed however the branch moves afterwards.
 func commitDiff(root, owner, name, base, head string) ([]byte, error) {
-	out, err := ghOutput(root, "api", fmt.Sprintf("repos/%s/%s/compare/%s...%s", owner, name, base, head),
+	out, err := ghReadOutput(root, "api", fmt.Sprintf("repos/%s/%s/compare/%s...%s", owner, name, base, head),
 		"-H", "Accept: application/vnd.github.diff")
 	if err != nil {
 		return nil, fmt.Errorf("fetch the diff of %s with gh: %w", shortOid(head), err)
@@ -810,7 +810,7 @@ const commitChecksQuery = `query($owner: String!, $name: String!, $oid: GitObjec
 // rollup has no checks, which ciStatusOf calls missing. More than a page is
 // refused rather than judged on the first hundred.
 func commitChecks(root, owner, name, oid string) ([]prCheck, error) {
-	out, err := ghOutput(root, "api", "graphql",
+	out, err := ghReadOutput(root, "api", "graphql",
 		"-F", "owner="+owner, "-F", "name="+name, "-F", "oid="+oid,
 		"-f", "query="+commitChecksQuery)
 	if err != nil {
@@ -907,7 +907,7 @@ func reviewPRFor(root, target string) (reviewPR, error) {
 	if origin := gitx.RemoteURL(root); origin != "" {
 		args = append(args, "--repo", origin)
 	}
-	raw, err := ghOutput(root, args...)
+	raw, err := ghReadOutput(root, args...)
 	if err != nil {
 		return reviewPR{}, fmt.Errorf("read PR %s with gh: %w; check `gh auth status`", target, err)
 	}
