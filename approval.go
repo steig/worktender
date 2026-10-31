@@ -257,7 +257,7 @@ func ghRepository(root string) (owner, name string, err error) {
 		args = append(args, origin)
 	}
 	args = append(args, "--json", "owner,name")
-	out, err := ghOutput(root, args...)
+	out, err := ghReadOutput(root, args...)
 	if err != nil {
 		return "", "", fmt.Errorf("find the GitHub repository with gh: %w; check `gh auth status`", err)
 	}
@@ -274,7 +274,7 @@ func ghRepository(root string) (owner, name string, err error) {
 }
 
 func fetchIssueSnapshot(root, owner, name string, number int) (issueSnapshot, error) {
-	out, err := ghOutput(root, "api", "graphql",
+	out, err := ghReadOutput(root, "api", "graphql",
 		"-F", "owner="+owner, "-F", "name="+name, "-F", "number="+strconv.Itoa(number),
 		"-f", "query="+issueSnapshotQuery)
 	if err != nil {
@@ -301,7 +301,7 @@ func fetchIssueSnapshot(root, owner, name string, number int) (issueSnapshot, er
 // that is not a collaborator — an app's bot account among them — is answered
 // with an error or "read", and either fails to approve.
 func collaboratorPermission(root, owner, name, login string) (string, error) {
-	out, err := ghOutput(root, "api", fmt.Sprintf("repos/%s/%s/collaborators/%s/permission", owner, name, login))
+	out, err := ghReadOutput(root, "api", fmt.Sprintf("repos/%s/%s/collaborators/%s/permission", owner, name, login))
 	if err != nil {
 		return "", err
 	}
@@ -317,6 +317,11 @@ func collaboratorPermission(root, owner, name, login string) (string, error) {
 func ghOutput(root string, args ...string) ([]byte, error) {
 	cmd := exec.Command("gh", args...)
 	cmd.Dir = root
+	return runGh(cmd)
+}
+
+// runGh runs cmd and returns its output, with gh's stderr in the error.
+func runGh(cmd *exec.Cmd) ([]byte, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		var exit *exec.ExitError

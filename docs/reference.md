@@ -110,6 +110,31 @@ written fails the launch rather than starting an agent on your token, and so
 does a role whose agent arguments already carry a `--settings` of their own. `doctor`
 never prints the value.
 
+### Reading GitHub with a separate token
+
+When `worktender` runs as a user with no `gh` login, set
+`WORKTENDER_READ_GH_TOKEN_<OWNER>` (owner upper-cased, `-` turned into `_`, as
+for the worker token). worktender's own **reads** of a repository under that
+owner — `start`, `approve`'s issue lookup and permission check, `gate`,
+`verify`, `review`'s pull request lookups and `stats` — then run `gh` with it as
+`GH_TOKEN`. The owner comes from the origin remote; `stats` uses the origin
+recorded in the ledger.
+
+```sh
+export WORKTENDER_READ_GH_TOKEN_LAMPSCOM=github_pat_...
+```
+
+It is for reads only. `approve`'s comment and label, `draft`'s issue edit and
+`review --comment` keep the `gh` login they ran under. With no such variable set
+nothing changes. Once any is set there is no fallback: a read for an owner
+without one, or whose owner cannot be read, fails naming the variable. It does
+not reach `factory`, `prfeedback`, `refocus`, `doctor` or the reconciler's
+reads yet.
+
+The token goes in the `gh` process's environment, never an argument. **A worker
+process can read it**, from the environment of the worktender that launched it
+or of its parent, so give it a token that can read and nothing else.
+
 ### Approving without a comment
 
 A worker on a host whose tokens act as you can post a

@@ -17,6 +17,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/jsonout"
 	"github.com/steig/worktender/internal/safetext"
 )
@@ -193,9 +194,13 @@ func ghJSON(start ledgerEvent, args []string, v any) error {
 	if start.Origin != "" {
 		args = append(args, "--repo", start.Origin)
 	}
-	cmd := exec.Command("gh", args...)
+	dir := ""
 	if info, err := os.Stat(start.Repository); err == nil && info.IsDir() {
-		cmd.Dir = start.Repository
+		dir = start.Repository
+	}
+	cmd, err := readCommand(execute.URLOwner(start.Origin), dir, args)
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	raw, err := cmd.Output()
 	if err != nil {

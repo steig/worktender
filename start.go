@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -765,10 +764,7 @@ func issueFor(root string, number int) (issue, error) {
 		args = append(args, "--repo", origin)
 	}
 
-	cmd := exec.Command("gh", args...)
-	cmd.Dir = root
-
-	out, err := cmd.Output()
+	out, err := ghReadOutput(root, args...)
 	if err != nil {
 		return issue{}, fmt.Errorf("read issue #%d with gh: %w; check `gh auth status`", number, err)
 	}
