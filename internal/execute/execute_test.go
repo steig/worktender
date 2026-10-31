@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -459,8 +460,8 @@ func TestStaffResumeUsesContinue(t *testing.T) {
 
 	call := callTo(t, server, "agent.start")
 	args, _ := call.Params["args"].([]any)
-	if len(args) != 1 || args[0] != "--continue" {
-		t.Errorf("args = %v, want [--continue]", call.Params["args"])
+	if len(args) != 3 || args[0] != "--continue" || args[1] != "--settings" {
+		t.Errorf("args = %v, want --continue then the connectors-off --settings", call.Params["args"])
 	}
 	if call.Params["pane_id"] != "w2:p1" {
 		t.Errorf("pane_id = %v", call.Params["pane_id"])
@@ -477,8 +478,9 @@ func TestStaffColdStartSendsNoArgs(t *testing.T) {
 	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusDone {
 		t.Fatalf("status = %q: %s", result.Status, result.Detail)
 	}
-	if _, ok := callTo(t, server, "agent.start").Params["args"]; ok {
-		t.Error("a cold start should not pass --continue")
+	args, _ := callTo(t, server, "agent.start").Params["args"].([]any)
+	if slices.Contains(args, any("--continue")) {
+		t.Errorf("a cold start should not pass --continue: %v", args)
 	}
 }
 
@@ -657,8 +659,9 @@ func TestStaffWithoutAWorkerTokenLeavesTheFileAlone(t *testing.T) {
 	if result := only(t, exec.Run([]reconcile.Action{action})); result.Status != execute.StatusDone {
 		t.Fatalf("status = %q: %s", result.Status, result.Detail)
 	}
-	if _, ok := callTo(t, server, "agent.start").Params["args"]; ok {
-		t.Error("an agent was given settings with no worker token set")
+	want := []any{"--settings", `{"env":{"ENABLE_CLAUDEAI_MCP_SERVERS":"false"}}`}
+	if got := callTo(t, server, "agent.start").Params["args"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("args = %v, want %v: no token, so no GH_TOKEN, but connectors still off", got, want)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("the settings file another launch was handed is gone: %v", err)

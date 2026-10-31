@@ -70,7 +70,7 @@ func dispatchCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return withCode(exitUsage, err)
 	}
-	agentArgs := append(launch.Args(), agentArgsFor(*model, *permissionMode, os.Stderr)...)
+	agentArgs := append(launch.Args(), workerArgsFor(*model, *permissionMode, os.Stderr)...)
 
 	workspace, err := workspaceForPane(s, *pane)
 	if err != nil {
@@ -148,6 +148,18 @@ func agentArgsFor(model, permissionMode string, warn io.Writer) []string {
 	}
 	return args
 }
+
+// workerArgsFor is agentArgsFor plus the denial of every MCP server and tool,
+// for the agents start and dispatch launch. MCP is off because a connector is a
+// login the worker would act with; tools get allowed per team later, not by
+// default. The claude.ai connectors are the third part,
+// ENABLE_CLAUDEAI_MCP_SERVERS=false, which the executor puts in --settings.
+// Review has its own deny list and does not come through here.
+func workerArgsFor(model, permissionMode string, warn io.Writer) []string {
+	return append(agentArgsFor(model, permissionMode, warn), workerMCPArgs...)
+}
+
+var workerMCPArgs = []string{"--strict-mcp-config", "--disallowedTools", "mcp__*"}
 
 // unsandboxedModes are the permission modes that stop an agent asking before it
 // acts. A dispatched worker has no human at its pane, so it stalls on the first

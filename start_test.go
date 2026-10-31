@@ -429,10 +429,43 @@ func TestStartPassesNoAgentArgsByDefault(t *testing.T) {
 		}
 		args, _ := call.Params["args"].([]any)
 		for _, a := range args {
-			if s, _ := a.(string); s == "--model" || s == "--permission-mode" || s == "--settings" {
+			if s, _ := a.(string); s == "--model" || s == "--permission-mode" {
 				t.Errorf("start passed %s without being asked: %v", s, args)
 			}
 		}
+	}
+}
+
+// A worker gets no MCP server and no MCP tool, whatever the operator's login or
+// user config bring: the strict flag with no --mcp-config, a deny rule for every
+// MCP tool, and the claude.ai connectors off in the settings the agent reads.
+func TestWorkerLaunchDeniesMCP(t *testing.T) {
+	t.Setenv(execute.WorkerTokenEnv, "")
+	repo := herdrtest.NewRepo(t)
+	server := fakeStart(t, repo, "w5", "w5:p1", "working")
+	herdrtest.FakeGh(t, herdrtest.CatScript(t, `{"number":5,"title":"t","body":"b"}`))
+
+	if err := startCommand([]string{"5"}, &strings.Builder{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	var args []string
+	for _, call := range server.Calls() {
+		if call.Method == "agent.start" {
+			raw, _ := call.Params["args"].([]any)
+			for _, a := range raw {
+				args = append(args, a.(string))
+			}
+		}
+	}
+	i := slices.Index(args, "--disallowedTools")
+	if !slices.Contains(args, "--strict-mcp-config") || slices.Contains(args, "--mcp-config") ||
+		i < 0 || i+1 >= len(args) || args[i+1] != "mcp__*" {
+		t.Errorf("args = %v, want --strict-mcp-config, no --mcp-config, --disallowedTools mcp__*", args)
+	}
+	j := slices.Index(args, "--settings")
+	if j < 0 || j+1 >= len(args) || !strings.Contains(args[j+1], `"ENABLE_CLAUDEAI_MCP_SERVERS":"false"`) {
+		t.Errorf("args = %v, want --settings carrying ENABLE_CLAUDEAI_MCP_SERVERS=false", args)
 	}
 }
 
@@ -879,7 +912,7 @@ func TestStartTakesFlagsOnEitherSideOfTheIssueNumber(t *testing.T) {
 					started, _ = call.Params["args"].([]any)
 				}
 			}
-			if len(started) != 4 || started[0] != "--model" || started[1] != "sonnet" ||
+			if len(started) < 4 || started[0] != "--model" || started[1] != "sonnet" ||
 				started[2] != "--permission-mode" || started[3] != "bypassPermissions" {
 				t.Errorf("agent started with %v, want both flags as given", started)
 			}

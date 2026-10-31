@@ -295,7 +295,7 @@ func startCommand(args []string, out io.Writer) error {
 		WorkspaceID: workspace,
 		PaneID:      pane,
 		AgentName:   agent,
-		AgentArgs:   append(launch.Args(), agentArgsFor(agentModel, *permissionMode, os.Stderr)...),
+		AgentArgs:   append(launch.Args(), workerArgsFor(agentModel, *permissionMode, os.Stderr)...),
 	}})
 	fmt.Fprint(notes, execute.Render(results))
 	doc.Staffing = execute.JSON(results)
