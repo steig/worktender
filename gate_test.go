@@ -1651,7 +1651,7 @@ func addScout(t *testing.T, repo *herdrtest.Repo, pane string, issue int) (check
 	t.Helper()
 	branch := fmt.Sprintf("%d-look", issue)
 	checkout = repo.AddWorktree(fmt.Sprint(issue), branch)
-	recordStart(repo.Root, issue, branch, nil, "worker", pane, checkout)
+	recordStart(repo.Root, issue, branch, nil, "worker", pane, checkout, "")
 	report, err := scoutReportPath(repo.Root, issue)
 	if err != nil {
 		t.Fatal(err)
@@ -1806,7 +1806,7 @@ func TestGateScoutRefusesAWorkerThatIsNotAScout(t *testing.T) {
 		start func(repo *herdrtest.Repo)
 	}{
 		{"started without --scout", func(repo *herdrtest.Repo) {
-			recordStart(repo.Root, 7, "7-look", nil, "worker", gateTestPane, "")
+			recordStart(repo.Root, 7, "7-look", nil, "worker", gateTestPane, "", "")
 		}},
 		{"no start record", func(*herdrtest.Repo) {}},
 	} {

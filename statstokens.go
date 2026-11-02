@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/steig/worktender/internal/wt"
 )
@@ -16,7 +17,7 @@ import (
 // transcripts. Tokens rather than dollars: a price table in code would be
 // wrong the first time a price changed, and nobody would notice.
 //
-// The ledger holds only the session ids, recorded by `report` while herdr could
+// The ledger holds only the session ids, recorded by `start` and `report` while herdr could
 // still name them; the counts are read here, at stats time, from wherever
 // Claude filed the session. A transcript that is gone is skipped without a
 // word, and the dispatch's tokens read as unknown rather than zero.
@@ -50,12 +51,14 @@ func countTokens(dispatches []*statsDispatch) {
 		return
 	}
 	for _, d := range dispatches {
-		d.tokens = sessionTokens(home, d.sessions)
+		d.tokens, d.asOf = sessionTokens(home, d.sessions)
 	}
 }
 
 // sessionTokens sums the usage in the sessions' transcripts by model, sorted by
-// model, and nil when no transcript was found.
+// model, and nil when no transcript was found. It also returns the latest
+// modification time among the files read, which says how fresh a running
+// session's figure is.
 //
 // Each id is looked for wherever Claude filed it — the project directory is
 // derived from a cwd that is Claude's to name — along with the transcripts of
@@ -63,7 +66,7 @@ func countTokens(dispatches []*statsDispatch) {
 // once by its message id: Claude writes one line per content block, each
 // repeating the response's usage, and a session resumed from another directory
 // is filed twice.
-func sessionTokens(home string, sessions []string) []modelTokens {
+func sessionTokens(home string, sessions []string) ([]modelTokens, time.Time) {
 	var files []string
 	for _, id := range sessions {
 		if !wt.PlainSessionID(id) {
@@ -78,8 +81,9 @@ func sessionTokens(home string, sessions []string) []modelTokens {
 		}
 	}
 	if len(files) == 0 {
-		return nil
+		return nil, time.Time{}
 	}
+	var asOf time.Time
 
 	byModel := map[string]*tokenCounts{}
 	seen := map[string]bool{}
@@ -87,6 +91,9 @@ func sessionTokens(home string, sessions []string) []modelTokens {
 		file, err := os.Open(path)
 		if err != nil {
 			continue
+		}
+		if info, err := file.Stat(); err == nil && info.ModTime().After(asOf) {
+			asOf = info.ModTime()
 		}
 		// Not a Scanner: a line carrying a tool result can run to megabytes.
 		r := bufio.NewReader(file)
@@ -127,9 +134,9 @@ func sessionTokens(home string, sessions []string) []modelTokens {
 	// Transcripts holding no paid response say nothing about what the work
 	// cost, so they are unknown like a missing one, not a zero.
 	if len(byModel) == 0 {
-		return nil
+		return nil, time.Time{}
 	}
-	return sortedByModel(byModel)
+	return sortedByModel(byModel), asOf
 }
 
 func sortedByModel(byModel map[string]*tokenCounts) []modelTokens {

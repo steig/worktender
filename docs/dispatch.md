@@ -607,6 +607,11 @@ append one line to as they go:
 The inbox is read where it already is: messages on the thread named for the
 issue number, posted after the dispatch started.
 
+`stats --no-gh` skips every gh call, leaving the merge, diff and escape figures
+null. It reads the ledger, one inbox thread file per dispatch in the window and
+the transcripts, with no network and no herdr; without it, add one `gh pr view`
+per distinct PR and two `gh` searches per repository with a merged PR.
+
 What the columns mean:
 
 - **`ATTEMPTS`** is the number of `done` reports. A second one means the first
@@ -629,9 +634,9 @@ What the columns mean:
 
 What a dispatch spent is read from its worker's own Claude Code transcripts,
 `~/.claude/projects/*/<session>.jsonl` and the subagent transcripts beside it.
-The session ids come from the ledger: `report` asks herdr for its pane's
-`agent_session` as it records each report, because by the time a pull request
-merges the pane is gone. A worker restarted mid-dispatch has two sessions, and
+The session ids come from the ledger: `start` and `report` ask herdr for the pane's
+`agent_session` as they record, because by the time a pull request merges the
+pane is gone. `start` is why a worker that has not reported yet still counts. A worker restarted mid-dispatch has two sessions, and
 both count.
 
 Each API response is counted once, by its message id — Claude writes one line

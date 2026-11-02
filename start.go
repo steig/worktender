@@ -420,7 +420,9 @@ func launchWorker(s *session, notes io.Writer, w workerSeed) (launched, error) {
 		return res, err
 	}
 	res.briefed = true
-	recordStart(s.root, w.number, w.branch, w.launch, agent, pane, scoutCheckout)
+	// Asked now, while herdr still has the pane, so stats can count a worker
+	// that never gets as far as a report.
+	recordStart(s.root, w.number, w.branch, w.launch, agent, pane, scoutCheckout, paneSession(s.client, pane))
 
 	// The pane this ran in is the coordinator a report wakes. Losing it costs
 	// only the wake.

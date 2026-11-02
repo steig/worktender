@@ -6,6 +6,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [Unreleased]
+
+### Added
+
+- **`start` records the worker's session, and `stats --json` marks running work.**
+  Each dispatch gains `live` and `as_of`, so a worker counts from its first
+  minute and a reader can tell a running figure from a final one.
+- **`stats --no-gh` skips every gh call.** The merge, diff and escape figures
+  are null; it refuses `--check`.
+
 ## [0.28.0] — 2026-11-02
 
 ### Added
