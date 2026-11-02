@@ -31,6 +31,13 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("XDG_CONFIG_HOME", dir)
 	os.Setenv("XDG_STATE_HOME", state)
+	// The factory exports WORKTENDER_REQUIRE_APPROVAL and the like; a test
+	// that wants one sets it with t.Setenv.
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "WORKTENDER_") {
+			os.Unsetenv(name)
+		}
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.RemoveAll(state)
