@@ -41,6 +41,10 @@ var reworkReason = regexp.MustCompile(`^[a-z][a-z_]{0,31}$`)
 // wrapper refuses its callers: the typing has to happen here, behind the
 // approval hash. The raw note is never typed; the pane gets this package's
 // fixed frame, which points at the pinned file.
+// reworkBranchShape is what a branch may hold to be typed into a pane: a git
+// ref can carry shell metacharacters, and the branch is PR-author text.
+var reworkBranchShape = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
 func reworkCommand(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("rework", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -125,6 +129,9 @@ func reworkCommand(args []string, out io.Writer) error {
 	}
 	if got := issueFromBranch(pr.HeadRefName); got != number {
 		return fail(codef(exitNeedsHuman, "PR #%d is on branch %s, which is issue #%d's work, not #%d's; the approval covers #%d only", pr.Number, pr.HeadRefName, got, number, number))
+	}
+	if !reworkBranchShape.MatchString(pr.HeadRefName) {
+		return fail(codef(exitNeedsHuman, "PR #%d is on a branch with characters outside [A-Za-z0-9._/-], and that text would be typed into a worker's pane; rename the branch first", pr.Number))
 	}
 	branch := pr.HeadRefName
 	doc.Branch = jsonout.String(branch)
