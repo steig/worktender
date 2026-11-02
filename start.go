@@ -99,19 +99,7 @@ func startCommand(args []string, out io.Writer) error {
 	// A named repository wins outright, for the reason it does on prune: herdr's
 	// context names its current workspace, which on a machine with several
 	// repositories open is routinely not the one the caller means.
-	var s *session
-	if *repo != "" {
-		s, err = newSessionIn(*repo, herdrRequired)
-	} else {
-		s, err = newSession(false, herdrRequired)
-		// The context is injected only when herdr invokes a plugin action, and
-		// `start` cannot be one — it is nothing without its issue number. So a
-		// shell reaching this has no way forward that the error does not name.
-		// Only this failure: --repo answers a missing context and nothing else.
-		if errors.Is(err, herdrapi.ErrNoContext) {
-			err = withCode(exitUsage, fmt.Errorf("%w; name it with --repo <path>", err))
-		}
-	}
+	s, err := commandSession(*repo)
 	if err != nil {
 		return err
 	}
@@ -234,143 +222,78 @@ func startCommand(args []string, out io.Writer) error {
 	doc.WorkspaceID, doc.PaneID = jsonout.String(workspace), jsonout.String(pane)
 	fmt.Fprintf(notes, "worktree: %s on %s (workspace %s, pane %s)\n", branch, forkFrom, workspace, pane)
 	printForkPoint(notes, forkFrom, forkPoint, baseRef, gitx.Commit(s.root, baseRef))
-	warnName(notes, "the workspace", s.client.WorkspaceRename(workspace, workspaceName(filepath.Base(s.root), number, issue.Title)))
-	warnName(notes, "the worker's tab", s.client.TabRename(created.Tab.TabID, "worker"))
-	warnName(notes, "the worker's pane", s.client.PaneRename(pane, "worker"))
 
-	// The approved snapshot goes into the worktree before any agent exists in
-	// it, so the worker's first read is the content that was verified. Failing
-	// to write it fails the start: a ready issue's worker sent to the live issue
-	// instead would read whatever it says by then.
-	if approved != nil {
-		path := ""
-		checkout, err := worktreeFor(s.root, branch)
-		if err == nil {
-			path, err = pinIssue(checkout, *approved)
-		}
-		if err == nil {
+	reportPath := ""
+	started, err := launchWorker(s, notes, workerSeed{
+		number: number, branch: branch, title: issue.Title, created: created,
+		launch: launch, model: agentModel, permissionMode: *permissionMode, approved: approved,
+		// The approved snapshot goes into the worktree before any agent exists in
+		// it, so the worker's first read is the content that was verified. Failing
+		// to write it fails the start: a ready issue's worker sent to the live issue
+		// instead would read whatever it says by then.
+		pin: func() error {
+			if approved == nil {
+				return nil
+			}
+			checkout, err := worktreeFor(s.root, branch)
+			path := ""
+			if err == nil {
+				path, err = pinIssue(checkout, *approved)
+			}
+			if err != nil {
+				return fmt.Errorf("%w; the worktree at %s is yours to keep or remove", err, branch)
+			}
 			if hashGiven {
 				fmt.Fprintf(notes, "approved: --sha256 %s; pinned to %s\n", approved.Hash, path)
 			} else {
 				fmt.Fprintf(notes, "approved: %s by @%s; pinned to %s\n", labelFactoryReady, approved.Approver, path)
 			}
-		} else {
-			err = fmt.Errorf("%w; the worktree at %s is yours to keep or remove", err, branch)
-			if wErr := emit(doc.finish(err)); wErr != nil {
-				return wErr
+			return nil
+		},
+		brief: func(style string, withDirs bool, checks, lessons int) (string, string, error) {
+			// The scout's gate checks the checkout it was told to leave alone, so the
+			// path is needed before the brief goes out.
+			checkout := ""
+			if *scout {
+				var err error
+				if checkout, err = worktreeFor(s.root, branch); err == nil {
+					reportPath, err = scoutReportPath(s.root, number)
+				}
+				// A report left by an earlier scout of this issue would pass for this
+				// one's, so the file is gone before the worker is told to write it.
+				if err == nil {
+					err = os.MkdirAll(filepath.Dir(reportPath), 0o700)
+				}
+				if err == nil {
+					if err = os.Remove(reportPath); errors.Is(err, os.ErrNotExist) {
+						err = nil
+					}
+				}
+				if err != nil {
+					return "", "", fmt.Errorf("scout: %w; the worktree at %s is yours to keep or remove", err, branch)
+				}
 			}
-			return err
-		}
-	}
-
-	// The role's approved lessons go into the worktree beside the pinned issue,
-	// and the brief only points at them; see pinLessons.
-	lessonCount := 0
-	if launch != nil {
-		lessonCount = pinLessons(notes, s.root, branch, launch.Role, approved != nil)
-	}
-
-	// Recorded for `refocus --if-due`, which would otherwise time the worker by
-	// the role its labels pick even where --role chose another. Losing it costs
-	// only that, so it is a note and not a failed start.
-	if launch != nil {
-		if err := recordRole(s.root, branch, launch.Role); err != nil {
-			fmt.Fprintf(notes, "role: not recorded for refocus (%v); its interval follows the issue's labels\n", err)
-		}
-	}
-
-	// The same KindStaff action `sync` and `dispatch` build, so the pane
-	// re-check in execute.staff() covers this path by construction too.
-	agent := reconcile.AgentName(s.root, branch)
-	// The token is picked by the owner of this checkout's origin, so the
-	// action has to name it; git would otherwise read the caller's directory.
-	// Without per-owner tokens nothing reads the path, so git is not asked.
-	staffPath := ""
-	if execute.OwnerTokensSet() {
-		if staffPath, err = worktreeFor(s.root, branch); err != nil {
-			err = fmt.Errorf("%w; the worktree at %s is yours to keep or remove", err, branch)
-			if wErr := emit(doc.finish(err)); wErr != nil {
-				return wErr
+			text := custom
+			if text == "" && *scout {
+				text = withLessons(notes, scoutBrief(number, branch, reportPath, withDirs), lessons, approved != nil)
+			} else if text == "" {
+				text = withLessons(notes, briefWithChecks(number, branch, style, withDirs, checks), lessons, approved != nil)
 			}
-			return err
-		}
+			return text, checkout, nil
+		},
+	})
+	doc.Staffing = started.staffing
+	if started.agent != "" {
+		doc.AgentName = jsonout.String(started.agent)
 	}
-	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
-	results := executor.Run([]reconcile.Action{{
-		Kind:        reconcile.KindStaff,
-		Path:        staffPath,
-		Branch:      branch,
-		WorkspaceID: workspace,
-		PaneID:      pane,
-		AgentName:   agent,
-		AgentArgs:   append(launch.Args(), workerArgsFor(agentModel, *permissionMode, os.Stderr)...),
-	}})
-	fmt.Fprint(notes, execute.Render(results))
-	doc.Staffing = execute.JSON(results)
-	if execute.Counts(results)[execute.StatusFailed] > 0 {
-		err := codef(exitNeedsHuman, "started no agent for #%d; the worktree at %s is yours to keep or remove", number, branch)
+	doc.Briefed = started.briefed
+	if err != nil {
 		if wErr := emit(doc.finish(err)); wErr != nil {
 			return wErr
 		}
 		return err
 	}
-	doc.AgentName = jsonout.String(agent)
-
-	style, withDirs := roles.DefaultBrief, false
-	if launch != nil {
-		style, withDirs = launch.Brief, len(launch.AddDirs) > 0
-	}
-	checks := 0
-	if approved != nil {
-		checks = len(approved.Checks)
-	}
-	// The scout's gate checks the checkout it was told to leave alone, so the
-	// path is needed before the brief goes out.
-	checkout, reportPath := "", ""
-	if *scout {
-		if checkout, err = worktreeFor(s.root, branch); err == nil {
-			reportPath, err = scoutReportPath(s.root, number)
-		}
-		// A report left by an earlier scout of this issue would pass for this
-		// one's, so the file is gone before the worker is told to write it.
-		if err == nil {
-			err = os.MkdirAll(filepath.Dir(reportPath), 0o700)
-		}
-		if err == nil {
-			if err = os.Remove(reportPath); errors.Is(err, os.ErrNotExist) {
-				err = nil
-			}
-		}
-		if err != nil {
-			err = fmt.Errorf("scout: %w; the worktree at %s is yours to keep or remove", err, branch)
-			if wErr := emit(doc.finish(err)); wErr != nil {
-				return wErr
-			}
-			return err
-		}
-	}
-	text := custom
-	if text == "" && *scout {
-		text = withLessons(notes, scoutBrief(number, branch, reportPath, withDirs), lessonCount, approved != nil)
-	} else if text == "" {
-		text = withLessons(notes, briefWithChecks(number, branch, style, withDirs, checks), lessonCount, approved != nil)
-	}
-	if err := deliverBrief(s.client, pane, text); err != nil {
-		if wErr := emit(doc.finish(err)); wErr != nil {
-			return wErr
-		}
-		return err
-	}
-	doc.Briefed = true
-	recordStart(s.root, number, branch, launch, agent, pane, checkout)
-
-	// The pane this ran in is the coordinator a report wakes. Losing it costs
-	// only the wake.
-	if coordinator := os.Getenv(paneEnv); coordinator != "" {
-		if err := recordCoordinator(s.client, s.root, branch, coordinator, number); err != nil {
-			fmt.Fprintf(notes, "coordinator: not recorded, so its reports will not wake this pane (%v)\n", err)
-		}
-	}
+	agent := started.agent
 
 	// The gate is bound to the pane, not the agent name, for the reason review
 	// binds its own: the name is something herdr resolves, and herdr has been
@@ -389,6 +312,119 @@ func startCommand(args []string, out io.Writer) error {
 	doc.GateCommand = jsonout.String(gate)
 	fmt.Fprintf(notes, "\nbriefed %s (pane %s) on #%d; wait for it with:\n  %s\n", agent, pane, number, gate)
 	return emit(doc.finish(nil))
+}
+
+// workerSeed is what launchWorker needs from the command that made the
+// worktree: start and rework differ in how the checkout is pinned and what the
+// brief says, and in nothing else.
+type workerSeed struct {
+	number         int
+	branch, title  string
+	created        *herdrapi.WorkspaceCreatedResponse
+	launch         *roles.Launch
+	model          string
+	permissionMode string
+	approved       *approvedIssue
+	// pin writes what the worker reads from its git dir, before any agent exists.
+	pin func() error
+	// brief returns the text to type and, for a scout, the checkout it must
+	// leave alone.
+	brief func(style string, withDirs bool, checks, lessons int) (text, scoutCheckout string, err error)
+}
+
+// launched is what launchWorker managed before it stopped, filled in as it
+// goes so a failure path can still report the staffing and the agent.
+type launched struct {
+	staffing []execute.ResultJSON
+	agent    string
+	briefed  bool
+}
+
+// launchWorker names the new workspace, staffs its pane with an agent and
+// briefs it: the one path both start and rework take after the worktree exists.
+func launchWorker(s *session, notes io.Writer, w workerSeed) (launched, error) {
+	var res launched
+	workspace, pane := w.created.Workspace.WorkspaceID, w.created.RootPane.PaneID
+	warnName(notes, "the workspace", s.client.WorkspaceRename(workspace, workspaceName(filepath.Base(s.root), w.number, w.title)))
+	warnName(notes, "the worker's tab", s.client.TabRename(w.created.Tab.TabID, "worker"))
+	warnName(notes, "the worker's pane", s.client.PaneRename(pane, "worker"))
+
+	if err := w.pin(); err != nil {
+		return res, err
+	}
+
+	// The role's approved lessons go into the worktree beside the pinned issue,
+	// and the brief only points at them; see pinLessons.
+	lessonCount := 0
+	if w.launch != nil {
+		lessonCount = pinLessons(notes, s.root, w.branch, w.launch.Role, w.approved != nil)
+	}
+
+	// Recorded for `refocus --if-due`, which would otherwise time the worker by
+	// the role its labels pick even where --role chose another. Losing it costs
+	// only that, so it is a note and not a failed start.
+	if w.launch != nil {
+		if err := recordRole(s.root, w.branch, w.launch.Role); err != nil {
+			fmt.Fprintf(notes, "role: not recorded for refocus (%v); its interval follows the issue's labels\n", err)
+		}
+	}
+
+	// The same KindStaff action `sync` and `dispatch` build, so the pane
+	// re-check in execute.staff() covers this path by construction too.
+	agent := reconcile.AgentName(s.root, w.branch)
+	// The token is picked by the owner of this checkout's origin, so the
+	// action has to name it; git would otherwise read the caller's directory.
+	// Without per-owner tokens nothing reads the path, so git is not asked.
+	staffPath := ""
+	if execute.OwnerTokensSet() {
+		var err error
+		if staffPath, err = worktreeFor(s.root, w.branch); err != nil {
+			return res, fmt.Errorf("%w; the worktree at %s is yours to keep or remove", err, w.branch)
+		}
+	}
+	executor := &execute.Executor{Client: s.client, Root: s.root, CallerDir: s.dir, StateDir: pluginStateDir()}
+	results := executor.Run([]reconcile.Action{{
+		Kind:        reconcile.KindStaff,
+		Path:        staffPath,
+		Branch:      w.branch,
+		WorkspaceID: workspace,
+		PaneID:      pane,
+		AgentName:   agent,
+		AgentArgs:   append(w.launch.Args(), workerArgsFor(w.model, w.permissionMode, os.Stderr)...),
+	}})
+	fmt.Fprint(notes, execute.Render(results))
+	res.staffing = execute.JSON(results)
+	if execute.Counts(results)[execute.StatusFailed] > 0 {
+		return res, codef(exitNeedsHuman, "started no agent for #%d; the worktree at %s is yours to keep or remove", w.number, w.branch)
+	}
+	res.agent = agent
+
+	style, withDirs := roles.DefaultBrief, false
+	if w.launch != nil {
+		style, withDirs = w.launch.Brief, len(w.launch.AddDirs) > 0
+	}
+	checks := 0
+	if w.approved != nil {
+		checks = len(w.approved.Checks)
+	}
+	text, scoutCheckout, err := w.brief(style, withDirs, checks, lessonCount)
+	if err != nil {
+		return res, err
+	}
+	if err := deliverBrief(s.client, pane, text); err != nil {
+		return res, err
+	}
+	res.briefed = true
+	recordStart(s.root, w.number, w.branch, w.launch, agent, pane, scoutCheckout)
+
+	// The pane this ran in is the coordinator a report wakes. Losing it costs
+	// only the wake.
+	if coordinator := os.Getenv(paneEnv); coordinator != "" {
+		if err := recordCoordinator(s.client, s.root, w.branch, coordinator, w.number); err != nil {
+			fmt.Fprintf(notes, "coordinator: not recorded, so its reports will not wake this pane (%v)\n", err)
+		}
+	}
+	return res, nil
 }
 
 // printForkPoint records the commit the worktree was forked from, and says what
@@ -440,9 +476,26 @@ func fetchBase(root, ref string) error {
 	if !ok {
 		return nil
 	}
+	if err := runFetch(root, "fetch", remote, branch); err != nil {
+		return fmt.Errorf("fetching %s before forking from it: %w", ref, err)
+	}
+	return nil
+}
+
+// fetchRemoteBranch moves refs/remotes/<remote>/<branch> to the remote's tip.
+// The refspec is explicit so the ref moves even in a clone whose fetch refspec
+// does not cover the branch.
+func fetchRemoteBranch(root, remote, branch string) error {
+	return runFetch(root, "fetch", remote, "+refs/heads/"+branch+":refs/remotes/"+remote+"/"+branch)
+}
+
+// runFetch runs a fetch bounded by fetchTimeout, as the owner of root's origin
+// when per-owner tokens are set; the factory VM's worker clone cannot fetch
+// with anything else.
+func runFetch(root string, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "fetch", remote, branch)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if execute.OwnerTokensSet() {
@@ -451,9 +504,28 @@ func fetchBase(root, ref string) error {
 		}
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("fetching %s before forking from it: %w: %s", ref, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// commandSession opens the session for a command that creates things and so
+// must be told which repository: by --repo, or by the context herdr supplies
+// when it is the one invoking.
+func commandSession(repo string) (*session, error) {
+	if repo != "" {
+		return newSessionIn(repo, herdrRequired)
+	}
+	s, err := newSession(false, herdrRequired)
+	// The context is injected only when herdr invokes a plugin action, and
+	// `start` and `rework` cannot be one — they are nothing without their issue
+	// number. So a shell reaching this has no way forward that the error does
+	// not name. Only this failure: --repo answers a missing context and nothing
+	// else.
+	if errors.Is(err, herdrapi.ErrNoContext) {
+		err = withCode(exitUsage, fmt.Errorf("%w; name it with --repo <path>", err))
+	}
+	return s, err
 }
 
 // briefGiven reports whether --brief was passed, so that an empty value is
@@ -1006,4 +1078,36 @@ func selfPath() string {
 		return "worktender"
 	}
 	return gitx.Resolve(exe)
+}
+
+// prHead is the part of a pull request rework needs: whether it can be sent
+// back, and the branch its worker pushes to.
+type prHead struct {
+	Number            int    `json:"number"`
+	State             string `json:"state"`
+	HeadRefName       string `json:"headRefName"`
+	IsCrossRepository bool   `json:"isCrossRepository"`
+}
+
+// prFor reads a pull request through gh with the read token, as issueFor does.
+// Every failure is fatal: rework acts on what it reads, and `reconcile.GhPRNumber`
+// turns a failed read into "no pull request", which would send a PR's worker
+// away on a gh outage.
+func prFor(root string, number int) (prHead, error) {
+	args := []string{"pr", "view", strconv.Itoa(number), "--json", "number,state,headRefName,isCrossRepository"}
+	if origin := gitx.RemoteURL(root); origin != "" {
+		args = append(args, "--repo", origin)
+	}
+	out, err := ghReadOutput(root, args...)
+	if err != nil {
+		return prHead{}, fmt.Errorf("read PR #%d with gh: %w; check `gh auth status`", number, err)
+	}
+	var found prHead
+	if err := json.Unmarshal(out, &found); err != nil {
+		return prHead{}, fmt.Errorf("read PR #%d: %w", number, err)
+	}
+	if found.Number != number {
+		return prHead{}, fmt.Errorf("asked gh for PR #%d and it answered with #%d", number, found.Number)
+	}
+	return found, nil
 }

@@ -717,6 +717,36 @@ $ worktender start 42 --repo . --json
   failure they say how far it got — and a `branch` and `workspace_id` with a null
   `agent_name` is a checkout the caller now owns and must decide about.
 
+## `rework --json`
+
+```sh
+$ worktender rework 42 --sha256 … --pr 77 --note "…" --reason review_changes --repo . --json
+{
+  "repository": "/Users/you/code/thing",
+  "issue": 42,
+  "pr": 77,
+  "mode": "live",
+  "branch": "42-fix-the-thing",
+  "workspace_id": "w9",
+  "pane_id": "w9:p1",
+  "agent_name": "wt-42-fix-the-thing-016aab",
+  "note_path": "/Users/you/code/thing/.git/worktrees/42-fix-the-thing/worktender/rework-note.md",
+  "briefed": true,
+  "gate_command": "…/worktender gate --target w9:p1 --until done --require-pr",
+  "error": null,
+  "exit_code": 0
+}
+```
+
+- **`mode`** is `live` when the frame was typed into a worker already running,
+  `new_worker` when the worktree was re-created and a new agent started, and
+  null until worktender has decided.
+- **`pane_id`** is the pane that was typed into, in either mode. **`gate_command`**
+  targets it, as `start`'s does.
+- **`note_path`** is the pinned note; null until it was written.
+- Like `start`, it is written on failure paths too. In `new_worker` mode a
+  `workspace_id` with `briefed` false is a checkout the caller now owns.
+
 ## `factory --json`
 
 ```sh
