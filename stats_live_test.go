@@ -170,3 +170,53 @@ func TestStatsLiveNoGhRefusesCheck(t *testing.T) {
 		t.Errorf("err = %v, want a usage error naming --no-gh", err)
 	}
 }
+
+func TestStatsLiveAsOfIsTheNewestTranscript(t *testing.T) {
+	liveLedger(t, liveStart)
+	projects := liveHome(t)
+	main := filepath.Join(projects, "s1.jsonl")
+	sub := filepath.Join(projects, "s1", "subagents", "agent-a.jsonl")
+	herdrtest.WriteFile(t, main, transcriptLine("m1", "opus", 1, 2, 3, 4)+"\n")
+	herdrtest.WriteFile(t, sub, transcriptLine("m2", "opus", 10, 20, 30, 40)+"\n")
+	// The main transcript is the newer one, and the glob lists it first, so
+	// neither the earliest nor the last file read can pass for the newest.
+	older := time.Date(2026, 10, 1, 10, 5, 0, 0, time.UTC)
+	newer := time.Date(2026, 10, 1, 10, 25, 0, 0, time.UTC)
+	for path, at := range map[string]time.Time{main: newer, sub: older} {
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ds := liveStats(t)
+	if ds[0].AsOf == nil || *ds[0].AsOf != "2026-10-01T10:25:00Z" {
+		t.Errorf("as_of = %v, want 2026-10-01T10:25:00Z", ds[0].AsOf)
+	}
+}
+
+func TestStatsLiveNoGhSkipsTheEscapeLookup(t *testing.T) {
+	liveLedger(t,
+		`{"v":1,"event":"start","at":"2026-10-01T10:00:00Z","repository":"/r","branch":"42-a","issue":42,"origin":"git@github.com:o/r.git"}`,
+		`{"v":1,"event":"report","at":"2026-10-01T10:30:00Z","repository":"/r","branch":"42-a","status":"done","pr":7}`)
+	liveHome(t)
+	calls := filepath.Join(t.TempDir(), "calls")
+	// Only a merged pull request with a merge time is searched for escapes, so
+	// the searches follow from the pull request lookup that --no-gh skips.
+	herdrtest.FakeGh(t, `echo "$1 $2" >> '`+calls+`'
+if [ "$1 $2" = "pr view" ]; then
+  echo '{"state":"MERGED","additions":1,"deletions":1,"mergedAt":"2026-10-01T11:00:00Z"}'
+else
+  echo '[]'
+fi`)
+
+	liveStats(t, "--no-gh")
+	if _, err := os.Stat(calls); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("--no-gh still called gh (stat: %v)", err)
+	}
+
+	liveStats(t)
+	raw, _ := os.ReadFile(calls)
+	if got := string(raw); !strings.Contains(got, "pr list") || !strings.Contains(got, "issue list") {
+		t.Errorf("without --no-gh gh was asked %q, want the pr view and both escape searches", got)
+	}
+}
