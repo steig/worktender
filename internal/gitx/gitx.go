@@ -122,6 +122,22 @@ func Commit(root, ref string) string {
 	return out
 }
 
+// Blob is the git blob sha of path at commit, or "" when there is no such file.
+// A directory of that name comes back empty rather than as a tree sha; git reads
+// "<commit>:<path>^{blob}" as a path ending in "^{blob}", so the type is asked
+// for separately. Empty rather than an error for the reason Commit is: it annotates,
+// and has nothing better to do with a failure.
+func Blob(root, commit, path string) string {
+	out, err := run(root, "rev-parse", "--verify", "--quiet", commit+":"+path)
+	if err != nil {
+		return ""
+	}
+	if kind, err := run(root, "cat-file", "-t", out); err != nil || kind != "blob" {
+		return ""
+	}
+	return out
+}
+
 // Branch is the branch checked out in dir, or empty when HEAD is detached or
 // dir is not a checkout at all. Empty rather than an error for the reason Commit
 // is: its one caller is annotating something that already happened, and has

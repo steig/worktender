@@ -179,6 +179,8 @@ func TestStartRejectsAnArgumentThatIsNotAnIssueNumber(t *testing.T) {
 func fakeStart(t *testing.T, repo *herdrtest.Repo, workspace, pane, status string) *herdrtest.Server {
 	t.Helper()
 
+	stubClaude(t, "echo '0.0.0-test (Claude Code)'")
+
 	server := fakeSession(t, repo)
 	server.HandleResult("worktree.create", map[string]any{
 		"type": "workspace_created",

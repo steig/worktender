@@ -10,6 +10,9 @@ install` tracks branch HEAD rather than a tag — the version in
 
 ### Added
 
+- **`start --json` reports `claude_version` and `claude_md_blob`.** (#366) The
+  first line of `claude --version`, and the blob sha of `CLAUDE.md` at the fork
+  point; each is null when unreadable, and neither fails a start.
 - **`worktender rework` sends an open PR back to its worker.** (#367) A live
   worker gets the note typed in; otherwise a new one starts on the PR's branch.
   It refuses a branch with characters outside `[A-Za-z0-9._/-]`.

@@ -52,6 +52,15 @@ type startJSON struct {
 	// was left to pick its own.
 	Model       *string `json:"model"`
 	ModelReason *string `json:"model_reason"`
+	// ClaudeVersion is the first line of `claude --version` for the claude on
+	// worktender's own PATH. herdr starts the agent from the pane's shell, which
+	// is the same binary when both run as one user with one PATH; this field
+	// cannot prove that. Null when it could not be read.
+	ClaudeVersion *string `json:"claude_version"`
+	// ClaudeMdBlob is the git blob sha of CLAUDE.md at the fork point: what the
+	// worker reads, which the base's tip may no longer say. Null when the fork
+	// point has no CLAUDE.md.
+	ClaudeMdBlob *string `json:"claude_md_blob"`
 	// Briefed records that the agent took the brief up, which is a separate
 	// fact from the agent having started: herdr answering ok means keystrokes
 	// were delivered, not that anything received them.
