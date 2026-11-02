@@ -689,6 +689,8 @@ $ worktender start 42 --repo . --json
   "launch": null,
   "model": "sonnet",
   "model_reason": "label model:sonnet",
+  "claude_version": "2.1.0 (Claude Code)",
+  "claude_md_blob": "5716ca5987cbf97d6bb54920bea6adde242d87e6",
   "briefed": true,
   "staffing": [ { "status": "done", "kind": "staff", "…": "…" } ],
   "gate_command": "…/worktender gate --target w9:p1 --until done --require-pr",
@@ -710,6 +712,13 @@ $ worktender start 42 --repo . --json
 - **`model`** is the `--model` the agent was started with, and
   **`model_reason`** why: `flag`, `label model:<name>` or `default`. Both null
   when claude picked its own; see [Roles](roles.md#models).
+- **`claude_version`** is the first line of `claude --version`, run as the user
+  worktender runs as and read just before the agent is launched. It is the
+  `claude` on worktender's own PATH, which is the agent's binary only when herdr's
+  pane shell has the same user and PATH. Null when `claude` is not found, exits
+  non-zero, times out (10 seconds) or prints nothing; never fails a start.
+- **`claude_md_blob`** is the git blob sha of `CLAUDE.md` at the fork point, not
+  at HEAD or the base's tip. Null when the fork point has no such file.
 - **`briefed`** is a separate fact from an agent having started. herdr answering
   ok means keystrokes were delivered, not that anything received them.
 - **Null fields are progress.** `branch` is null until the issue has been read,

@@ -202,6 +202,9 @@ func startCommand(args []string, out io.Writer) error {
 	doc.Base = jsonout.String(forkFrom)
 	doc.ForkPoint = jsonout.String(forkPoint)
 	doc.Stacked = forkPoint != "" && forkPoint != gitx.Commit(s.root, baseRef)
+	if forkPoint != "" {
+		doc.ClaudeMdBlob = jsonout.String(gitx.Blob(s.root, forkPoint, "CLAUDE.md"))
+	}
 
 	// Under the repository, so a worker's checkout sits beside its code;
 	// info/exclude keeps the main checkout from listing the directory.
@@ -224,6 +227,8 @@ func startCommand(args []string, out io.Writer) error {
 	printForkPoint(notes, forkFrom, forkPoint, baseRef, gitx.Commit(s.root, baseRef))
 
 	reportPath := ""
+	// Read right before the agent is launched.
+	doc.ClaudeVersion = jsonout.String(claudeVersion())
 	started, err := launchWorker(s, notes, workerSeed{
 		number: number, branch: branch, title: issue.Title, created: created,
 		launch: launch, model: agentModel, permissionMode: *permissionMode, approved: approved,
