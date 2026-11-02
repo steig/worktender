@@ -34,6 +34,10 @@ const reworkNoteMax = 500
 // caller; the shape is what keeps the key safe to type into a pane.
 var reworkReason = regexp.MustCompile(`^[a-z][a-z_]{0,31}$`)
 
+// reworkBranchShape is what a branch may hold to be typed into a pane: a git
+// ref can carry shell metacharacters, and the branch is PR-author text.
+var reworkBranchShape = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
 // reworkCommand sends an open pull request back to its worker, with the
 // reviewer's note pinned as data.
 //
@@ -41,10 +45,6 @@ var reworkReason = regexp.MustCompile(`^[a-z][a-z_]{0,31}$`)
 // wrapper refuses its callers: the typing has to happen here, behind the
 // approval hash. The raw note is never typed; the pane gets this package's
 // fixed frame, which points at the pinned file.
-// reworkBranchShape is what a branch may hold to be typed into a pane: a git
-// ref can carry shell metacharacters, and the branch is PR-author text.
-var reworkBranchShape = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
-
 func reworkCommand(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("rework", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
