@@ -152,6 +152,47 @@ for an approval that does not read one:
   `factory:ready` or not, and refuse if there is none. Unset, empty or `0`,
   `start` checks only labelled issues.
 
+### Sending a pull request back
+
+**`worktender rework <issue> --sha256 <hex> --pr <n> --note <text> --reason <key>`**
+sends an open pull request back to its worker. It exists because typing into a
+pane is what the factory's herdr wrapper refuses its callers: the typing happens
+here, behind the same hash check as `start --sha256`. The flags may sit on either
+side of the issue number, and `--repo`, `--role`, `--model`, `--permission-mode`,
+`--focus` and `--json` are `start`'s. There is no `--base`, `--branch-prefix`,
+`--brief` or `--scout`: the PR fixes the branch, and the text is worktender's own.
+
+The note is pinned, never typed. It is written as one `| `-quoted line, under a
+fixed header that calls it untrusted data, to `worktender/rework-note.md` in the
+worktree's git dir (so it is never committed), and the worker is typed a fixed
+frame pointing at that file. `--reason` is a key matching `^[a-z][a-z_]{0,31}$`;
+worktender checks the shape only. The note must be one line of at most 500
+characters with no control or invisible characters.
+
+- **Live worker.** If the issue's worktree is in a herdr workspace holding one
+  agent, the frame is typed into that agent's pane and the issue and note are
+  re-pinned in its checkout. Nothing is fetched, closed or re-created.
+- **No live worker.** Otherwise worktender fetches `origin/<branch>`, closes the
+  old checkout's workspace, removes the old checkout, deletes the local branch,
+  re-creates the worktree from `origin/<branch>` and starts a new agent with a
+  brief that names the PR, the pinned issue and the pinned note. Ignored files in
+  the old checkout, such as `node_modules`, are lost.
+
+It refuses, with exit 3 and nothing created, typed or closed, when:
+
+1. the issue does not hash to `<hex>` (checked before the PR is read);
+2. the PR is not open, or comes from a fork;
+3. the PR's branch is another issue's, since the approval covers one issue;
+4. the live worker is `working` (rework once it is idle);
+5. a workspace holds more than one agent;
+6. for a new worker, the old checkout has uncommitted changes, or the branch
+   holds commits `origin/<branch>` lacks, or `git worktree remove` refuses
+   untracked files. The message names the checkout, which is the caller's to
+   keep or remove.
+
+A herdr call that fails is a refusal too, never a fallback to a new worker. Usage
+errors (exit 1) come before any `gh` or herdr call.
+
 ## Staying current
 
 ```sh

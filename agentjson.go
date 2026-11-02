@@ -154,3 +154,35 @@ func (d *reportEnvelopeJSON) finish(err error) *reportEnvelopeJSON {
 	}
 	return d
 }
+
+// reworkJSON is `rework --json`. Like startJSON it is written on the failure
+// paths too, once there is anything to say: a refusal after the old worktree
+// was re-created leaves the caller owning a checkout.
+type reworkJSON struct {
+	Repository string `json:"repository"`
+	Issue      int    `json:"issue"`
+	PR         int    `json:"pr"`
+	// Mode is null until worktender has decided whether a live worker is
+	// reused or a new one started.
+	Mode   *string `json:"mode"`
+	Branch *string `json:"branch"`
+	// WorkspaceID and PaneID name the pane the frame went to, in either mode.
+	WorkspaceID *string `json:"workspace_id"`
+	PaneID      *string `json:"pane_id"`
+	AgentName   *string `json:"agent_name"`
+	// NotePath is where the reviewer's note was pinned, null until it was.
+	NotePath    *string `json:"note_path"`
+	Briefed     bool    `json:"briefed"`
+	GateCommand *string `json:"gate_command"`
+	Error       *string `json:"error"`
+	ExitCode    int     `json:"exit_code"`
+}
+
+func (d *reworkJSON) finish(err error) *reworkJSON {
+	d.ExitCode = exitCode(err)
+	if err != nil {
+		msg := err.Error()
+		d.Error = &msg
+	}
+	return d
+}

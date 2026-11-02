@@ -25,7 +25,7 @@ import (
 
 // commands is every subcommand run dispatches, and the source usage is built
 // from. One list rather than two, so usage cannot drift from what exists.
-var commands = []string{"ls", "doctor", "update", "approve", "draft", "start", "factory", "verify", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "review", "refocus", "inbox", "stats", "lessons", "on-event", "startup", "version"}
+var commands = []string{"ls", "doctor", "update", "approve", "draft", "start", "rework", "factory", "verify", "sync", "dispatch", "prune", "prune-apply", "report", "gate", "pr-feedback", "review", "refocus", "inbox", "stats", "lessons", "on-event", "startup", "version"}
 
 var usage = "usage: worktender <" + strings.Join(commands, "|") + ">"
 
@@ -61,6 +61,9 @@ var handlers = map[string]func(args []string, out io.Writer) error{
 	// Issue number in, agent working on it out. Creates a worktree, so it
 	// must be told which repository.
 	"start": startCommand,
+	// An open PR back to its worker: types a fixed frame into a live one, or
+	// re-creates the worktree and starts a new one. The note is pinned, not typed.
+	"rework": reworkCommand,
 	// One pass over the factory:ready queue, starting the oldest issues
 	// until --max workers hold a slot. Starts through `start`.
 	"factory": factoryCommand,
