@@ -209,3 +209,38 @@ func TestReportRecordsTheWorkersSession(t *testing.T) {
 		})
 	}
 }
+
+// A start records the session herdr names for the worker's pane, so stats
+// counts a worker that has not reported yet; a session given as a path is not
+// one.
+func TestStartRecordsTheWorkersSession(t *testing.T) {
+	for _, tc := range []struct {
+		kind, value, want string
+	}{
+		{"id", "0f3c-sess_1", "0f3c-sess_1"},
+		{"path", "/tmp/x.jsonl", ""},
+		{"id", "../x", ""},
+	} {
+		t.Run(tc.kind+" "+tc.value, func(t *testing.T) {
+			repo := herdrtest.NewRepo(t)
+			server := fakeStart(t, repo, "w9", "w9:p1", "working")
+			server.HandleResult("agent.get", map[string]any{"type": "agent_info", "agent": map[string]any{
+				"terminal_id": "term_1", "agent": "claude", "agent_status": "working",
+				"workspace_id": "w9", "tab_id": "t1", "pane_id": "w9:p1", "focused": false, "revision": 1,
+				"agent_session": map[string]any{"agent": "claude", "kind": tc.kind, "source": "herdr", "value": tc.value},
+			}})
+			herdrtest.FakeGh(t, `cat <<'JSON'
+{"number":42,"title":"Fix the thing"}
+JSON`)
+
+			if err := startCommand([]string{"42"}, new(strings.Builder)); err != nil {
+				t.Fatalf("start: %v", err)
+			}
+
+			events := ledgerEvents(t, filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "ledger.jsonl"))
+			if len(events) != 1 || events[0].Event != ledgerStart || events[0].Session != tc.want {
+				t.Errorf("recorded %+v, want one start with session %q", events, tc.want)
+			}
+		})
+	}
+}

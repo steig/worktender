@@ -537,6 +537,8 @@ $ worktender stats --json
       "tokens": [
         { "model": "claude-sonnet-5-5", "input_tokens": 410, "output_tokens": 38200, "cache_read_tokens": 2950000, "cache_write_tokens": 182000 }
       ],
+      "live": false,
+      "as_of": "2026-10-01T11:58:00Z",
       "error": null
     }
   ],
@@ -593,9 +595,21 @@ $ worktender stats --json
 - **`tokens`** is what the worker's Claude Code sessions spent, one entry per
   model, sorted by model: input, output, cache-read and cache-write tokens,
   each response counted once, subagents included. Tokens, not dollars, so no
-  price table goes stale. Null when no report named a session or every
-  transcript is gone — unknown, not zero. How the sessions are found is in
-  [dispatch.md](dispatch.md#tokens).
+  price table goes stale. The session comes from `start` as well as `report`,
+  so a running dispatch's tokens are what its transcript held at call time.
+  Null when no event named a session or every transcript is gone — unknown,
+  not zero. How the sessions are found is in [dispatch.md](dispatch.md#tokens).
+- **`live`** is true while the worker has not claimed it is finished: a
+  `start`, a `planned` report or a `pr-feedback` round sets it, a `done` or
+  `blocked` report clears it, and starting the same branch again clears it on
+  the dispatch it replaces. It does not say the pane is up: a worker whose pane
+  died before reporting stays live, and `as_of` shows how long ago it last wrote.
+- **`as_of`** is the latest write time (RFC 3339, UTC) among the transcripts
+  `tokens` came from, so a reader can tell how fresh a running figure is. Null
+  whenever `tokens` is null.
+- **`--no-gh`** skips every gh call: `merged`, `additions`, `deletions`,
+  `merged_at` and `escaped` are null, as when gh cannot answer. It refuses
+  `--check`, which would miss every escape alert and still exit 0.
 - **`summary.tokens_by_model`** totals `tokens` over merged pull requests, and
   **`summary.median_tokens_per_merged_pr`** is the median of each count per
   merged pull request, null when none had a transcript. Both are over the

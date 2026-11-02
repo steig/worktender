@@ -35,7 +35,7 @@ import (
 // and how big its diff was. That is not worktender's to observe — a merge
 // happens on GitHub, long after every pane involved has closed.
 
-const statsUsage = "usage: worktender stats [--json] [--since DURATION] [--escape-window DURATION] [--check [--max-ceremony-ratio N] [--max-proof-loop N] [--max-escape-rate F]]"
+const statsUsage = "usage: worktender stats [--json] [--since DURATION] [--escape-window DURATION] [--no-gh] [--check [--max-ceremony-ratio N] [--max-proof-loop N] [--max-escape-rate F]]"
 
 // statsDispatch is one `start`, and everything later attributed to it.
 type statsDispatch struct {
@@ -60,11 +60,20 @@ type statsDispatch struct {
 	escape      *escapeFinding
 	escapeKnown bool
 
-	// sessions is every agent session its reports and reviewers named, in the order first
+	// sessions is every agent session its start, reports and reviewers named, in the order first
 	// seen: a worker restarted mid-dispatch spent tokens in both. tokens is
 	// nil when none of their transcripts could be found.
 	sessions []string
 	tokens   []modelTokens
+	// asOf is the latest write time among the transcripts tokens came from;
+	// zero when tokens is nil.
+	asOf time.Time
+
+	// live is that the worker has not claimed it is finished: a start, a
+	// planned report or a feedback round sets it, done or blocked clears it.
+	// It does not say the pane is up — a worker whose pane died before it
+	// reported stays live, and asOf shows how long ago it last wrote.
+	live bool
 }
 
 // attempts is how many times the worker claimed it was finished.
@@ -222,6 +231,7 @@ func statsCommand(args []string, out io.Writer) error {
 	asJSON := jsonFlag(fs)
 	since := fs.Duration("since", 0, "only dispatches started within this long ago (default all; 720h under --check)")
 	window := fs.Duration("escape-window", defaultEscapeWindow, "how long after its merge a revert or blamed issue makes a pull request an escape")
+	noGh := fs.Bool("no-gh", false, "skip every gh call: merged, additions, deletions, merged_at and escaped are null")
 	check := fs.Bool("check", false, "print one line per alert and exit 3 when any threshold is crossed")
 	th := defaultThresholds
 	fs.Float64Var(&th.ceremonyRatio, "max-ceremony-ratio", th.ceremonyRatio, "alert on a dispatch with more ceremony than this per 100 changed lines")
@@ -235,6 +245,9 @@ func statsCommand(args []string, out io.Writer) error {
 	}
 	if *since < 0 || *window <= 0 || th.ceremonyRatio < 0 || th.proofLoop < 0 || th.escapeRate < 0 {
 		return usagef("--since and the thresholds must not be negative, and --escape-window must be positive; %s", statsUsage)
+	}
+	if *noGh && *check {
+		return usagef("--no-gh cannot be combined with --check: the check would miss every escape alert and still exit 0; %s", statsUsage)
 	}
 	// A check run from cron every day over the whole unbounded ledger would
 	// re-raise a month-old dispatch forever, and the one alert nobody can clear
@@ -265,9 +278,13 @@ func statsCommand(args []string, out io.Writer) error {
 	// ends where its next dispatch starts, and that bound must not depend on
 	// which dispatches happen to be shown.
 	dispatches = startedWithin(dispatches, *since)
-	lookupPRs(dispatches)
+	if !*noGh {
+		lookupPRs(dispatches)
+	}
 	countTokens(dispatches)
-	findEscapes(dispatches, *window)
+	if !*noGh {
+		findEscapes(dispatches, *window)
+	}
 
 	var alerts []statsAlert
 	if *check {
@@ -323,8 +340,14 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 	for _, e := range events {
 		switch e.Event {
 		case ledgerStart:
-			d := &statsDispatch{start: e}
+			d := &statsDispatch{start: e, live: true}
+			if e.Session != "" {
+				d.sessions = append(d.sessions, e.Session)
+			}
 			dispatches = append(dispatches, d)
+			if old := byBranch[branchKey(e.Repository, e.Branch)]; old != nil {
+				old.live = false
+			}
 			byBranch[branchKey(e.Repository, e.Branch)] = d
 
 		case ledgerReport:
@@ -333,6 +356,12 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 				continue
 			}
 			d.reports = append(d.reports, e)
+			switch e.Status {
+			case "done", "blocked":
+				d.live = false
+			case "planned":
+				d.live = true
+			}
 			if e.Session != "" && !slices.Contains(d.sessions, e.Session) {
 				d.sessions = append(d.sessions, e.Session)
 			}
@@ -356,6 +385,7 @@ func attribute(events []ledgerEvent) []*statsDispatch {
 		case ledgerFeedback:
 			if d := byBranch[branchKey(e.Repository, e.Branch)]; d != nil && e.Branch != "" {
 				d.feedback++
+				d.live = true
 				if at, err := time.Parse(time.RFC3339Nano, e.At); err == nil {
 					d.feedbackAts = append(d.feedbackAts, at)
 				}
@@ -652,6 +682,8 @@ type statsDispatchJSON struct {
 	Escaped       *bool             `json:"escaped"`
 	Escape        *escapeFinding    `json:"escape"`
 	Tokens        []modelTokens     `json:"tokens"`
+	Live          bool              `json:"live"`
+	AsOf          *string           `json:"as_of"`
 	Error         *string           `json:"error"`
 }
 
@@ -671,7 +703,7 @@ func statsDocument(path string, skipped int, dispatches []*statsDispatch, window
 			Issue: d.start.Issue, Repository: d.start.Repository, Branch: d.start.Branch,
 			AgentKind: d.start.AgentKind, AgentName: d.start.AgentName, PaneID: d.start.PaneID,
 			StartedAt: d.start.At, Reports: []statsReportJSON{}, Attempts: d.attempts(), Rounds: d.feedback,
-			Merged: d.merged(), InboxMessages: d.inbox, GateRuns: d.gates, Tokens: d.tokens,
+			Merged: d.merged(), InboxMessages: d.inbox, GateRuns: d.gates, Tokens: d.tokens, Live: d.live,
 		}
 		if d.start.Role != "" {
 			j.Role = jsonout.String(d.start.Role)
@@ -708,6 +740,9 @@ func statsDocument(path string, skipped int, dispatches []*statsDispatch, window
 		if d.escapeKnown {
 			escaped := d.escape != nil
 			j.Escaped, j.Escape = &escaped, d.escape
+		}
+		if d.tokens != nil {
+			j.AsOf = jsonout.String(d.asOf.UTC().Format(time.RFC3339))
 		}
 		if d.ghErr != nil {
 			j.Error = jsonout.String(d.ghErr.Error())

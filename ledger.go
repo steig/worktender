@@ -83,7 +83,8 @@ type ledgerEvent struct {
 	Status string `json:"status,omitempty"`
 	PR     int    `json:"pr,omitempty"`
 	// Session is the worker's agent session id as herdr names it, which is
-	// what its transcript is filed under. Empty when herdr could not say.
+	// what its transcript is filed under. A start, a report and a reviewer
+	// event can carry it. Empty when herdr could not say.
 	Session string `json:"session,omitempty"`
 
 	// gate only. Every worker the wait covered, as the caller named it and as
@@ -193,10 +194,10 @@ func recordLedger(e ledgerEvent) {
 //
 // The origin is read now rather than when stats runs, so a dispatch can still
 // be looked up after its repository has moved or its checkout been removed.
-func recordStart(root string, issue int, branch string, launch *roles.Launch, agentName, pane, scoutCheckout string) {
+func recordStart(root string, issue int, branch string, launch *roles.Launch, agentName, pane, scoutCheckout, session string) {
 	e := ledgerEvent{
 		Event: ledgerStart, Repository: gitx.Resolve(root), Branch: branch, PaneID: pane,
-		Issue: issue, Origin: gitx.RemoteURL(root), AgentKind: execute.AgentKind, AgentName: agentName, ScoutCheckout: scoutCheckout,
+		Issue: issue, Origin: gitx.RemoteURL(root), AgentKind: execute.AgentKind, AgentName: agentName, ScoutCheckout: scoutCheckout, Session: session,
 	}
 	if launch != nil {
 		e.Role, e.Agent = launch.Role, launch.Agent
