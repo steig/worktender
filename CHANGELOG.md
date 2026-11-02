@@ -6,6 +6,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [Unreleased]
+
+### Added
+
+- **`worktender rework` sends an open PR back to its worker.** (#367) A live
+  worker gets the note typed in; otherwise a new one starts on the PR's branch.
+  It refuses a branch with characters outside `[A-Za-z0-9._/-]`.
+
 ## [0.27.1] — 2026-10-31
 
 ### Fixed

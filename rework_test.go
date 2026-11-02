@@ -486,3 +486,24 @@ func TestReworkTypesNoNoteText(t *testing.T) {
 		})
 	}
 }
+
+func TestReworkRefusesABranchWithShellCharacters(t *testing.T) {
+	r := newRework(t)
+	r.pr(`{"number":77,"state":"OPEN","headRefName":"42-x$(id)","isCrossRepository":false}`)
+
+	_, err := r.run()
+	assertReworkRefused(t, r, err, "PR #77")
+	if strings.Contains(err.Error(), "$(id)") {
+		t.Errorf("the refusal should not repeat the branch text: %v", err)
+	}
+}
+
+func TestReworkLiveRefusesAWorkspaceWithTwoAgents(t *testing.T) {
+	r := newRework(t)
+	second := reworkAgent("idle")
+	second["terminal_id"], second["pane_id"] = "term_2", "w9:p2"
+	r.workspaceOn(r.checkoutOn(), reworkAgent("idle"), second)
+
+	_, err := r.run()
+	assertReworkRefused(t, r, err, "holds 2 agents")
+}
