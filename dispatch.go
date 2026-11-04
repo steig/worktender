@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/steig/worktender/internal/execute"
 	"github.com/steig/worktender/internal/jsonout"
@@ -70,7 +72,11 @@ func dispatchCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return withCode(exitUsage, err)
 	}
-	agentArgs := append(launch.Args(), workerArgsFor(*model, *permissionMode, os.Stderr)...)
+	workerArgs, err := workerArgsFor(*model, *permissionMode, os.Stderr)
+	if err != nil {
+		return err
+	}
+	agentArgs := append(launch.Args(), workerArgs...)
 
 	workspace, err := workspaceForPane(s, *pane)
 	if err != nil {
@@ -149,17 +155,44 @@ func agentArgsFor(model, permissionMode string, warn io.Writer) []string {
 	return args
 }
 
-// workerArgsFor is agentArgsFor plus the denial of every MCP server and tool,
-// for the agents start and dispatch launch. MCP is off because a connector is a
-// login the worker would act with; tools get allowed per team later, not by
-// default. The claude.ai connectors are the third part,
+// workerArgsFor is agentArgsFor plus the MCP arguments for the agents start and
+// dispatch launch. The claude.ai connectors are off either way, by
 // ENABLE_CLAUDEAI_MCP_SERVERS=false, which the executor puts in --settings.
 // Review has its own deny list and does not come through here.
-func workerArgsFor(model, permissionMode string, warn io.Writer) []string {
-	return append(agentArgsFor(model, permissionMode, warn), workerMCPArgs...)
+func workerArgsFor(model, permissionMode string, warn io.Writer) ([]string, error) {
+	mcp, err := workerMCP()
+	if err != nil {
+		return nil, err
+	}
+	return append(agentArgsFor(model, permissionMode, warn), mcp...), nil
 }
 
-var workerMCPArgs = []string{"--strict-mcp-config", "--disallowedTools", "mcp__*"}
+const workerMCPConfigEnv = "WORKTENDER_WORKER_MCP_CONFIG"
+
+// workerMCP is no MCP at all unless WORKTENDER_WORKER_MCP_CONFIG names a file:
+// a connector is a login the worker would act with, so the factory opts in. A
+// value that does not check out is an error rather than no MCP, so a factory
+// that asked for a server never runs without it unnoticed.
+func workerMCP() ([]string, error) {
+	path := os.Getenv(workerMCPConfigEnv)
+	if path == "" {
+		return []string{"--strict-mcp-config", "--disallowedTools", "mcp__*"}, nil
+	}
+	if !filepath.IsAbs(path) {
+		return nil, usagef("%s=%q is not an absolute path", workerMCPConfigEnv, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, usagef("%s=%q cannot be read: %v", workerMCPConfigEnv, path, err)
+	}
+	var doc struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil || doc.MCPServers == nil {
+		return nil, usagef("%s=%q is not JSON with an mcpServers object", workerMCPConfigEnv, path)
+	}
+	return []string{"--strict-mcp-config", "--mcp-config", path}, nil
+}
 
 // unsandboxedModes are the permission modes that stop an agent asking before it
 // acts. A dispatched worker has no human at its pane, so it stalls on the first

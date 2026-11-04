@@ -152,6 +152,19 @@ for an approval that does not read one:
   `factory:ready` or not, and refuse if there is none. Unset, empty or `0`,
   `start` checks only labelled issues.
 
+### Giving workers an MCP server
+
+Workers start with no MCP: `start` and `dispatch` launch them with
+`--strict-mcp-config --disallowedTools mcp__*`, and the claude.ai connectors are
+off (`ENABLE_CLAUDEAI_MCP_SERVERS=false`). **`WORKTENDER_WORKER_MCP_CONFIG`**, set
+to the absolute path of a JSON file with an `mcpServers` object, launches them
+with `--strict-mcp-config --mcp-config <path>` instead and drops the
+`mcp__*` deny; only the servers in that file load, and the claude.ai connectors
+stay off. A value that is relative, names a file that cannot be read, or holds
+no `mcpServers` object makes `start`, `dispatch` and `rework` exit 1 before they
+create a worktree or launch an agent; they never fall back to no MCP. `review`
+and `draft` ignore the variable.
+
 ### Sending a pull request back
 
 **`worktender rework <issue> --sha256 <hex> --pr <n> --note <text> --reason <key>`**

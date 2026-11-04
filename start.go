@@ -92,6 +92,10 @@ func startCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return withCode(exitUsage, err)
 	}
+	// Before the worktree, so a bad value costs nothing.
+	if _, err := workerMCP(); err != nil {
+		return err
+	}
 
 	// Creates a checkout and starts an agent, so it must be told where — by
 	// --repo, or by the context herdr supplies when it is the one invoking.
@@ -349,6 +353,10 @@ type launched struct {
 // briefs it: the one path both start and rework take after the worktree exists.
 func launchWorker(s *session, notes io.Writer, w workerSeed) (launched, error) {
 	var res launched
+	workerArgs, err := workerArgsFor(w.model, w.permissionMode, os.Stderr)
+	if err != nil {
+		return res, err
+	}
 	workspace, pane := w.created.Workspace.WorkspaceID, w.created.RootPane.PaneID
 	warnName(notes, "the workspace", s.client.WorkspaceRename(workspace, workspaceName(filepath.Base(s.root), w.number, w.title)))
 	warnName(notes, "the worker's tab", s.client.TabRename(w.created.Tab.TabID, "worker"))
@@ -395,7 +403,7 @@ func launchWorker(s *session, notes io.Writer, w workerSeed) (launched, error) {
 		WorkspaceID: workspace,
 		PaneID:      pane,
 		AgentName:   agent,
-		AgentArgs:   append(w.launch.Args(), workerArgsFor(w.model, w.permissionMode, os.Stderr)...),
+		AgentArgs:   append(w.launch.Args(), workerArgs...),
 	}})
 	fmt.Fprint(notes, execute.Render(results))
 	res.staffing = execute.JSON(results)
