@@ -94,6 +94,9 @@ func reworkCommand(args []string, out io.Writer) error {
 	if err != nil {
 		return withCode(exitUsage, err)
 	}
+	if _, err := workerMCP(); err != nil {
+		return err
+	}
 	s, err := commandSession(*repo)
 	if err != nil {
 		return err
