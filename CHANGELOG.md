@@ -6,6 +6,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 install` tracks branch HEAD rather than a tag — the version in
 `herdr-plugin.toml` is what the no-Go install path pins its download to.
 
+## [0.30.0] — 2026-11-04
+
+### Added
+
+- **`start`, `dispatch` and `rework` launch workers with the MCP config named by `WORKTENDER_WORKER_MCP_CONFIG`.** (#383)
+  When it is set: `--strict-mcp-config --mcp-config <path>`, and no `mcp__*` deny.
+  When it is unset: no MCP, as before.
+  A value that isn't an absolute path to a readable JSON file with `mcpServers`
+  is refused before a worktree is created. `review` and `draft` ignore it.
+
 ## [0.29.0] — 2026-11-02
 
 ### Added
